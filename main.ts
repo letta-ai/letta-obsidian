@@ -49,6 +49,25 @@ interface LettaMessage {
 	tool_return?: any;
 }
 
+interface AgentConfig {
+	name: string;
+	system?: string;
+	agent_type?: 'memgpt_agent' | 'memgpt_v2_agent' | 'react_agent' | 'workflow_agent' | 'split_thread_agent' | 'sleeptime_agent' | 'voice_convo_agent' | 'voice_sleeptime_agent';
+	description?: string;
+	model?: string;
+	embedding?: string;
+	include_base_tools?: boolean;
+	include_multi_agent_tools?: boolean;
+	include_default_source?: boolean;
+	tags?: string[];
+	memory_blocks?: Array<{
+		value: string;
+		label: string;
+		limit?: number;
+		description?: string;
+	}>;
+}
+
 export default class LettaPlugin extends Plugin {
 	settings: LettaPluginSettings;
 	agent: LettaAgent | null = null;
@@ -148,7 +167,6 @@ export default class LettaPlugin extends Plugin {
 	private async makeRequest(path: string, options: any = {}) {
 		const url = `${this.settings.lettaBaseUrl}${path}`;
 		const headers: any = {
-			'Content-Type': 'application/json',
 			...options.headers
 		};
 
@@ -157,19 +175,38 @@ export default class LettaPlugin extends Plugin {
 			headers['Authorization'] = `Bearer ${this.settings.lettaApiKey}`;
 		}
 
+		// Set content type unless it's a file upload
+		if (!options.isFileUpload) {
+			headers['Content-Type'] = 'application/json';
+		}
+
 		// Debug logging
 		console.log(`[Letta Plugin] Making ${options.method || 'GET'} request to: ${url}`);
 		console.log(`[Letta Plugin] Headers:`, headers);
-		if (options.body) {
+		if (options.body && !options.isFileUpload) {
 			console.log(`[Letta Plugin] Request body:`, options.body);
+		} else if (options.isFileUpload) {
+			console.log(`[Letta Plugin] File upload request`);
 		}
 
 		try {
+			let requestBody;
+			if (options.body && typeof options.body === 'string' && headers['Content-Type']?.includes('multipart/form-data')) {
+				// Manual multipart form data
+				requestBody = options.body;
+			} else if (options.isFileUpload && options.formData) {
+				requestBody = options.formData;
+				// Remove Content-Type header to let browser set boundary
+				delete headers['Content-Type'];
+			} else if (options.body) {
+				requestBody = JSON.stringify(options.body);
+			}
+
 			const response = await requestUrl({
 				url,
 				method: options.method || 'GET',
 				headers,
-				body: options.body ? JSON.stringify(options.body) : undefined,
+				body: requestBody,
 				throw: false
 			});
 
@@ -177,8 +214,18 @@ export default class LettaPlugin extends Plugin {
 			console.log(`[Letta Plugin] Response status: ${response.status}`);
 			console.log(`[Letta Plugin] Response headers:`, response.headers);
 			console.log(`[Letta Plugin] Response text:`, response.text);
-			if (response.json) {
-				console.log(`[Letta Plugin] Response JSON:`, response.json);
+			
+			// Try to parse JSON, but handle cases where response isn't JSON
+			let responseJson = null;
+			try {
+				if (response.text && (response.text.trim().startsWith('{') || response.text.trim().startsWith('['))) {
+					responseJson = JSON.parse(response.text);
+					console.log(`[Letta Plugin] Response JSON:`, responseJson);
+				} else {
+					console.log(`[Letta Plugin] Response is not JSON, skipping JSON parse`);
+				}
+			} catch (jsonError) {
+				console.log(`[Letta Plugin] Failed to parse JSON:`, jsonError.message);
 			}
 
 			if (response.status >= 400) {
@@ -211,13 +258,15 @@ export default class LettaPlugin extends Plugin {
 					} else {
 						errorMessage = 'Authentication failed. Please verify your API key is correct and has proper permissions.';
 					}
+				} else if (response.status === 405) {
+					errorMessage = `Method not allowed for ${path}. This may indicate:\n• Incorrect HTTP method\n• API endpoint has changed\n• Feature not supported in this Letta version`;
 				}
 				
 				console.log(`[Letta Plugin] Enhanced error message: ${errorMessage}`);
 				throw new Error(errorMessage);
 			}
 
-			return response.json;
+			return responseJson;
 		} catch (error: any) {
 			console.log(`[Letta Plugin] Caught exception:`, error);
 			console.log(`[Letta Plugin] Exception type:`, error.constructor.name);
@@ -331,11 +380,53 @@ export default class LettaPlugin extends Plugin {
 			
 			if (existingAgent) {
 				this.agent = { id: existingAgent.id, name: existingAgent.name };
+				
+				// Check if source is already attached to existing agent
+				console.log(`[Letta Plugin] Checking if source is attached to existing agent...`);
+				const agentSources = existingAgent.sources || [];
+				const sourceAttached = agentSources.some((s: any) => s.id === this.source!.id);
+				
+				if (!sourceAttached) {
+					console.log(`[Letta Plugin] Source not attached, updating agent...`);
+					// Get current source IDs and add our source
+					const currentSourceIds = agentSources.map((s: any) => s.id);
+					currentSourceIds.push(this.source!.id);
+					
+					await this.makeRequest(`/v1/agents/${this.agent.id}`, {
+						method: 'PATCH',
+						body: {
+							source_ids: currentSourceIds
+						}
+					});
+				} else {
+					console.log(`[Letta Plugin] Source already attached to agent`);
+				}
 			} else {
-				// Create new agent
+				// Show agent configuration modal
+				console.log(`[Letta Plugin] No existing agent found, showing configuration modal...`);
+				const configModal = new AgentConfigModal(this.app, this);
+				const agentConfig = await configModal.showModal();
+				
+				if (!agentConfig) {
+					throw new Error('Agent configuration cancelled by user');
+				}
+
+				console.log(`[Letta Plugin] Creating new agent with config:`, agentConfig);
+
+				// Create new agent with user configuration
 				const isCloudInstance = this.settings.lettaBaseUrl.includes('api.letta.com');
 				const agentBody: any = {
-					name: this.settings.agentName
+					name: agentConfig.name,
+					agent_type: agentConfig.agent_type,
+					description: agentConfig.description,
+					model: agentConfig.model,
+					embedding: agentConfig.embedding,
+					include_base_tools: agentConfig.include_base_tools,
+					include_multi_agent_tools: agentConfig.include_multi_agent_tools,
+					include_default_source: agentConfig.include_default_source,
+					tags: agentConfig.tags,
+					memory_blocks: agentConfig.memory_blocks,
+					source_ids: [this.source!.id] // Attach source during creation
 				};
 
 				// Only include project for cloud instances
@@ -343,18 +434,24 @@ export default class LettaPlugin extends Plugin {
 					agentBody.project = this.settings.lettaProjectSlug;
 				}
 
+				// Remove undefined values to keep the request clean
+				Object.keys(agentBody).forEach(key => {
+					if (agentBody[key] === undefined) {
+						delete agentBody[key];
+					}
+				});
+
 				const newAgent = await this.makeRequest('/v1/agents', {
 					method: 'POST',
 					body: agentBody
 				});
 
 				this.agent = { id: newAgent.id, name: newAgent.name };
+				
+				// Update settings with the configured agent name
+				this.settings.agentName = agentConfig.name;
+				await this.saveSettings();
 			}
-
-			// Attach source to agent
-			await this.makeRequest(`/v1/agents/${this.agent.id}/sources/${this.source.id}`, {
-				method: 'POST'
-			});
 
 		} catch (error) {
 			console.error('Failed to setup agent:', error);
@@ -424,15 +521,27 @@ export default class LettaPlugin extends Plugin {
 				if (shouldUpload) {
 					const content = await this.app.vault.read(file);
 					
-					await this.makeRequest(`/v1/sources/${this.source.id}/files`, {
+					console.log(`[Letta Plugin] Uploading file as multipart:`, encodedPath);
+					console.log(`[Letta Plugin] File content length:`, content.length);
+					
+					// Create proper multipart form data matching Python client
+					const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
+					const multipartBody = [
+						`--${boundary}`,
+						`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
+						'Content-Type: text/markdown',
+						'',
+						content,
+						`--${boundary}--`
+					].join('\r\n');
+
+					await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
 						method: 'POST',
 						headers: {
-							'Content-Type': 'multipart/form-data'
+							'Content-Type': `multipart/form-data; boundary=${boundary}`
 						},
-						body: {
-							file: content,
-							file_name: encodedPath
-						}
+						body: multipartBody,
+						isFileUpload: true
 					});
 					uploadCount++;
 				}
@@ -470,15 +579,26 @@ export default class LettaPlugin extends Plugin {
 				// File might not exist, continue with upload
 			}
 
-			await this.makeRequest(`/v1/sources/${this.source.id}/files`, {
+			console.log(`[Letta Plugin] Auto-syncing file change as multipart:`, encodedPath);
+			
+			// Create proper multipart form data matching Python client
+			const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
+			const multipartBody = [
+				`--${boundary}`,
+				`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
+				'Content-Type: text/markdown',
+				'',
+				content,
+				`--${boundary}--`
+			].join('\r\n');
+
+			await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
 				method: 'POST',
 				headers: {
-					'Content-Type': 'multipart/form-data'
+					'Content-Type': `multipart/form-data; boundary=${boundary}`
 				},
-				body: {
-					file: content,
-					file_name: encodedPath
-				}
+				body: multipartBody,
+				isFileUpload: true
 			});
 
 		} catch (error) {
@@ -523,7 +643,10 @@ export default class LettaPlugin extends Plugin {
 			body: {
 				messages: [{
 					role: "user",
-					content: [{ text: message }]
+					content: [{
+						type: "text",
+						text: message
+					}]
 				}]
 			}
 		});
@@ -675,6 +798,244 @@ class LettaChatModal extends Modal {
 			this.sendButton.disabled = false;
 			this.sendButton.textContent = 'Send';
 			this.messageInput.focus();
+		}
+	}
+}
+
+class AgentConfigModal extends Modal {
+	plugin: LettaPlugin;
+	config: AgentConfig;
+	resolve: (config: AgentConfig | null) => void;
+	reject: (error: Error) => void;
+
+	constructor(app: App, plugin: LettaPlugin) {
+		super(app);
+		this.plugin = plugin;
+		this.config = {
+			name: plugin.settings.agentName,
+			agent_type: 'memgpt_agent',
+			description: 'An AI assistant for your Obsidian vault',
+			include_base_tools: true,
+			include_multi_agent_tools: false,
+			include_default_source: false,
+			tags: ['obsidian', 'assistant'],
+			memory_blocks: [
+				{
+					value: 'You are an AI assistant integrated with an Obsidian vault. You have access to the user\'s markdown files and can help them explore, organize, and work with their notes. Be helpful, knowledgeable, and concise.',
+					label: 'system',
+					limit: 2000,
+					description: 'Core system instructions'
+				}
+			]
+		};
+	}
+
+	async showModal(): Promise<AgentConfig | null> {
+		return new Promise((resolve, reject) => {
+			this.resolve = resolve;
+			this.reject = reject;
+			this.open();
+		});
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass('agent-config-modal');
+
+		// Header
+		const header = contentEl.createEl('div', { cls: 'agent-config-header' });
+		header.createEl('h2', { text: 'Configure New Agent' });
+		header.createEl('p', { 
+			text: 'Set up your Letta AI agent with custom configuration',
+			cls: 'agent-config-subtitle' 
+		});
+
+		// Form container
+		const formEl = contentEl.createEl('div', { cls: 'agent-config-form' });
+
+		// Basic Configuration
+		const basicSection = formEl.createEl('div', { cls: 'config-section' });
+		basicSection.createEl('h3', { text: 'Basic Configuration' });
+
+		// Agent Name
+		const nameGroup = basicSection.createEl('div', { cls: 'config-group' });
+		nameGroup.createEl('label', { text: 'Agent Name', cls: 'config-label' });
+		const nameInput = nameGroup.createEl('input', { 
+			type: 'text', 
+			value: this.config.name,
+			cls: 'config-input'
+		});
+		nameInput.addEventListener('input', () => {
+			this.config.name = nameInput.value;
+		});
+
+		// Agent Type
+		const typeGroup = basicSection.createEl('div', { cls: 'config-group' });
+		typeGroup.createEl('label', { text: 'Agent Type', cls: 'config-label' });
+		const typeSelect = typeGroup.createEl('select', { cls: 'config-select' });
+		
+		const agentTypes = [
+			{ value: 'memgpt_agent', label: 'MemGPT Agent (Recommended)' },
+			{ value: 'memgpt_v2_agent', label: 'MemGPT v2 Agent' },
+			{ value: 'react_agent', label: 'ReAct Agent' },
+			{ value: 'workflow_agent', label: 'Workflow Agent' },
+			{ value: 'sleeptime_agent', label: 'Sleeptime Agent' }
+		];
+
+		agentTypes.forEach(type => {
+			const option = typeSelect.createEl('option', { 
+				value: type.value, 
+				text: type.label 
+			});
+			if (type.value === this.config.agent_type) {
+				option.selected = true;
+			}
+		});
+
+		typeSelect.addEventListener('change', () => {
+			this.config.agent_type = typeSelect.value as any;
+		});
+
+		// Description
+		const descGroup = basicSection.createEl('div', { cls: 'config-group' });
+		descGroup.createEl('label', { text: 'Description', cls: 'config-label' });
+		const descInput = descGroup.createEl('textarea', { 
+			value: this.config.description || '',
+			cls: 'config-textarea',
+			attr: { rows: '3' }
+		});
+		descInput.addEventListener('input', () => {
+			this.config.description = descInput.value;
+		});
+
+		// Advanced Configuration
+		const advancedSection = formEl.createEl('div', { cls: 'config-section' });
+		advancedSection.createEl('h3', { text: 'Advanced Configuration' });
+
+		// Model Configuration
+		const modelGroup = advancedSection.createEl('div', { cls: 'config-group' });
+		modelGroup.createEl('label', { text: 'Model (Optional)', cls: 'config-label' });
+		const modelHelp = modelGroup.createEl('div', { 
+			text: 'Format: provider/model-name (e.g., openai/gpt-4)', 
+			cls: 'config-help' 
+		});
+		const modelInput = modelGroup.createEl('input', { 
+			type: 'text', 
+			value: this.config.model || '',
+			cls: 'config-input',
+			attr: { placeholder: 'e.g., openai/gpt-4' }
+		});
+		modelInput.addEventListener('input', () => {
+			this.config.model = modelInput.value || undefined;
+		});
+
+		// Tool Configuration
+		const toolsSection = advancedSection.createEl('div', { cls: 'config-subsection' });
+		toolsSection.createEl('h4', { text: 'Tool Configuration' });
+
+		// Include Base Tools
+		const baseToolsGroup = toolsSection.createEl('div', { cls: 'config-checkbox-group' });
+		const baseToolsCheckbox = baseToolsGroup.createEl('input', { 
+			type: 'checkbox', 
+			checked: this.config.include_base_tools,
+			cls: 'config-checkbox'
+		});
+		baseToolsGroup.createEl('label', { text: 'Include Base Tools (Core memory functions)', cls: 'config-checkbox-label' });
+		baseToolsCheckbox.addEventListener('change', () => {
+			this.config.include_base_tools = baseToolsCheckbox.checked;
+		});
+
+		// Include Multi-Agent Tools
+		const multiAgentToolsGroup = toolsSection.createEl('div', { cls: 'config-checkbox-group' });
+		const multiAgentToolsCheckbox = multiAgentToolsGroup.createEl('input', { 
+			type: 'checkbox', 
+			checked: this.config.include_multi_agent_tools,
+			cls: 'config-checkbox'
+		});
+		multiAgentToolsGroup.createEl('label', { text: 'Include Multi-Agent Tools', cls: 'config-checkbox-label' });
+		multiAgentToolsCheckbox.addEventListener('change', () => {
+			this.config.include_multi_agent_tools = multiAgentToolsCheckbox.checked;
+		});
+
+		// System Prompt Configuration
+		const systemSection = formEl.createEl('div', { cls: 'config-section' });
+		systemSection.createEl('h3', { text: 'System Prompt' });
+
+		const systemGroup = systemSection.createEl('div', { cls: 'config-group' });
+		systemGroup.createEl('label', { text: 'System Instructions', cls: 'config-label' });
+		const systemHelp = systemGroup.createEl('div', { 
+			text: 'These instructions define how the agent behaves and responds', 
+			cls: 'config-help' 
+		});
+		const systemInput = systemGroup.createEl('textarea', { 
+			value: this.config.memory_blocks?.[0]?.value || '',
+			cls: 'config-textarea',
+			attr: { rows: '6' }
+		});
+		systemInput.addEventListener('input', () => {
+			if (!this.config.memory_blocks) {
+				this.config.memory_blocks = [];
+			}
+			if (this.config.memory_blocks.length === 0) {
+				this.config.memory_blocks.push({
+					value: '',
+					label: 'system',
+					limit: 2000,
+					description: 'Core system instructions'
+				});
+			}
+			this.config.memory_blocks[0].value = systemInput.value;
+		});
+
+		// Tags
+		const tagsGroup = systemSection.createEl('div', { cls: 'config-group' });
+		tagsGroup.createEl('label', { text: 'Tags (Optional)', cls: 'config-label' });
+		const tagsHelp = tagsGroup.createEl('div', { 
+			text: 'Comma-separated tags for organizing agents', 
+			cls: 'config-help' 
+		});
+		const tagsInput = tagsGroup.createEl('input', { 
+			type: 'text', 
+			value: this.config.tags?.join(', ') || '',
+			cls: 'config-input',
+			attr: { placeholder: 'obsidian, assistant, helpful' }
+		});
+		tagsInput.addEventListener('input', () => {
+			const tags = tagsInput.value.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0);
+			this.config.tags = tags.length > 0 ? tags : undefined;
+		});
+
+		// Buttons
+		const buttonContainer = contentEl.createEl('div', { cls: 'agent-config-buttons' });
+		
+		const createButton = buttonContainer.createEl('button', { 
+			text: 'Create Agent', 
+			cls: 'mod-cta agent-config-create-btn' 
+		});
+		createButton.addEventListener('click', () => {
+			this.resolve(this.config);
+			this.close();
+		});
+
+		const cancelButton = buttonContainer.createEl('button', { 
+			text: 'Cancel', 
+			cls: 'agent-config-cancel-btn' 
+		});
+		cancelButton.addEventListener('click', () => {
+			this.resolve(null);
+			this.close();
+		});
+
+		// Focus the name input
+		nameInput.focus();
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+		if (this.resolve) {
+			this.resolve(null);
 		}
 	}
 }

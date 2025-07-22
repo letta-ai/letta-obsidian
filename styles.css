@@ -223,3 +223,200 @@
 .theme-dark .letta-message-tool-result {
     background: rgba(34, 197, 94, 0.1);
 }
+
+/* Agent Configuration Modal */
+.agent-config-modal .modal {
+    width: 90vw;
+    height: 90vh;
+    max-width: 800px;
+    max-height: 700px;
+}
+
+.agent-config-modal {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 0;
+}
+
+.agent-config-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+}
+
+.agent-config-header h2 {
+    margin: 0 0 8px 0;
+    color: var(--text-normal);
+    font-size: 1.5em;
+}
+
+.agent-config-subtitle {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+
+.agent-config-form {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.config-section {
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--background-modifier-border-hover);
+}
+
+.config-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.config-section h3 {
+    margin: 0 0 16px 0;
+    color: var(--text-normal);
+    font-size: 1.2em;
+    font-weight: 600;
+}
+
+.config-subsection {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--background-modifier-border-hover);
+}
+
+.config-subsection h4 {
+    margin: 0 0 12px 0;
+    color: var(--text-normal);
+    font-size: 1em;
+    font-weight: 500;
+}
+
+.config-group {
+    margin-bottom: 16px;
+}
+
+.config-label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-normal);
+    font-weight: 500;
+    font-size: 0.9em;
+}
+
+.config-help {
+    margin-bottom: 8px;
+    color: var(--text-muted);
+    font-size: 0.8em;
+    font-style: italic;
+}
+
+.config-input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 0.9em;
+}
+
+.config-input:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--interactive-accent);
+}
+
+.config-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 0.9em;
+}
+
+.config-select:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--interactive-accent);
+}
+
+.config-textarea {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 0.9em;
+    font-family: var(--font-monospace);
+    resize: vertical;
+    min-height: 60px;
+}
+
+.config-textarea:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--interactive-accent);
+}
+
+.config-checkbox-group {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.config-checkbox {
+    margin-right: 8px;
+    margin-top: 2px;
+}
+
+.config-checkbox-label {
+    color: var(--text-normal);
+    font-size: 0.9em;
+    line-height: 1.4;
+    cursor: pointer;
+    flex: 1;
+}
+
+.agent-config-buttons {
+    padding: 16px 20px;
+    border-top: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+.agent-config-create-btn {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.agent-config-create-btn:hover {
+    background: var(--interactive-accent-hover);
+}
+
+.agent-config-cancel-btn {
+    background: var(--background-primary);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.agent-config-cancel-btn:hover {
+    background: var(--background-modifier-hover);
+}
