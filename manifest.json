@@ -1,11 +1,10 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "letta-ai-agent",
+	"name": "Letta AI Agent",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"description": "Chat with a stateful AI agent that knows your vault contents and remembers your conversations.",
+	"author": "Cameron",
+	"authorUrl": "",
 	"isDesktopOnly": false
 }

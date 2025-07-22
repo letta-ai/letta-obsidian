@@ -1,16 +1,18 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "letta-ai-agent-obsidian-plugin",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Obsidian plugin for chatting with a stateful Letta AI agent",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},
-	"keywords": [],
-	"author": "",
+	"keywords": ["obsidian", "letta", "ai", "agent", "chat"],
+	"author": "Cameron",
 	"license": "MIT",
+	"dependencies": {
+	},
 	"devDependencies": {
 		"@types/node": "^16.11.6",
 		"@typescript-eslint/eslint-plugin": "5.29.0",
