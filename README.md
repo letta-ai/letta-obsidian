@@ -1,94 +1,188 @@
-# Obsidian Sample Plugin
+# Letta AI Agent - Obsidian Plugin
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+A powerful Obsidian plugin that integrates with [Letta](https://letta.com) to provide a stateful AI agent that knows your vault contents and remembers your conversations.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+## Features
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- **Stateful AI Agent**: Uses Letta's persistent memory system for conversation continuity across sessions
+- **Automatic Vault Sync**: Automatically syncs your markdown files to Letta with directory structure preservation
+- **Real-time Updates**: Auto-syncs file changes when files are created, modified, or deleted
+- **Beautiful Chat Interface**: Modal chat UI with support for reasoning displays, tool calls, and rich responses
+- **Intelligent File Change Detection**: Only syncs files that have actually changed (compares sizes and timestamps)
+- **Directory Structure Preservation**: Encodes folder paths using `__` separators (e.g., `folder__subfolder__file.md`)
+- **Flexible Configuration**: Works with both Letta Cloud and self-hosted instances
+- **Agent Customization**: Configure agent behavior, memory blocks, and tool preferences
 
-## First time developing plugins?
+## Installation
 
-Quick starting guide for new plugin devs:
+### Manual Installation
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+1. Download the latest release from the [releases page](https://github.com/cpfiffer/letta-obsidian/releases)
+2. Extract the files to your vault's `.obsidian/plugins/letta-ai-agent/` directory
+3. Enable the plugin in Obsidian's Community Plugins settings
 
-## Releasing new releases
+### Development Installation
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+1. Clone this repository into your vault's `.obsidian/plugins/` directory:
+   ```bash
+   git clone https://github.com/cpfiffer/letta-obsidian.git letta-ai-agent
+   ```
+2. Navigate to the plugin directory and install dependencies:
+   ```bash
+   cd letta-ai-agent
+   npm install
+   ```
+3. Build the plugin:
+   ```bash
+   npm run build
+   ```
+4. Enable the plugin in Obsidian's Community Plugins settings
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+## Configuration
 
-## Adding your plugin to the community plugin list
+### Letta Cloud Setup
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+1. Sign up for [Letta Cloud](https://app.letta.com) and obtain your API key
+2. Open Obsidian Settings → Community Plugins → Letta AI Agent
+3. Configure the following:
+   - **Letta API Key**: Your Letta Cloud API key (`sk-let-...`)
+   - **Letta Base URL**: `https://api.letta.com` (default)
+   - **Project Slug**: Your Letta project identifier
+   - **Agent Name**: Display name for your AI agent
+   - **Source Name**: Name for the Letta source containing your vault files
 
-## How to use
+### Self-Hosted Letta Setup
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+1. Set up your own [Letta instance](https://docs.letta.com/install)
+2. Configure the plugin with:
+   - **Letta API Key**: Leave empty if your instance doesn't require authentication
+   - **Letta Base URL**: Your Letta instance URL (e.g., `http://localhost:8283`)
+   - **Project Slug**: Not required for self-hosted instances
+   - **Agent Name**: Display name for your AI agent
+   - **Source Name**: Name for the Letta source containing your vault files
 
-## Manually installing the plugin
+### Sync Settings
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+- **Auto Sync**: Automatically sync file changes as you edit (recommended)
+- **Sync on Startup**: Sync all vault files when Obsidian starts
 
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint .\src\`
+## Usage
 
-## Funding URL
+### Initial Setup
 
-You can include funding URLs where people who use your plugin can financially support it.
+1. Configure your API connection in settings
+2. Click "Connect to Letta" to establish the connection
+3. If no agent exists, you'll be prompted to configure a new one with:
+   - Agent type (MemGPT, ReAct, etc.)
+   - System instructions and behavior
+   - Tool configurations
+   - Memory block settings
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+### Chatting with Your Agent
 
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+1. Click the chat bubble icon in the ribbon, or
+2. Use the command palette: "Open Letta Chat", or
+3. Use the hotkey (if configured)
+
+The chat interface displays:
+- **User messages**: Your questions and requests
+- **Agent reasoning**: Internal thought processes (when available)
+- **Tool calls**: Actions the agent takes
+- **Tool results**: Results from agent actions
+- **Assistant responses**: The agent's replies to you
+
+### File Synchronization
+
+The plugin automatically:
+- Uploads new markdown files to Letta
+- Updates changed files (based on size and modification time)
+- Removes deleted files from Letta
+- Preserves your vault's directory structure
+
+You can also manually sync using:
+- The "Sync Vault" command in the command palette
+- The "Sync Now" button in settings
+
+## Development
+
+### Prerequisites
+
+- Node.js v16 or higher
+- npm or yarn
+
+### Development Commands
+
+- **Start development**: `npm run dev` - Compiles TypeScript and watches for changes
+- **Build for production**: `npm run build` - Type checks and builds production bundle
+- **Install dependencies**: `npm install` - Installs required packages
+
+### Project Structure
+
+```
+├── main.ts              # Main plugin logic and API integration
+├── styles.css           # Chat interface and modal styling
+├── manifest.json        # Plugin metadata
+├── package.json         # Dependencies and scripts
+└── README.md           # This file
 ```
 
-If you have multiple URLs, you can also do:
+### Key Components
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
+- **LettaPlugin**: Main plugin class with connection and sync logic
+- **LettaChatModal**: Chat interface modal with rich message display
+- **AgentConfigModal**: Agent setup and configuration interface
+- **LettaSettingTab**: Plugin settings page
 
-## API Documentation
+## API Integration
 
-See https://github.com/obsidianmd/obsidian-api
+The plugin uses Letta's v1 API for:
+- **Agent Management**: Create, retrieve, and configure agents
+- **Source Management**: Create sources and attach them to agents
+- **File Operations**: Upload, update, and delete vault files
+- **Message Streaming**: Real-time chat with reasoning and tool call support
+
+## Troubleshooting
+
+### Connection Issues
+
+- Verify your API key and base URL are correct
+- Check that your Letta instance is running and accessible
+- For self-hosted instances, ensure the API endpoints are available
+
+### File Upload Problems
+
+- Check the plugin console logs for detailed error messages
+- Verify your source exists and is attached to the agent
+- Ensure you have proper permissions for file operations
+
+### Chat Not Working
+
+- Confirm your agent is created and connected
+- Check that the source is properly attached to the agent
+- Verify your vault files have been synced to Letta
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Support
+
+- **Issues**: Report bugs on the [GitHub Issues page](https://github.com/cpfiffer/letta-obsidian/issues)
+- **Documentation**: Visit the [Letta documentation](https://docs.letta.com)
+- **Community**: Join the [Letta Discord](https://discord.gg/letta) for community support
+
+## Acknowledgments
+
+- Built on the [Letta](https://letta.com) platform for stateful AI agents
+- Uses the [Obsidian Plugin API](https://docs.obsidian.md/Plugins)
+- Inspired by the need for AI agents that truly understand and remember your knowledge base
