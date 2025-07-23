@@ -14,6 +14,7 @@ import {
 } from 'obsidian';
 
 export const LETTA_CHAT_VIEW_TYPE = 'letta-chat-view';
+export const LETTA_MEMORY_VIEW_TYPE = 'letta-memory-view';
 
 interface LettaPluginSettings {
 	lettaApiKey: string;
@@ -87,9 +88,18 @@ export default class LettaPlugin extends Plugin {
 			(leaf) => new LettaChatView(leaf, this)
 		);
 
-		// Add ribbon icon for chat
+		this.registerView(
+			LETTA_MEMORY_VIEW_TYPE,
+			(leaf) => new LettaMemoryView(leaf, this)
+		);
+
+		// Add ribbon icons
 		this.addRibbonIcon('bot', 'Open Letta Chat', (evt: MouseEvent) => {
 			this.openChatView();
+		});
+
+		this.addRibbonIcon('brain-circuit', 'Open Letta Memory Blocks', (evt: MouseEvent) => {
+			this.openMemoryView();
 		});
 
 		// Add status bar
@@ -106,6 +116,14 @@ export default class LettaPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'open-letta-memory',
+			name: 'Open Letta Memory Blocks',
+			callback: () => {
+				this.openMemoryView();
+			}
+		});
+
+		this.addCommand({
 			id: 'sync-vault-to-letta',
 			name: 'Sync Vault to Letta',
 			callback: async () => {
@@ -118,6 +136,38 @@ export default class LettaPlugin extends Plugin {
 			name: 'Sync Current File to Letta',
 			editorCallback: async (editor: Editor, view: MarkdownView) => {
 				await this.syncCurrentFile(view.file);
+			}
+		});
+
+		this.addCommand({
+			id: 'open-block-files',
+			name: 'Open Memory Block Files',
+			callback: async () => {
+				await this.createBlockFiles();
+			}
+		});
+
+		this.addCommand({
+			id: 'sync-block-files',
+			name: 'Sync Block Files to Letta',
+			callback: async () => {
+				await this.syncBlockFiles();
+			}
+		});
+
+		this.addCommand({
+			id: 'open-block-folder',
+			name: 'Open Letta Memory Blocks Folder',
+			callback: async () => {
+				const folder = this.app.vault.getAbstractFileByPath('Letta Memory Blocks');
+				if (folder && folder instanceof TFolder) {
+					// Focus the file explorer and reveal the folder
+					this.app.workspace.leftSplit.expand();
+					this.app.workspace.revealActiveFile();
+					new Notice('📁 Letta Memory Blocks folder is now visible in the file explorer');
+				} else {
+					new Notice('Letta Memory Blocks folder not found. Use "Open Memory Block Files" to create it.');
+				}
 			}
 		});
 
@@ -682,7 +732,300 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
+	async createBlockFiles() {
+		// Check connection first
+		if (!this.agent) {
+			const connected = await this.connectToLetta();
+			if (!connected) {
+				new Notice('❌ Connection failed. Please check your settings.');
+				return;
+			}
+		}
+
+		try {
+			// Get agent's memory blocks
+			const blocks = await this.makeRequest(`/v1/agents/${this.agent.id}/core-memory/blocks`);
+			
+			if (!blocks || blocks.length === 0) {
+				new Notice('No memory blocks found for this agent');
+				return;
+			}
+
+			// Create a folder for block files (visible to user)
+			const blockFolderPath = 'Letta Memory Blocks';
+			
+			// Ensure the blocks folder exists
+			if (!await this.app.vault.adapter.exists(blockFolderPath)) {
+				await this.app.vault.createFolder(blockFolderPath);
+			}
+
+			// Create files for each block
+			for (const block of blocks) {
+				const blockFileName = `${blockFolderPath}/${block.label || block.name || 'unnamed'}.md`;
+				
+				// Create block file content with metadata and instructions
+				const blockContent = `---
+letta_block: true
+block_label: ${block.label || block.name}
+character_limit: ${block.limit || 5000}
+read_only: ${block.read_only || false}
+description: ${block.description || 'No description'}
+last_updated: ${new Date().toISOString()}
+agent_id: ${this.agent.id}
+---
+
+# ${block.label || block.name} Memory Block
+
+> **⚠️ This is a Letta memory block file**
+> 
+> Edit the content below, then use **"Sync Block Files to Letta"** command to save your changes to the agent's memory.
+> 
+> - **Character Limit**: ${block.limit || 5000} characters
+> - **Current Length**: ${(block.value || '').length} characters
+> - **Block Type**: ${block.label || block.name}
+
+---
+
+${block.value || ''}`;
+
+				// Create or update the file
+				if (await this.app.vault.adapter.exists(blockFileName)) {
+					const existingFile = this.app.vault.getAbstractFileByPath(blockFileName) as TFile;
+					if (existingFile) {
+						await this.app.vault.modify(existingFile, blockContent);
+					}
+				} else {
+					await this.app.vault.create(blockFileName, blockContent);
+				}
+			}
+
+			new Notice(`✅ Created ${blocks.length} memory block files in "${blockFolderPath}/" folder. Edit them and use "Sync Block Files to Letta" to save changes.`);
+
+			// Open the first block file
+			if (blocks.length > 0) {
+				const firstBlockFile = `${blockFolderPath}/${blocks[0].label || blocks[0].name || 'unnamed'}.md`;
+				const file = this.app.vault.getAbstractFileByPath(firstBlockFile) as TFile;
+				if (file) {
+					await this.app.workspace.openLinkText(file.path, '', true);
+				}
+			}
+
+		} catch (error) {
+			console.error('Failed to create block files:', error);
+			new Notice('❌ Failed to create block files. Please try again.');
+		}
+	}
+
+	async onBlockFileChange(file: TFile): Promise<void> {
+		// Auto-connect if not connected (silently for auto-sync)
+		if (!this.agent) {
+			try {
+				await this.connectToLetta();
+			} catch (error) {
+				console.log('[Letta Plugin] Block file sync failed: not connected');
+				return;
+			}
+		}
+
+		try {
+			const content = await this.app.vault.read(file);
+			
+			// Parse frontmatter to extract block metadata
+			const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+			if (!frontmatterMatch) {
+				console.error('Invalid block file format:', file.path);
+				return;
+			}
+
+			const frontmatter = frontmatterMatch[1];
+			const blockContent = frontmatterMatch[2];
+			
+			// Check if this is a Letta block file
+			const isLettaBlock = frontmatter.includes('letta_block: true');
+			if (!isLettaBlock) {
+				return; // Not a Letta block file
+			}
+
+			// Extract block label from frontmatter
+			const labelMatch = frontmatter.match(/^block_label: (.+)$/m);
+			if (!labelMatch) {
+				console.error('No block label found in file:', file.path);
+				return;
+			}
+			
+			const blockLabel = labelMatch[1];
+			
+			// Update the block via API
+			await this.makeRequest(`/v1/agents/${this.agent.id}/core-memory/blocks/${blockLabel}`, {
+				method: 'PATCH',
+				body: { value: blockContent.trim() }
+			});
+
+			console.log(`[Letta Plugin] Block '${blockLabel}' synced from file: ${file.path}`);
+		} catch (error) {
+			console.error('Failed to sync block file:', error);
+		}
+	}
+
+	async syncBlockFiles() {
+		// Check connection first
+		if (!this.agent) {
+			const connected = await this.connectToLetta();
+			if (!connected) {
+				new Notice('❌ Connection failed. Please check your settings.');
+				return;
+			}
+		}
+
+		try {
+			const blockFolderPath = 'Letta Memory Blocks';
+			
+			// Check if folder exists
+			if (!await this.app.vault.adapter.exists(blockFolderPath)) {
+				new Notice('No block files found. Use "Open Memory Block Files" first.');
+				return;
+			}
+
+			// Get all .lettablock files
+			const folder = this.app.vault.getAbstractFileByPath(blockFolderPath);
+			if (!folder || !(folder instanceof TFolder)) {
+				new Notice('Block folder not found.');
+				return;
+			}
+
+			const blockFiles = folder.children.filter(file => 
+				file instanceof TFile && file.path.includes('Letta Memory Blocks/') && file.path.endsWith('.md')
+			) as TFile[];
+
+			if (blockFiles.length === 0) {
+				new Notice('No block files found in the folder.');
+				return;
+			}
+
+			// Show confirmation modal
+			const confirmed = await this.confirmBlockSync(blockFiles.length);
+			if (!confirmed) {
+				return;
+			}
+
+			new Notice(`🔄 Syncing ${blockFiles.length} block files...`);
+
+			let successCount = 0;
+			let errorCount = 0;
+
+			// Process each block file
+			for (const file of blockFiles) {
+				try {
+					const content = await this.app.vault.read(file);
+					
+					// Parse frontmatter to extract block metadata
+					const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+					if (!frontmatterMatch) {
+						console.error('Invalid block file format:', file.path);
+						errorCount++;
+						continue;
+					}
+
+					const frontmatter = frontmatterMatch[1];
+					const fullContent = frontmatterMatch[2];
+					
+					// Extract actual block content (skip the instruction section)
+					const contentMatch = fullContent.match(/^[\s\S]*?---\n\n([\s\S]*)$/);
+					const blockContent = contentMatch ? contentMatch[1] : fullContent;
+					
+					// Check if this is a Letta block file
+					const isLettaBlock = frontmatter.includes('letta_block: true');
+					if (!isLettaBlock) {
+						// Skip non-Letta block files
+						continue;
+					}
+
+					// Extract block label from frontmatter
+					const labelMatch = frontmatter.match(/^block_label: (.+)$/m);
+					if (!labelMatch) {
+						console.error('No block label found in file:', file.path);
+						errorCount++;
+						continue;
+					}
+					
+					const blockLabel = labelMatch[1];
+					
+					// Update the block via API
+					await this.makeRequest(`/v1/agents/${this.agent.id}/core-memory/blocks/${blockLabel}`, {
+						method: 'PATCH',
+						body: { value: blockContent.trim() }
+					});
+
+					successCount++;
+					console.log(`[Letta Plugin] Block '${blockLabel}' synced from file: ${file.path}`);
+				} catch (error) {
+					console.error(`Failed to sync block file ${file.path}:`, error);
+					errorCount++;
+				}
+			}
+
+			// Show result
+			if (errorCount === 0) {
+				new Notice(`✅ Successfully synced ${successCount} block files`);
+			} else {
+				new Notice(`⚠️ Synced ${successCount} files, ${errorCount} errors. Check console for details.`);
+			}
+
+		} catch (error) {
+			console.error('Failed to sync block files:', error);
+			new Notice('❌ Failed to sync block files. Please try again.');
+		}
+	}
+
+	private confirmBlockSync(fileCount: number): Promise<boolean> {
+		return new Promise((resolve) => {
+			const modal = new Modal(this.app);
+			modal.setTitle('Confirm Block Sync');
+			
+			const { contentEl } = modal;
+			contentEl.createEl('p', { 
+				text: `You are about to sync ${fileCount} memory block file(s) to Letta. This will overwrite the current block contents in your agent's memory.`
+			});
+			contentEl.createEl('p', { 
+				text: 'Are you sure you want to continue?',
+				cls: 'mod-warning'
+			});
+			
+			const buttonContainer = contentEl.createEl('div');
+			buttonContainer.style.display = 'flex';
+			buttonContainer.style.gap = '8px';
+			buttonContainer.style.justifyContent = 'flex-end';
+			buttonContainer.style.marginTop = '16px';
+			
+			const syncButton = buttonContainer.createEl('button', {
+				text: 'Sync to Letta',
+				cls: 'mod-cta'
+			});
+			
+			const cancelButton = buttonContainer.createEl('button', {
+				text: 'Cancel'
+			});
+			
+			syncButton.addEventListener('click', () => {
+				resolve(true);
+				modal.close();
+			});
+			
+			cancelButton.addEventListener('click', () => {
+				resolve(false);
+				modal.close();
+			});
+			
+			modal.open();
+		});
+	}
+
 	async onFileChange(file: TFile): Promise<void> {
+		// Skip block files - they should not auto-sync
+		if (file.path.includes('Letta Memory Blocks/')) {
+			return;
+		}
+		
 		if (!file.path.endsWith('.md')) {
 			return;
 		}
@@ -802,6 +1145,35 @@ export default class LettaPlugin extends Plugin {
 		workspace.revealLeaf(leaf);
 	}
 
+	async openMemoryView(): Promise<void> {
+		// Auto-connect if not connected
+		if (!this.agent) {
+			new Notice('Connecting to Letta...');
+			const connected = await this.connectToLetta();
+			if (!connected) {
+				return;
+			}
+		}
+
+		const { workspace } = this.app;
+
+		let leaf: WorkspaceLeaf | null = null;
+		const leaves = workspace.getLeavesOfType(LETTA_MEMORY_VIEW_TYPE);
+
+		if (leaves.length > 0) {
+			// A leaf with our view already exists, use that
+			leaf = leaves[0];
+		} else {
+			// Our view could not be found in the workspace, create a new leaf
+			// in the right sidebar for it
+			leaf = workspace.getRightLeaf(false);
+			await leaf.setViewState({ type: LETTA_MEMORY_VIEW_TYPE, active: true });
+		}
+
+		// "Reveal" the leaf in case it is in a collapsed sidebar
+		workspace.revealLeaf(leaf);
+	}
+
 	async sendMessageToAgent(message: string): Promise<LettaMessage[]> {
 		if (!this.agent) throw new Error('Agent not connected');
 
@@ -866,6 +1238,11 @@ class LettaChatView extends ItemView {
 		configButton.innerHTML = '⚙️';
 		configButton.title = 'Configure agent properties';
 		configButton.addEventListener('click', () => this.openAgentConfig());
+
+		const memoryButton = titleContainer.createEl('button', { cls: 'letta-config-button' });
+		memoryButton.innerHTML = '🧠';
+		memoryButton.title = 'Open memory blocks panel';
+		memoryButton.addEventListener('click', () => this.plugin.openMemoryView());
 		
 		const statusIndicator = header.createEl('div', { cls: 'letta-status-indicator' });
 		statusIndicator.createEl('span', { cls: 'letta-status-dot letta-status-connected' });
@@ -1096,26 +1473,53 @@ class LettaChatView extends ItemView {
 			return;
 		}
 
-		// Get current agent details
-		const agentDetails = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`);
+		// Get current agent details and blocks
+		const [agentDetails, blocks] = await Promise.all([
+			this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`),
+			this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks`)
+		]);
 		
-		const modal = new AgentPropertyModal(this.app, agentDetails, async (updatedConfig) => {
+		const modal = new AgentPropertyModal(this.app, agentDetails, blocks, async (updatedConfig) => {
 			try {
-				// Update agent via API
-				await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`, {
-					method: 'PATCH',
-					body: updatedConfig
-				});
+				// Extract block updates from config
+				const { blockUpdates, ...agentConfig } = updatedConfig;
 
-				// Update local agent reference and settings
-				if (updatedConfig.name && updatedConfig.name !== this.plugin.settings.agentName) {
-					this.plugin.settings.agentName = updatedConfig.name;
-					await this.plugin.saveSettings();
-					this.agentNameElement.textContent = updatedConfig.name;
-					this.plugin.agent.name = updatedConfig.name;
+				// Update agent properties if any changed
+				if (Object.keys(agentConfig).length > 0) {
+					await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`, {
+						method: 'PATCH',
+						body: agentConfig
+					});
 				}
 
-				new Notice('Agent configuration updated successfully');
+				// Update blocks if any changed
+				if (blockUpdates && blockUpdates.length > 0) {
+					await Promise.all(blockUpdates.map(async (blockUpdate: any) => {
+						await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/${blockUpdate.label}`, {
+							method: 'PATCH',
+							body: { value: blockUpdate.value }
+						});
+					}));
+				}
+
+				// Update local agent reference and settings
+				if (agentConfig.name && agentConfig.name !== this.plugin.settings.agentName) {
+					this.plugin.settings.agentName = agentConfig.name;
+					await this.plugin.saveSettings();
+					this.agentNameElement.textContent = agentConfig.name;
+					this.plugin.agent.name = agentConfig.name;
+				}
+
+				const hasAgentChanges = Object.keys(agentConfig).length > 0;
+				const hasBlockChanges = blockUpdates && blockUpdates.length > 0;
+				
+				if (hasAgentChanges && hasBlockChanges) {
+					new Notice('Agent configuration and memory blocks updated successfully');
+				} else if (hasAgentChanges) {
+					new Notice('Agent configuration updated successfully');
+				} else if (hasBlockChanges) {
+					new Notice('Memory blocks updated successfully');
+				}
 			} catch (error) {
 				console.error('Failed to update agent configuration:', error);
 				new Notice('Failed to update agent configuration. Please try again.');
@@ -1193,6 +1597,230 @@ class LettaChatView extends ItemView {
 			this.sendButton.removeClass('letta-button-loading');
 			this.messageInput.focus();
 		}
+	}
+}
+
+class LettaMemoryView extends ItemView {
+	plugin: LettaPlugin;
+	blocks: any[] = [];
+	blockEditors: Map<string, HTMLTextAreaElement> = new Map();
+	blockSaveButtons: Map<string, HTMLButtonElement> = new Map();
+	blockDirtyStates: Map<string, boolean> = new Map();
+	refreshButton: HTMLButtonElement;
+
+	constructor(leaf: WorkspaceLeaf, plugin: LettaPlugin) {
+		super(leaf);
+		this.plugin = plugin;
+	}
+
+	getViewType() {
+		return LETTA_MEMORY_VIEW_TYPE;
+	}
+
+	getDisplayText() {
+		return 'Memory Blocks';
+	}
+
+	getIcon() {
+		return 'brain-circuit';
+	}
+
+	async onOpen() {
+		const container = this.containerEl.children[1];
+		container.empty();
+		container.addClass('letta-memory-view');
+
+		// Header
+		const header = container.createEl('div', { cls: 'letta-memory-header' });
+		header.createEl('h3', { text: 'Agent Memory Blocks', cls: 'letta-memory-title' });
+		
+		this.refreshButton = header.createEl('button', { 
+			text: '↻ Refresh',
+			cls: 'letta-memory-refresh-btn'
+		});
+		this.refreshButton.addEventListener('click', () => this.loadBlocks());
+
+		// Content container
+		const contentContainer = container.createEl('div', { cls: 'letta-memory-content' });
+		
+		// Load initial blocks
+		await this.loadBlocks();
+	}
+
+	async loadBlocks() {
+		try {
+			// Auto-connect if not connected
+			if (!this.plugin.agent) {
+				new Notice('Connecting to Letta...');
+				const connected = await this.plugin.connectToLetta();
+				if (!connected) {
+					this.showError('Failed to connect to Letta');
+					return;
+				}
+			}
+
+			this.refreshButton.disabled = true;
+			this.refreshButton.textContent = 'Loading...';
+
+			// Fetch blocks from API
+			this.blocks = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks`);
+			
+			this.renderBlocks();
+			
+		} catch (error) {
+			console.error('Failed to load memory blocks:', error);
+			this.showError('Failed to load memory blocks');
+		} finally {
+			this.refreshButton.disabled = false;
+			this.refreshButton.textContent = '↻ Refresh';
+		}
+	}
+
+	renderBlocks() {
+		const contentContainer = this.containerEl.querySelector('.letta-memory-content') as HTMLElement;
+		contentContainer.empty();
+
+		if (!this.blocks || this.blocks.length === 0) {
+			contentContainer.createEl('div', { 
+				text: 'No memory blocks found',
+				cls: 'letta-memory-empty'
+			});
+			return;
+		}
+
+		// Create block editors
+		this.blocks.forEach(block => {
+			const blockContainer = contentContainer.createEl('div', { cls: 'letta-memory-block' });
+			
+			// Block header
+			const blockHeader = blockContainer.createEl('div', { cls: 'letta-memory-block-header' });
+			blockHeader.createEl('h4', { 
+				text: block.label || block.name || 'Unnamed Block',
+				cls: 'letta-memory-block-title'
+			});
+
+			// Character counter
+			const charCounter = blockHeader.createEl('span', { 
+				text: `${(block.value || '').length}/${block.limit || 5000}`,
+				cls: 'letta-memory-char-counter'
+			});
+
+			// Block description
+			if (block.description) {
+				blockContainer.createEl('div', { 
+					text: block.description,
+					cls: 'letta-memory-block-description'
+				});
+			}
+
+			// Editor textarea
+			const editor = blockContainer.createEl('textarea', {
+				cls: 'letta-memory-block-editor',
+				attr: { 
+					placeholder: 'Enter block content...',
+					'data-block-label': block.label || block.name
+				}
+			});
+			editor.value = block.value || '';
+			
+			if (block.read_only) {
+				editor.disabled = true;
+				editor.style.opacity = '0.6';
+			}
+
+			// Update character counter on input
+			editor.addEventListener('input', () => {
+				const currentLength = editor.value.length;
+				const limit = block.limit || 5000;
+				charCounter.textContent = `${currentLength}/${limit}`;
+				
+				if (currentLength > limit) {
+					charCounter.style.color = 'var(--text-error)';
+				} else {
+					charCounter.style.color = 'var(--text-muted)';
+				}
+
+				// Track dirty state
+				const isDirty = editor.value !== (block.value || '');
+				this.blockDirtyStates.set(block.label || block.name, isDirty);
+				this.updateSaveButton(block.label || block.name, isDirty);
+			});
+
+			// Save button
+			const saveButton = blockContainer.createEl('button', {
+				text: 'Save Changes',
+				cls: 'letta-memory-save-btn'
+			});
+			saveButton.disabled = true;
+			
+			saveButton.addEventListener('click', () => this.saveBlock(block.label || block.name));
+
+			// Store references
+			this.blockEditors.set(block.label || block.name, editor);
+			this.blockSaveButtons.set(block.label || block.name, saveButton);
+			this.blockDirtyStates.set(block.label || block.name, false);
+		});
+	}
+
+	updateSaveButton(blockLabel: string, isDirty: boolean) {
+		const saveButton = this.blockSaveButtons.get(blockLabel);
+		if (saveButton) {
+			saveButton.disabled = !isDirty;
+			saveButton.textContent = isDirty ? 'Save Changes' : 'No Changes';
+		}
+	}
+
+	async saveBlock(blockLabel: string) {
+		const editor = this.blockEditors.get(blockLabel);
+		const saveButton = this.blockSaveButtons.get(blockLabel);
+		
+		if (!editor || !saveButton) return;
+
+		try {
+			saveButton.disabled = true;
+			saveButton.textContent = 'Saving...';
+
+			// Update block via API
+			await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/${blockLabel}`, {
+				method: 'PATCH',
+				body: { value: editor.value.trim() }
+			});
+
+			// Update local state
+			const block = this.blocks.find(b => (b.label || b.name) === blockLabel);
+			if (block) {
+				block.value = editor.value.trim();
+			}
+			
+			this.blockDirtyStates.set(blockLabel, false);
+			saveButton.textContent = 'Saved ✓';
+			
+			setTimeout(() => {
+				saveButton.textContent = 'No Changes';
+			}, 2000);
+
+			new Notice(`Memory block "${blockLabel}" updated successfully`);
+
+		} catch (error) {
+			console.error(`Failed to save block ${blockLabel}:`, error);
+			new Notice(`Failed to save block "${blockLabel}"`);
+			saveButton.textContent = 'Save Changes';
+		} finally {
+			saveButton.disabled = this.blockDirtyStates.get(blockLabel) !== true;
+		}
+	}
+
+	showError(message: string) {
+		const contentContainer = this.containerEl.querySelector('.letta-memory-content') as HTMLElement;
+		contentContainer.empty();
+		contentContainer.createEl('div', { 
+			text: message,
+			cls: 'letta-memory-error'
+		});
+	}
+
+	async onClose() {
+		// Clean up any resources if needed
 	}
 }
 
@@ -1436,11 +2064,13 @@ class AgentConfigModal extends Modal {
 
 class AgentPropertyModal extends Modal {
 	agent: any;
+	blocks: any[];
 	onSave: (config: any) => Promise<void>;
 
-	constructor(app: App, agent: any, onSave: (config: any) => Promise<void>) {
+	constructor(app: App, agent: any, blocks: any[], onSave: (config: any) => Promise<void>) {
 		super(app);
 		this.agent = agent;
+		this.blocks = blocks;
 		this.onSave = onSave;
 	}
 
@@ -1515,6 +2145,60 @@ class AgentPropertyModal extends Modal {
 			value: this.agent.tags ? this.agent.tags.join(', ') : ''
 		});
 
+		// Memory blocks section
+		const blocksSection = form.createEl('div', { cls: 'config-section' });
+		blocksSection.createEl('h3', { text: 'Core Memory Blocks' });
+		
+		// Create block editors
+		this.blocks.forEach(block => {
+			const blockGroup = blocksSection.createEl('div', { cls: 'config-group' });
+			const blockHeader = blockGroup.createEl('div', { cls: 'block-header' });
+			
+			blockHeader.createEl('label', { 
+				text: `${block.label || block.name || 'Unnamed Block'}`,
+				cls: 'config-label'
+			});
+			
+			const blockInfo = blockHeader.createEl('span', { 
+				text: `${block.value?.length || 0}/${block.limit || 5000} chars`,
+				cls: 'block-char-count'
+			});
+			
+			if (block.description) {
+				blockGroup.createEl('div', { 
+					text: block.description,
+					cls: 'config-help'
+				});
+			}
+			
+			const blockTextarea = blockGroup.createEl('textarea', {
+				cls: 'config-textarea block-editor',
+				attr: { 
+					rows: '8',
+					'data-block-label': block.label || block.name
+				}
+			});
+			blockTextarea.value = block.value || '';
+			
+			if (block.read_only) {
+				blockTextarea.disabled = true;
+				blockTextarea.style.opacity = '0.6';
+			}
+			
+			// Add character counter update
+			blockTextarea.addEventListener('input', () => {
+				const currentLength = blockTextarea.value.length;
+				const limit = block.limit || 5000;
+				blockInfo.textContent = `${currentLength}/${limit} chars`;
+				
+				if (currentLength > limit) {
+					blockInfo.style.color = 'var(--text-error)';
+				} else {
+					blockInfo.style.color = 'var(--text-muted)';
+				}
+			});
+		});
+
 		// Memory management section
 		const memorySection = form.createEl('div', { cls: 'config-section' });
 		memorySection.createEl('h3', { text: 'Memory Management' });
@@ -1533,6 +2217,11 @@ class AgentPropertyModal extends Modal {
 		// Buttons
 		const buttonContainer = contentEl.createEl('div', { cls: 'agent-config-buttons' });
 		
+		const blockFilesButton = buttonContainer.createEl('button', {
+			text: 'Open Block Files',
+			cls: 'agent-config-secondary-btn'
+		});
+		
 		const saveButton = buttonContainer.createEl('button', {
 			text: 'Save Changes',
 			cls: 'agent-config-create-btn'
@@ -1544,8 +2233,17 @@ class AgentPropertyModal extends Modal {
 		});
 
 		// Event handlers
+		blockFilesButton.addEventListener('click', async () => {
+			// Get the plugin instance from the app
+			const plugin = (this.app as any).plugins.plugins['letta-ai-agent'] as LettaPlugin;
+			if (plugin) {
+				await plugin.createBlockFiles();
+			}
+		});
+
 		saveButton.addEventListener('click', async () => {
 			const config: any = {};
+			const blockUpdates: any[] = [];
 			
 			// Only include fields that have changed
 			if (nameInput.value.trim() !== this.agent.name) {
@@ -1571,9 +2269,23 @@ class AgentPropertyModal extends Modal {
 				config.message_buffer_autoclear = clearCheckbox.checked;
 			}
 
-			// Only proceed if there are changes
-			if (Object.keys(config).length > 0) {
-				await this.onSave(config);
+			// Check for block changes
+			const blockTextareas = form.querySelectorAll('.block-editor') as NodeListOf<HTMLTextAreaElement>;
+			blockTextareas.forEach(textarea => {
+				const blockLabel = textarea.getAttribute('data-block-label');
+				const originalBlock = this.blocks.find(b => (b.label || b.name) === blockLabel);
+				
+				if (originalBlock && textarea.value !== (originalBlock.value || '')) {
+					blockUpdates.push({
+						label: blockLabel,
+						value: textarea.value
+					});
+				}
+			});
+
+			// Save changes
+			if (Object.keys(config).length > 0 || blockUpdates.length > 0) {
+				await this.onSave({ ...config, blockUpdates });
 			}
 			
 			this.close();

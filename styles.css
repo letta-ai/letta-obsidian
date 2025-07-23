@@ -666,3 +666,206 @@
 .agent-config-cancel-btn:hover {
     background: var(--background-modifier-hover);
 }
+
+.agent-config-secondary-btn {
+    background: var(--interactive-normal);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    font-weight: 500;
+}
+
+.agent-config-secondary-btn:hover {
+    background: var(--interactive-hover);
+}
+
+/* Block editing styles */
+.block-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.block-char-count {
+    font-size: 0.8em;
+    color: var(--text-muted);
+    font-family: var(--font-monospace);
+    background: var(--background-primary-alt);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.block-editor {
+    font-family: var(--font-monospace);
+    font-size: 0.85em;
+    line-height: 1.4;
+    resize: vertical;
+    min-height: 120px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+}
+
+/* Memory View Styles */
+.letta-memory-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 0;
+}
+
+.letta-memory-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+}
+
+.letta-memory-title {
+    margin: 0;
+    color: var(--text-normal);
+    font-size: 1.1em;
+    font-weight: 600;
+}
+
+.letta-memory-refresh-btn {
+    background: var(--interactive-normal);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85em;
+    transition: background 0.2s ease;
+}
+
+.letta-memory-refresh-btn:hover:not(:disabled) {
+    background: var(--interactive-hover);
+}
+
+.letta-memory-refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.letta-memory-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    background: var(--background-primary);
+}
+
+.letta-memory-block {
+    margin-bottom: 24px;
+    padding: 16px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    background: var(--background-secondary);
+}
+
+.letta-memory-block:last-child {
+    margin-bottom: 0;
+}
+
+.letta-memory-block-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.letta-memory-block-title {
+    margin: 0;
+    color: var(--text-normal);
+    font-size: 1em;
+    font-weight: 600;
+}
+
+.letta-memory-char-counter {
+    font-size: 0.8em;
+    color: var(--text-muted);
+    font-family: var(--font-monospace);
+    background: var(--background-primary-alt);
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.letta-memory-block-description {
+    margin-bottom: 12px;
+    color: var(--text-muted);
+    font-size: 0.85em;
+    font-style: italic;
+}
+
+.letta-memory-block-editor {
+    width: 100%;
+    min-height: 120px;
+    padding: 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-family: var(--font-monospace);
+    font-size: 0.9em;
+    line-height: 1.4;
+    resize: vertical;
+    margin-bottom: 12px;
+    transition: border-color 0.2s ease;
+}
+
+.letta-memory-block-editor:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+.letta-memory-block-editor:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.letta-memory-save-btn {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.85em;
+    transition: all 0.2s ease;
+}
+
+.letta-memory-save-btn:hover:not(:disabled) {
+    background: var(--interactive-accent-hover);
+    transform: translateY(-1px);
+}
+
+.letta-memory-save-btn:disabled {
+    background: var(--background-modifier-border);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    transform: none;
+}
+
+.letta-memory-empty {
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 40px;
+}
+
+.letta-memory-error {
+    text-align: center;
+    color: var(--text-error);
+    padding: 40px;
+    background: var(--background-modifier-error);
+    border-radius: 8px;
+    border: 1px solid var(--text-error);
+}
