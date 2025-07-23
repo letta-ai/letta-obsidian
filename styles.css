@@ -869,3 +869,120 @@
     border-radius: 8px;
     border: 1px solid var(--text-error);
 }
+
+/* Conflict Resolution Dialog */
+.conflict-warning {
+    margin-bottom: 20px;
+    padding: 12px;
+    background: var(--background-modifier-error);
+    border-radius: 6px;
+    border-left: 4px solid var(--text-error);
+}
+
+.conflict-message {
+    margin: 0;
+    color: var(--text-error);
+    font-weight: 500;
+}
+
+.conflict-versions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.conflict-section {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 12px;
+    background: var(--background-secondary);
+}
+
+.conflict-section-title {
+    margin: 0 0 8px 0;
+    color: var(--text-normal);
+    font-size: 0.9em;
+    font-weight: 600;
+}
+
+.conflict-textarea {
+    width: 100%;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 8px;
+    font-family: var(--font-monospace);
+    font-size: 0.85em;
+    line-height: 1.4;
+    color: var(--text-normal);
+    resize: vertical;
+}
+
+.conflict-char-count {
+    font-size: 0.8em;
+    color: var(--text-muted);
+    margin: 8px 0 0 0;
+    font-family: var(--font-monospace);
+}
+
+.conflict-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 20px;
+}
+
+.conflict-btn {
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: 500;
+    font-size: 0.85em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+}
+
+.conflict-btn-server {
+    background: var(--color-blue);
+    color: var(--text-on-accent);
+}
+
+.conflict-btn-server:hover {
+    background: var(--color-blue-hover);
+}
+
+.conflict-btn-overwrite {
+    background: var(--color-orange);
+    color: var(--text-on-accent);
+}
+
+.conflict-btn-overwrite:hover {
+    background: var(--color-orange-hover);
+}
+
+.conflict-btn-cancel {
+    background: var(--background-primary);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+}
+
+.conflict-btn-cancel:hover {
+    background: var(--background-modifier-hover);
+}
+
+/* Mobile responsive for conflict dialog */
+@media (max-width: 768px) {
+    .conflict-versions {
+        grid-template-columns: 1fr;
+    }
+    
+    .conflict-buttons {
+        flex-direction: column;
+    }
+    
+    .conflict-btn {
+        width: 100%;
+        justify-content: center;
+    }
+}

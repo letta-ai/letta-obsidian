@@ -1607,6 +1607,7 @@ class LettaMemoryView extends ItemView {
 	blockSaveButtons: Map<string, HTMLButtonElement> = new Map();
 	blockDirtyStates: Map<string, boolean> = new Map();
 	refreshButton: HTMLButtonElement;
+	lastRefreshTime: Date = new Date();
 
 	constructor(leaf: WorkspaceLeaf, plugin: LettaPlugin) {
 		super(leaf);
@@ -1664,6 +1665,7 @@ class LettaMemoryView extends ItemView {
 
 			// Fetch blocks from API
 			this.blocks = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks`);
+			this.lastRefreshTime = new Date();
 			
 			this.renderBlocks();
 			
@@ -1778,20 +1780,65 @@ class LettaMemoryView extends ItemView {
 
 		try {
 			saveButton.disabled = true;
-			saveButton.textContent = 'Saving...';
+			saveButton.textContent = 'Checking...';
 
-			// Update block via API
+			// Step 1: Fetch current server state to check for conflicts
+			const serverBlock = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/${blockLabel}`);
+			const localBlock = this.blocks.find(b => (b.label || b.name) === blockLabel);
+			
+			if (!localBlock) {
+				throw new Error('Local block not found');
+			}
+
+			// Step 2: Check for conflicts (server value differs from our original local value)
+			const serverValue = (serverBlock.value || '').trim();
+			const originalLocalValue = (localBlock.value || '').trim();
+			const newValue = editor.value.trim();
+
+			if (serverValue !== originalLocalValue) {
+				// Conflict detected - show resolution dialog
+				saveButton.textContent = 'Conflict Detected';
+				
+				const resolution = await this.showConflictDialog(blockLabel, originalLocalValue, serverValue, newValue);
+				
+				if (resolution === 'cancel') {
+					saveButton.textContent = 'Save Changes';
+					return;
+				} else if (resolution === 'keep-server') {
+					// Update editor and local state with server version
+					editor.value = serverValue;
+					localBlock.value = serverValue;
+					this.blockDirtyStates.set(blockLabel, false);
+					saveButton.textContent = 'No Changes';
+					
+					// Update character counter
+					const charCounter = this.containerEl.querySelector(`[data-block-label="${blockLabel}"]`)?.parentElement?.querySelector('.letta-memory-char-counter') as HTMLElement;
+					if (charCounter) {
+						const limit = localBlock.limit || 5000;
+						charCounter.textContent = `${serverValue.length}/${limit}`;
+						if (serverValue.length > limit) {
+							charCounter.style.color = 'var(--text-error)';
+						} else {
+							charCounter.style.color = 'var(--text-muted)';
+						}
+					}
+					
+					new Notice(`Memory block "${blockLabel}" updated with server version`);
+					return;
+				}
+				// If resolution === 'overwrite', continue with save
+			}
+
+			// Step 3: Save our changes (no conflict or user chose to overwrite)
+			saveButton.textContent = 'Saving...';
+			
 			await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/${blockLabel}`, {
 				method: 'PATCH',
-				body: { value: editor.value.trim() }
+				body: { value: newValue }
 			});
 
 			// Update local state
-			const block = this.blocks.find(b => (b.label || b.name) === blockLabel);
-			if (block) {
-				block.value = editor.value.trim();
-			}
-			
+			localBlock.value = newValue;
 			this.blockDirtyStates.set(blockLabel, false);
 			saveButton.textContent = 'Saved ✓';
 			
@@ -1803,11 +1850,94 @@ class LettaMemoryView extends ItemView {
 
 		} catch (error) {
 			console.error(`Failed to save block ${blockLabel}:`, error);
-			new Notice(`Failed to save block "${blockLabel}"`);
+			new Notice(`Failed to save block "${blockLabel}". Please try again.`);
 			saveButton.textContent = 'Save Changes';
 		} finally {
 			saveButton.disabled = this.blockDirtyStates.get(blockLabel) !== true;
 		}
+	}
+
+	private showConflictDialog(blockLabel: string, originalValue: string, serverValue: string, localValue: string): Promise<'keep-server' | 'overwrite' | 'cancel'> {
+		return new Promise((resolve) => {
+			const modal = new Modal(this.app);
+			modal.setTitle('Memory Block Conflict');
+			
+			const { contentEl } = modal;
+			
+			// Warning message
+			const warningEl = contentEl.createEl('div', { cls: 'conflict-warning' });
+			warningEl.createEl('p', { 
+				text: `The memory block "${blockLabel}" has been changed on the server since you started editing.`,
+				cls: 'conflict-message'
+			});
+			
+			// Create tabs/sections for different versions
+			const versionsContainer = contentEl.createEl('div', { cls: 'conflict-versions' });
+			
+			// Server version section
+			const serverSection = versionsContainer.createEl('div', { cls: 'conflict-section' });
+			serverSection.createEl('h4', { text: '🌐 Server Version (Current)', cls: 'conflict-section-title' });
+			const serverTextarea = serverSection.createEl('textarea', { 
+				cls: 'conflict-textarea',
+				attr: { readonly: 'true', rows: '6' }
+			});
+			serverTextarea.value = serverValue;
+			
+			// Your version section  
+			const localSection = versionsContainer.createEl('div', { cls: 'conflict-section' });
+			localSection.createEl('h4', { text: '✏️ Your Changes', cls: 'conflict-section-title' });
+			const localTextarea = localSection.createEl('textarea', { 
+				cls: 'conflict-textarea',
+				attr: { readonly: 'true', rows: '6' }
+			});
+			localTextarea.value = localValue;
+			
+			// Character counts
+			const serverCount = contentEl.createEl('p', { 
+				text: `Server version: ${serverValue.length} characters`,
+				cls: 'conflict-char-count'
+			});
+			const localCount = contentEl.createEl('p', { 
+				text: `Your version: ${localValue.length} characters`,
+				cls: 'conflict-char-count'
+			});
+			
+			// Action buttons
+			const buttonContainer = contentEl.createEl('div', { cls: 'conflict-buttons' });
+			
+			const keepServerButton = buttonContainer.createEl('button', {
+				text: 'Keep Server Version',
+				cls: 'conflict-btn conflict-btn-server'
+			});
+			
+			const overwriteButton = buttonContainer.createEl('button', {
+				text: 'Overwrite with My Changes',
+				cls: 'conflict-btn conflict-btn-overwrite'
+			});
+			
+			const cancelButton = buttonContainer.createEl('button', {
+				text: 'Cancel',
+				cls: 'conflict-btn conflict-btn-cancel'
+			});
+			
+			// Event handlers
+			keepServerButton.addEventListener('click', () => {
+				resolve('keep-server');
+				modal.close();
+			});
+			
+			overwriteButton.addEventListener('click', () => {
+				resolve('overwrite');
+				modal.close();
+			});
+			
+			cancelButton.addEventListener('click', () => {
+				resolve('cancel');
+				modal.close();
+			});
+			
+			modal.open();
+		});
 	}
 
 	showError(message: string) {
