@@ -8,8 +8,12 @@ import {
 	PluginSettingTab, 
 	Setting,
 	TFile,
-	requestUrl
+	requestUrl,
+	ItemView,
+	WorkspaceLeaf
 } from 'obsidian';
+
+export const LETTA_CHAT_VIEW_TYPE = 'letta-chat-view';
 
 interface LettaPluginSettings {
 	lettaApiKey: string;
@@ -77,9 +81,15 @@ export default class LettaPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
+		// Register the chat view
+		this.registerView(
+			LETTA_CHAT_VIEW_TYPE,
+			(leaf) => new LettaChatView(leaf, this)
+		);
+
 		// Add ribbon icon for chat
-		this.addRibbonIcon('message-circle', 'Chat with Letta Agent', (evt: MouseEvent) => {
-			this.openChatModal();
+		this.addRibbonIcon('bot', 'Open Letta Chat', (evt: MouseEvent) => {
+			this.openChatView();
 		});
 
 		// Add status bar
@@ -91,7 +101,7 @@ export default class LettaPlugin extends Plugin {
 			id: 'open-letta-chat',
 			name: 'Open Letta Chat',
 			callback: () => {
-				this.openChatModal();
+				this.openChatView();
 			}
 		});
 
@@ -104,10 +114,33 @@ export default class LettaPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'sync-current-file-to-letta',
+			name: 'Sync Current File to Letta',
+			editorCallback: async (editor: Editor, view: MarkdownView) => {
+				await this.syncCurrentFile(view.file);
+			}
+		});
+
+		this.addCommand({
 			id: 'connect-to-letta',
 			name: 'Connect to Letta',
 			callback: async () => {
+				if (this.agent && this.source) {
+					new Notice('Already connected to Letta');
+					return;
+				}
 				await this.connectToLetta();
+			}
+		});
+
+		this.addCommand({
+			id: 'disconnect-from-letta',
+			name: 'Disconnect from Letta',
+			callback: () => {
+				this.agent = null;
+				this.source = null;
+				this.updateStatusBar('Disconnected');
+				new Notice('Disconnected from Letta');
 			}
 		});
 
@@ -143,6 +176,22 @@ export default class LettaPlugin extends Plugin {
 				}),
 			);
 		}
+
+		// Add context menu for syncing files
+		this.registerEvent(
+			this.app.workspace.on('file-menu', (menu, file) => {
+				if (file instanceof TFile && file.path.endsWith('.md')) {
+					menu.addItem((item) => {
+						item
+							.setTitle('Sync to Letta')
+							.setIcon('bot')
+							.onClick(async () => {
+								await this.syncCurrentFile(file);
+							});
+					});
+				}
+			})
+		);
 	}
 
 	onunload() {
@@ -468,9 +517,13 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async syncVaultToLetta(): Promise<void> {
-		if (!this.source) {
-			new Notice('Please connect to Letta first');
-			return;
+		// Auto-connect if not connected
+		if (!this.source || !this.agent) {
+			new Notice('Connecting to Letta...');
+			const connected = await this.connectToLetta();
+			if (!connected) {
+				return;
+			}
 		}
 
 		try {
@@ -512,7 +565,7 @@ export default class LettaPlugin extends Plugin {
 
 					if (shouldUpload) {
 						// Delete existing file to avoid duplicates
-						await this.makeRequest(`/v1/sources/${this.source.id}/files/${existingFile.id}`, {
+						await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
 							method: 'DELETE'
 						});
 					}
@@ -557,9 +610,92 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-	async onFileChange(file: TFile): Promise<void> {
-		if (!file.path.endsWith('.md') || !this.source) {
+	async syncCurrentFile(file: TFile | null): Promise<void> {
+		if (!file) {
+			new Notice('No active file to sync');
 			return;
+		}
+
+		if (!file.path.endsWith('.md')) {
+			new Notice('Only markdown files can be synced to Letta');
+			return;
+		}
+
+		// Auto-connect if not connected
+		if (!this.source || !this.agent) {
+			new Notice('Connecting to Letta...');
+			const connected = await this.connectToLetta();
+			if (!connected) {
+				return;
+			}
+		}
+
+		try {
+			this.updateStatusBar('Syncing file...');
+			
+			const encodedPath = this.encodeFilePath(file.path);
+			const content = await this.app.vault.read(file);
+
+			// Check if file exists in Letta and get metadata
+			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
+			
+			let action = 'uploaded';
+			
+			if (existingFile) {
+				// Delete existing file first
+				await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
+					method: 'DELETE'
+				});
+				action = 'updated';
+			}
+
+			// Upload the file
+			console.log(`[Letta Plugin] Syncing current file:`, encodedPath);
+			
+			const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
+			const multipartBody = [
+				`--${boundary}`,
+				`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
+				'Content-Type: text/markdown',
+				'',
+				content,
+				`--${boundary}--`
+			].join('\r\n');
+
+			await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': `multipart/form-data; boundary=${boundary}`
+				},
+				body: multipartBody,
+				isFileUpload: true
+			});
+
+			this.updateStatusBar('Connected');
+			new Notice(`File "${file.name}" ${action} to Letta successfully`);
+
+		} catch (error: any) {
+			console.error('Failed to sync current file:', error);
+			this.updateStatusBar('Error');
+			new Notice(`Failed to sync file: ${error.message}`);
+		}
+	}
+
+	async onFileChange(file: TFile): Promise<void> {
+		if (!file.path.endsWith('.md')) {
+			return;
+		}
+
+		// Auto-connect if not connected (silently for auto-sync)
+		if (!this.source || !this.agent) {
+			try {
+				await this.connectToLetta();
+			} catch (error) {
+				// Silent fail for auto-sync - don't spam user with notices
+				console.log('[Letta Plugin] Auto-sync failed: not connected');
+				return;
+			}
 		}
 
 		try {
@@ -571,7 +707,7 @@ export default class LettaPlugin extends Plugin {
 				const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
 				const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 				if (existingFile) {
-					await this.makeRequest(`/v1/sources/${this.source.id}/files/${existingFile.id}`, {
+					await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
 						method: 'DELETE'
 					});
 				}
@@ -607,8 +743,19 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async onFileDelete(file: TFile): Promise<void> {
-		if (!file.path.endsWith('.md') || !this.source) {
+		if (!file.path.endsWith('.md')) {
 			return;
+		}
+
+		// Auto-connect if not connected (silently for auto-sync)
+		if (!this.source || !this.agent) {
+			try {
+				await this.connectToLetta();
+			} catch (error) {
+				// Silent fail for auto-sync - don't spam user with notices
+				console.log('[Letta Plugin] Auto-delete failed: not connected');
+				return;
+			}
 		}
 
 		try {
@@ -617,7 +764,7 @@ export default class LettaPlugin extends Plugin {
 			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 			
 			if (existingFile) {
-				await this.makeRequest(`/v1/sources/${this.source.id}/files/${existingFile.id}`, {
+				await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
 					method: 'DELETE'
 				});
 			}
@@ -626,13 +773,33 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-	openChatModal(): void {
-		if (!this.agent) {
-			new Notice('Please connect to Letta first');
-			return;
+	async openChatView(): Promise<void> {
+		// Auto-connect if not connected
+		if (!this.agent || !this.source) {
+			new Notice('Connecting to Letta...');
+			const connected = await this.connectToLetta();
+			if (!connected) {
+				return;
+			}
 		}
 
-		new LettaChatModal(this.app, this).open();
+		const { workspace } = this.app;
+
+		let leaf: WorkspaceLeaf | null = null;
+		const leaves = workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE);
+
+		if (leaves.length > 0) {
+			// A leaf with our view already exists, use that
+			leaf = leaves[0];
+		} else {
+			// Our view could not be found in the workspace, create a new leaf
+			// in the right sidebar for it
+			leaf = workspace.getRightLeaf(false);
+			await leaf.setViewState({ type: LETTA_CHAT_VIEW_TYPE, active: true });
+		}
+
+		// "Reveal" the leaf in case it is in a collapsed sidebar
+		workspace.revealLeaf(leaf);
 	}
 
 	async sendMessageToAgent(message: string): Promise<LettaMessage[]> {
@@ -655,49 +822,77 @@ export default class LettaPlugin extends Plugin {
 	}
 }
 
-class LettaChatModal extends Modal {
+class LettaChatView extends ItemView {
 	plugin: LettaPlugin;
 	chatContainer: HTMLElement;
 	inputContainer: HTMLElement;
 	messageInput: HTMLTextAreaElement;
 	sendButton: HTMLButtonElement;
 
-	constructor(app: App, plugin: LettaPlugin) {
-		super(app);
+	constructor(leaf: WorkspaceLeaf, plugin: LettaPlugin) {
+		super(leaf);
 		this.plugin = plugin;
 	}
 
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.empty();
-		contentEl.addClass('letta-chat-modal');
+	getViewType() {
+		return LETTA_CHAT_VIEW_TYPE;
+	}
 
-		// Header
-		const header = contentEl.createEl('div', { cls: 'letta-chat-header' });
-		header.createEl('h2', { text: `Chat with ${this.plugin.settings.agentName}` });
-		header.createEl('p', { 
-			text: `Connected to: ${this.plugin.settings.sourceName}`,
-			cls: 'letta-chat-subtitle' 
-		});
+	getDisplayText() {
+		return 'Letta Chat';
+	}
+
+	getIcon() {
+		return 'bot';
+	}
+
+	async onOpen() {
+		const container = this.containerEl.children[1];
+		container.empty();
+		container.addClass('letta-chat-view');
+
+		// Header with connection status
+		const header = container.createEl('div', { cls: 'letta-chat-header' });
+		
+		const titleSection = header.createEl('div', { cls: 'letta-chat-title-section' });
+		titleSection.createEl('h3', { text: this.plugin.settings.agentName, cls: 'letta-chat-title' });
+		
+		const statusIndicator = header.createEl('div', { cls: 'letta-status-indicator' });
+		statusIndicator.createEl('span', { cls: 'letta-status-dot letta-status-connected' });
+		statusIndicator.createEl('span', { text: 'Connected', cls: 'letta-status-text' });
 
 		// Chat container
-		this.chatContainer = contentEl.createEl('div', { cls: 'letta-chat-container' });
+		this.chatContainer = container.createEl('div', { cls: 'letta-chat-container' });
 		
 		// Input container
-		this.inputContainer = contentEl.createEl('div', { cls: 'letta-input-container' });
+		this.inputContainer = container.createEl('div', { cls: 'letta-input-container' });
 		
 		this.messageInput = this.inputContainer.createEl('textarea', {
 			cls: 'letta-message-input',
-			attr: { placeholder: 'Ask me anything about your vault...' }
+			attr: { 
+				placeholder: 'Ask about your vault...',
+				rows: '2'
+			}
 		});
 
-		this.sendButton = this.inputContainer.createEl('button', {
-			text: 'Send',
-			cls: 'letta-send-button'
+		const buttonContainer = this.inputContainer.createEl('div', { cls: 'letta-button-container' });
+		
+		this.sendButton = buttonContainer.createEl('button', {
+			cls: 'letta-send-button mod-cta',
+			attr: { 'aria-label': 'Send message' }
+		});
+		this.sendButton.createEl('span', { text: 'Send' });
+		
+		// Clear button
+		const clearButton = buttonContainer.createEl('button', {
+			text: 'Clear',
+			cls: 'letta-clear-button',
+			attr: { 'aria-label': 'Clear chat' }
 		});
 
 		// Event listeners
 		this.sendButton.addEventListener('click', () => this.sendMessage());
+		clearButton.addEventListener('click', () => this.clearChat());
 		
 		this.messageInput.addEventListener('keydown', (evt) => {
 			if (evt.key === 'Enter' && !evt.shiftKey) {
@@ -706,16 +901,18 @@ class LettaChatModal extends Modal {
 			}
 		});
 
-		// Focus input
-		this.messageInput.focus();
+		// Auto-resize textarea
+		this.messageInput.addEventListener('input', () => {
+			this.messageInput.style.height = 'auto';
+			this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 80) + 'px';
+		});
 
 		// Add welcome message
-		this.addMessage('assistant', 'Hello! I\'m your Letta AI agent. I have access to your vault contents and can help you explore, organize, and work with your notes. What would you like to know?');
+		this.addMessage('assistant', 'Hello! 👋 I can help you explore your vault. What would you like to know?', '🤖 Welcome');
 	}
 
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
+	async onClose() {
+		// Clean up any resources if needed
 	}
 
 	addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: string, title?: string) {
@@ -723,42 +920,97 @@ class LettaChatModal extends Modal {
 			cls: `letta-message letta-message-${type}` 
 		});
 
+		// Add timestamp
+		const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		
 		if (title) {
-			messageEl.createEl('div', { cls: 'letta-message-title', text: title });
+			const titleEl = messageEl.createEl('div', { cls: 'letta-message-header' });
+			titleEl.createEl('span', { cls: 'letta-message-title', text: title });
+			titleEl.createEl('span', { cls: 'letta-message-timestamp', text: timestamp });
 		}
 
 		const contentEl = messageEl.createEl('div', { cls: 'letta-message-content' });
 		
 		// Handle different content types
 		if (type === 'tool-call' || type === 'tool-result') {
-			contentEl.createEl('pre', { text: content });
+			const pre = contentEl.createEl('pre', { cls: 'letta-code-block' });
+			pre.createEl('code', { text: content });
 		} else {
-			// Simple markdown-like formatting
-			const formattedContent = content
+			// Enhanced markdown-like formatting
+			let formattedContent = content
 				.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
 				.replace(/\*(.*?)\*/g, '<em>$1</em>')
-				.replace(/`([^`]+)`/g, '<code>$1</code>');
+				.replace(/`([^`]+)`/g, '<code>$1</code>')
+				.replace(/^- (.+)$/gm, '<li>$1</li>')
+				.replace(/^• (.+)$/gm, '<li>$1</li>')
+				.replace(/\n\n/g, '</p><p>')
+				.replace(/^\n/g, '')
+				.replace(/\n$/g, '');
+			
+			// Wrap consecutive list items in <ul> tags
+			formattedContent = formattedContent.replace(/(<li>.*?<\/li>)(\s*<li>.*?<\/li>)*/g, (match) => {
+				return '<ul>' + match + '</ul>';
+			});
+			
+			// Wrap in paragraphs if needed
+			if (formattedContent.includes('</p><p>') && !formattedContent.startsWith('<')) {
+				formattedContent = '<p>' + formattedContent + '</p>';
+			}
+			
 			contentEl.innerHTML = formattedContent;
 		}
 
-		// Scroll to bottom
-		this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+		// Animate message appearance
+		messageEl.style.opacity = '0';
+		messageEl.style.transform = 'translateY(10px)';
+		setTimeout(() => {
+			messageEl.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+			messageEl.style.opacity = '1';
+			messageEl.style.transform = 'translateY(0)';
+		}, 50);
+
+		// Scroll to bottom with smooth animation
+		setTimeout(() => {
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: 'smooth'
+			});
+		}, 100);
+	}
+
+	clearChat() {
+		this.chatContainer.empty();
+		// Re-add welcome message
+		this.addMessage('assistant', 'Hello! 👋 I can help you explore your vault. What would you like to know?', '🤖 Welcome');
 	}
 
 	async sendMessage() {
 		const message = this.messageInput.value.trim();
 		if (!message) return;
 
+		// Check connection and auto-connect if needed
+		if (!this.plugin.agent || !this.plugin.source) {
+			this.addMessage('assistant', '🔌 Connecting to Letta...', '🤖 System');
+			const connected = await this.plugin.connectToLetta();
+			if (!connected) {
+				this.addMessage('assistant', '❌ **Connection failed**. Please check your settings and try again.', '🚨 Error');
+				return;
+			}
+			this.addMessage('assistant', '✅ **Connected!** You can now chat with your agent.', '🤖 System');
+		}
+
 		// Disable input while processing
 		this.messageInput.disabled = true;
 		this.sendButton.disabled = true;
-		this.sendButton.textContent = 'Sending...';
+		this.sendButton.innerHTML = '<span>Sending...</span>';
+		this.sendButton.addClass('letta-button-loading');
 
 		// Add user message to chat
-		this.addMessage('user', message);
+		this.addMessage('user', message, '👤 You');
 
-		// Clear input
+		// Clear and reset input
 		this.messageInput.value = '';
+		this.messageInput.style.height = 'auto';
 
 		try {
 			const messages = await this.plugin.sendMessageToAgent(message);
@@ -768,7 +1020,7 @@ class LettaChatModal extends Modal {
 				switch (responseMessage.message_type) {
 					case 'reasoning_message':
 						if (responseMessage.reasoning) {
-							this.addMessage('reasoning', responseMessage.reasoning, '🧠 Agent Reasoning');
+							this.addMessage('reasoning', responseMessage.reasoning, '🧠 Reasoning');
 						}
 						break;
 					case 'tool_call_message':
@@ -783,7 +1035,7 @@ class LettaChatModal extends Modal {
 						break;
 					case 'assistant_message':
 						if (responseMessage.content) {
-							this.addMessage('assistant', responseMessage.content);
+							this.addMessage('assistant', responseMessage.content, '🤖 Assistant');
 						}
 						break;
 				}
@@ -791,12 +1043,13 @@ class LettaChatModal extends Modal {
 
 		} catch (error: any) {
 			console.error('Failed to send message:', error);
-			this.addMessage('assistant', `Error: ${error.message}`);
+			this.addMessage('assistant', `❌ **Error**: ${error.message}\n\nPlease check your connection and try again.`, '🚨 Error');
 		} finally {
 			// Re-enable input
 			this.messageInput.disabled = false;
 			this.sendButton.disabled = false;
-			this.sendButton.textContent = 'Send';
+			this.sendButton.innerHTML = '<span>Send</span>';
+			this.sendButton.removeClass('letta-button-loading');
 			this.messageInput.focus();
 		}
 	}

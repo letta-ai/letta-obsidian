@@ -1,14 +1,7 @@
 /* Letta AI Agent Plugin Styles */
 
-/* Chat Modal */
-.letta-chat-modal .modal {
-    width: 80vw;
-    height: 80vh;
-    max-width: 900px;
-    max-height: 700px;
-}
-
-.letta-chat-modal {
+/* Chat View (Sidebar) */
+.letta-chat-view {
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -16,21 +9,51 @@
 }
 
 .letta-chat-header {
-    padding: 16px 20px;
+    padding: 12px 16px;
     border-bottom: 1px solid var(--background-modifier-border);
     background: var(--background-secondary);
 }
 
-.letta-chat-header h2 {
-    margin: 0 0 4px 0;
+.letta-chat-title-section {
+    margin-bottom: 8px;
+}
+
+.letta-chat-title {
+    margin: 0;
     color: var(--text-normal);
-    font-size: 1.2em;
+    font-size: 1.1em;
+    font-weight: 600;
+}
+
+.letta-status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85em;
+}
+
+.letta-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.letta-status-connected {
+    background-color: var(--color-green);
+    box-shadow: 0 0 6px var(--color-green);
+}
+
+.letta-status-text {
+    color: var(--text-muted);
+    font-weight: 500;
 }
 
 .letta-chat-subtitle {
     margin: 0;
     color: var(--text-muted);
-    font-size: 0.9em;
+    font-size: 0.85em;
+    font-family: var(--font-monospace);
 }
 
 .letta-chat-container {
@@ -43,138 +66,278 @@
 
 .letta-input-container {
     display: flex;
+    flex-direction: column;
     gap: 8px;
-    padding: 16px 20px;
+    padding: 12px 16px;
     border-top: 1px solid var(--background-modifier-border);
     background: var(--background-secondary);
 }
 
-.letta-message-input {
+.letta-input-wrapper {
     flex: 1;
-    min-height: 60px;
-    max-height: 120px;
+}
+
+.letta-message-input {
+    width: 100%;
+    min-height: 36px;
+    max-height: 80px;
     padding: 8px 12px;
     border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
+    border-radius: 6px;
     background: var(--background-primary);
     color: var(--text-normal);
     font-family: var(--font-interface);
     font-size: var(--font-ui-small);
-    resize: vertical;
+    resize: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    line-height: 1.3;
 }
 
 .letta-message-input:focus {
     outline: none;
     border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+.letta-message-input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.letta-button-container {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
 }
 
 .letta-send-button {
-    align-self: flex-end;
-    padding: 12px 20px;
+    padding: 8px 16px;
     background: var(--interactive-accent);
     color: var(--text-on-accent);
     border: none;
     border-radius: 4px;
     font-weight: 500;
+    font-size: 0.85em;
     cursor: pointer;
-    transition: background-color 0.2s;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
-.letta-send-button:hover {
+.letta-send-button:hover:not(:disabled) {
     background: var(--interactive-accent-hover);
+    transform: translateY(-1px);
 }
 
 .letta-send-button:disabled {
     background: var(--background-modifier-border);
     color: var(--text-muted);
     cursor: not-allowed;
+    transform: none;
+}
+
+.letta-button-loading {
+    position: relative;
+    overflow: hidden;
+}
+
+.letta-button-loading::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+    0% { left: -100%; }
+    100% { left: 100%; }
+}
+
+.letta-clear-button {
+    padding: 8px 12px;
+    background: var(--background-primary);
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    font-weight: 400;
+    font-size: 0.85em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.letta-clear-button:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+    border-color: var(--background-modifier-border-hover);
 }
 
 /* Chat Messages */
 .letta-message {
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     padding: 12px 16px;
-    border-radius: 8px;
+    border-radius: 12px;
     position: relative;
+    transition: all 0.3s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    max-width: 85%;
 }
 
 .letta-message-user {
     background: var(--color-blue-bg);
-    border-left: 3px solid var(--color-blue);
-    margin-left: 10%;
+    margin-left: auto;
+    margin-right: 8px;
+    border-top-right-radius: 4px;
 }
 
 .letta-message-assistant {
     background: var(--background-secondary);
-    border-left: 3px solid var(--color-green);
+    margin-right: auto;
+    margin-left: 8px;
+    border-top-left-radius: 4px;
+    border: 1px solid var(--background-modifier-border-hover);
 }
 
 .letta-message-reasoning {
-    background: var(--color-blue-bg);
-    border-left: 3px solid var(--color-blue);
-    opacity: 0.8;
+    background: var(--color-purple-bg);
+    opacity: 0.95;
+    margin-right: auto;
+    margin-left: 8px;
+    border: 1px solid var(--color-purple);
+    border-opacity: 0.2;
+    padding: 10px 14px;
 }
 
 .letta-message-tool-call {
     background: var(--color-cyan-bg);
-    border-left: 3px solid var(--color-cyan);
+    margin: 0 8px;
+    border: 1px solid var(--color-cyan);
+    border-opacity: 0.2;
+    padding: 10px 14px;
 }
 
 .letta-message-tool-result {
     background: var(--color-green-bg);
-    border-left: 3px solid var(--color-green);
+    margin: 0 8px;
+    border: 1px solid var(--color-green);
+    border-opacity: 0.2;
+    padding: 10px 14px;
+}
+
+.letta-message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--background-modifier-border-hover);
 }
 
 .letta-message-title {
     font-weight: 600;
     color: var(--text-normal);
-    margin-bottom: 6px;
     font-size: 0.9em;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.letta-message-timestamp {
+    font-size: 0.75em;
+    color: var(--text-faint);
+    font-weight: 400;
+    font-family: var(--font-monospace);
 }
 
 .letta-message-content {
     color: var(--text-normal);
-    line-height: 1.5;
+    line-height: 1.6;
+    font-size: 0.95em;
 }
 
-.letta-message-content pre {
+.letta-message-content p {
+    margin: 0 0 12px 0;
+}
+
+.letta-message-content p:last-child {
+    margin-bottom: 0;
+}
+
+.letta-message-content ul {
+    margin: 8px 0;
+    padding-left: 20px;
+}
+
+.letta-message-content li {
+    margin: 4px 0;
+    line-height: 1.5;
+    color: var(--text-normal);
+}
+
+.letta-code-block {
     background: var(--background-primary-alt);
-    padding: 8px 12px;
+    border: 1px solid var(--background-modifier-border);
     border-radius: 4px;
+    padding: 8px 12px;
     font-family: var(--font-monospace);
-    font-size: 0.85em;
+    font-size: 0.8em;
     overflow-x: auto;
-    margin: 4px 0 0 0;
+    margin: 6px 0 0 0;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.letta-code-block code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: 1.3;
 }
 
 .letta-message-content code {
     background: var(--background-primary-alt);
-    padding: 2px 4px;
-    border-radius: 3px;
+    padding: 2px 6px;
+    border-radius: 4px;
     font-family: var(--font-monospace);
     font-size: 0.9em;
+    border: 1px solid var(--background-modifier-border-hover);
 }
 
 .letta-message-content strong {
     font-weight: 600;
+    color: var(--text-accent);
 }
 
 .letta-message-content em {
     font-style: italic;
+    color: var(--text-muted);
 }
 
 /* Scrollbar styling */
+.letta-chat-container {
+    scrollbar-width: thin;
+    scrollbar-color: var(--background-modifier-border) var(--background-secondary);
+}
+
 .letta-chat-container::-webkit-scrollbar {
-    width: 8px;
+    width: 10px;
 }
 
 .letta-chat-container::-webkit-scrollbar-track {
     background: var(--background-secondary);
+    border-radius: 5px;
 }
 
 .letta-chat-container::-webkit-scrollbar-thumb {
     background: var(--background-modifier-border);
-    border-radius: 4px;
+    border-radius: 5px;
+    transition: background 0.2s ease;
 }
 
 .letta-chat-container::-webkit-scrollbar-thumb:hover {
@@ -186,42 +349,93 @@
     color: var(--text-muted);
 }
 
-/* Responsive adjustments */
+/* Mobile adjustments for sidebar */
 @media (max-width: 768px) {
-    .letta-chat-modal .modal {
-        width: 95vw;
-        height: 90vh;
+    .letta-chat-header {
+        padding: 10px 12px;
+    }
+    
+    .letta-message {
+        max-width: 90%;
     }
     
     .letta-message-user {
-        margin-left: 5%;
+        margin-left: auto;
+        margin-right: 4px;
+    }
+    
+    .letta-message-assistant {
+        margin-right: auto;
+        margin-left: 4px;
+    }
+    
+    .letta-message-reasoning {
+        margin-right: auto;
+        margin-left: 4px;
+        padding: 8px 12px;
+    }
+    
+    .letta-message-tool-call,
+    .letta-message-tool-result {
+        margin: 0 4px;
+        padding: 8px 12px;
     }
     
     .letta-input-container {
-        flex-direction: column;
+        padding: 10px 12px;
     }
     
-    .letta-send-button {
-        align-self: stretch;
-        padding: 10px;
+    .letta-button-container {
+        flex-direction: column;
+        gap: 6px;
+    }
+    
+    .letta-send-button,
+    .letta-clear-button {
+        width: 100%;
+        justify-content: center;
     }
 }
 
 /* Dark theme adjustments */
+.theme-dark .letta-message {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
 .theme-dark .letta-message-user {
-    background: rgba(59, 130, 246, 0.1);
+    background: rgba(59, 130, 246, 0.15);
+}
+
+.theme-dark .letta-message-assistant {
+    background: var(--background-secondary);
+    border-color: var(--background-modifier-border);
 }
 
 .theme-dark .letta-message-reasoning {
-    background: rgba(59, 130, 246, 0.08);
+    background: rgba(147, 51, 234, 0.15);
+    border-color: rgba(147, 51, 234, 0.3);
 }
 
 .theme-dark .letta-message-tool-call {
-    background: rgba(6, 182, 212, 0.1);
+    background: rgba(6, 182, 212, 0.15);
+    border-color: rgba(6, 182, 212, 0.3);
 }
 
 .theme-dark .letta-message-tool-result {
-    background: rgba(34, 197, 94, 0.1);
+    background: rgba(34, 197, 94, 0.15);
+    border-color: rgba(34, 197, 94, 0.3);
+}
+
+/* Enhanced focus states */
+.letta-message-input:focus {
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 1px var(--interactive-accent), 0 2px 8px rgba(var(--interactive-accent-rgb), 0.15);
+}
+
+.letta-send-button:focus-visible,
+.letta-clear-button:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: 2px;
 }
 
 /* Agent Configuration Modal */
