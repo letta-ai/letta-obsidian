@@ -18,11 +18,41 @@
     margin-bottom: 8px;
 }
 
+.letta-title-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .letta-chat-title {
     margin: 0;
     color: var(--text-normal);
     font-size: 1.1em;
     font-weight: 600;
+    transition: color 0.2s ease;
+}
+
+.letta-chat-title:hover {
+    color: var(--interactive-accent);
+}
+
+.letta-config-button {
+    background: none;
+    border: none;
+    padding: 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.9em;
+    opacity: 0.7;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.letta-config-button:hover {
+    opacity: 1;
+    background: var(--background-modifier-hover);
 }
 
 .letta-status-indicator {
@@ -439,14 +469,16 @@
 }
 
 /* Agent Configuration Modal */
-.agent-config-modal .modal {
+.agent-config-modal .modal,
+.agent-property-modal .modal {
     width: 90vw;
     height: 90vh;
     max-width: 800px;
     max-height: 700px;
 }
 
-.agent-config-modal {
+.agent-config-modal,
+.agent-property-modal {
     display: flex;
     flex-direction: column;
     height: 100%;

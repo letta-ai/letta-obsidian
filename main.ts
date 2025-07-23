@@ -828,6 +828,7 @@ class LettaChatView extends ItemView {
 	inputContainer: HTMLElement;
 	messageInput: HTMLTextAreaElement;
 	sendButton: HTMLButtonElement;
+	agentNameElement: HTMLElement;
 
 	constructor(leaf: WorkspaceLeaf, plugin: LettaPlugin) {
 		super(leaf);
@@ -855,7 +856,16 @@ class LettaChatView extends ItemView {
 		const header = container.createEl('div', { cls: 'letta-chat-header' });
 		
 		const titleSection = header.createEl('div', { cls: 'letta-chat-title-section' });
-		titleSection.createEl('h3', { text: this.plugin.settings.agentName, cls: 'letta-chat-title' });
+		const titleContainer = titleSection.createEl('div', { cls: 'letta-title-container' });
+		this.agentNameElement = titleContainer.createEl('h3', { text: this.plugin.settings.agentName, cls: 'letta-chat-title' });
+		this.agentNameElement.style.cursor = 'pointer';
+		this.agentNameElement.title = 'Click to edit agent name';
+		this.agentNameElement.addEventListener('click', () => this.editAgentName());
+		
+		const configButton = titleContainer.createEl('button', { cls: 'letta-config-button' });
+		configButton.innerHTML = '⚙️';
+		configButton.title = 'Configure agent properties';
+		configButton.addEventListener('click', () => this.openAgentConfig());
 		
 		const statusIndicator = header.createEl('div', { cls: 'letta-status-indicator' });
 		statusIndicator.createEl('span', { cls: 'letta-status-dot letta-status-connected' });
@@ -982,6 +992,137 @@ class LettaChatView extends ItemView {
 		this.chatContainer.empty();
 		// Re-add welcome message
 		this.addMessage('assistant', 'Hello! 👋 I can help you explore your vault. What would you like to know?', '🤖 Welcome');
+	}
+
+	async editAgentName() {
+		if (!this.plugin.agent) {
+			new Notice('Please connect to Letta first');
+			return;
+		}
+
+		const currentName = this.plugin.settings.agentName;
+		const newName = await this.promptForAgentName(currentName);
+		
+		if (newName && newName !== currentName) {
+			try {
+				// Update agent name via API
+				await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`, {
+					method: 'PATCH',
+					body: { name: newName }
+				});
+
+				// Update settings
+				this.plugin.settings.agentName = newName;
+				await this.plugin.saveSettings();
+
+				// Update UI
+				this.agentNameElement.textContent = newName;
+				this.plugin.agent.name = newName;
+
+				new Notice(`Agent name updated to: ${newName}`);
+			} catch (error) {
+				console.error('Failed to update agent name:', error);
+				new Notice('Failed to update agent name. Please try again.');
+			}
+		}
+	}
+
+	private promptForAgentName(currentName: string): Promise<string | null> {
+		return new Promise((resolve) => {
+			const modal = new Modal(this.app);
+			modal.setTitle('Edit Agent Name');
+			
+			const { contentEl } = modal;
+			contentEl.createEl('p', { text: 'Enter a new name for your agent:' });
+			
+			const input = contentEl.createEl('input', {
+				type: 'text',
+				value: currentName,
+				cls: 'config-input'
+			});
+			input.style.width = '100%';
+			input.style.marginBottom = '16px';
+			
+			const buttonContainer = contentEl.createEl('div');
+			buttonContainer.style.display = 'flex';
+			buttonContainer.style.gap = '8px';
+			buttonContainer.style.justifyContent = 'flex-end';
+			
+			const saveButton = buttonContainer.createEl('button', {
+				text: 'Save',
+				cls: 'mod-cta'
+			});
+			
+			const cancelButton = buttonContainer.createEl('button', {
+				text: 'Cancel'
+			});
+			
+			saveButton.addEventListener('click', () => {
+				const newName = input.value.trim();
+				if (newName) {
+					resolve(newName);
+					modal.close();
+				}
+			});
+			
+			cancelButton.addEventListener('click', () => {
+				resolve(null);
+				modal.close();
+			});
+			
+			input.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter') {
+					const newName = input.value.trim();
+					if (newName) {
+						resolve(newName);
+						modal.close();
+					}
+				}
+				if (e.key === 'Escape') {
+					resolve(null);
+					modal.close();
+				}
+			});
+			
+			modal.open();
+			input.focus();
+			input.select();
+		});
+	}
+
+	async openAgentConfig() {
+		if (!this.plugin.agent) {
+			new Notice('Please connect to Letta first');
+			return;
+		}
+
+		// Get current agent details
+		const agentDetails = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`);
+		
+		const modal = new AgentPropertyModal(this.app, agentDetails, async (updatedConfig) => {
+			try {
+				// Update agent via API
+				await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`, {
+					method: 'PATCH',
+					body: updatedConfig
+				});
+
+				// Update local agent reference and settings
+				if (updatedConfig.name && updatedConfig.name !== this.plugin.settings.agentName) {
+					this.plugin.settings.agentName = updatedConfig.name;
+					await this.plugin.saveSettings();
+					this.agentNameElement.textContent = updatedConfig.name;
+					this.plugin.agent.name = updatedConfig.name;
+				}
+
+				new Notice('Agent configuration updated successfully');
+			} catch (error) {
+				console.error('Failed to update agent configuration:', error);
+				new Notice('Failed to update agent configuration. Please try again.');
+			}
+		});
+		
+		modal.open();
 	}
 
 	async sendMessage() {
@@ -1290,6 +1431,165 @@ class AgentConfigModal extends Modal {
 		if (this.resolve) {
 			this.resolve(null);
 		}
+	}
+}
+
+class AgentPropertyModal extends Modal {
+	agent: any;
+	onSave: (config: any) => Promise<void>;
+
+	constructor(app: App, agent: any, onSave: (config: any) => Promise<void>) {
+		super(app);
+		this.agent = agent;
+		this.onSave = onSave;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.addClass('agent-property-modal');
+		
+		// Header
+		const header = contentEl.createEl('div', { cls: 'agent-config-header' });
+		header.createEl('h2', { text: 'Agent Configuration' });
+		header.createEl('p', { 
+			text: 'Customize your agent\'s properties and behavior',
+			cls: 'agent-config-subtitle'
+		});
+
+		// Form container
+		const form = contentEl.createEl('div', { cls: 'agent-config-form' });
+		
+		// Name section
+		const nameSection = form.createEl('div', { cls: 'config-section' });
+		nameSection.createEl('h3', { text: 'Basic Information' });
+		
+		const nameGroup = nameSection.createEl('div', { cls: 'config-group' });
+		nameGroup.createEl('label', { text: 'Agent Name', cls: 'config-label' });
+		const nameInput = nameGroup.createEl('input', {
+			type: 'text',
+			cls: 'config-input',
+			value: this.agent.name || ''
+		});
+
+		const descGroup = nameSection.createEl('div', { cls: 'config-group' });
+		descGroup.createEl('label', { text: 'Description', cls: 'config-label' });
+		descGroup.createEl('div', { 
+			text: 'Optional description for your agent',
+			cls: 'config-help'
+		});
+		const descInput = descGroup.createEl('textarea', {
+			cls: 'config-textarea',
+			attr: { rows: '3' }
+		});
+		descInput.value = this.agent.description || '';
+
+		// System prompt section
+		const systemSection = form.createEl('div', { cls: 'config-section' });
+		systemSection.createEl('h3', { text: 'System Prompt' });
+		
+		const systemGroup = systemSection.createEl('div', { cls: 'config-group' });
+		systemGroup.createEl('label', { text: 'System Instructions', cls: 'config-label' });
+		systemGroup.createEl('div', { 
+			text: 'Instructions that define how your agent behaves and responds',
+			cls: 'config-help'
+		});
+		const systemInput = systemGroup.createEl('textarea', {
+			cls: 'config-textarea',
+			attr: { rows: '6' }
+		});
+		systemInput.value = this.agent.system || '';
+
+		// Tags section
+		const tagsSection = form.createEl('div', { cls: 'config-section' });
+		tagsSection.createEl('h3', { text: 'Tags' });
+		
+		const tagsGroup = tagsSection.createEl('div', { cls: 'config-group' });
+		tagsGroup.createEl('label', { text: 'Tags (comma-separated)', cls: 'config-label' });
+		tagsGroup.createEl('div', { 
+			text: 'Organize your agent with tags for easy discovery',
+			cls: 'config-help'
+		});
+		const tagsInput = tagsGroup.createEl('input', {
+			type: 'text',
+			cls: 'config-input',
+			value: this.agent.tags ? this.agent.tags.join(', ') : ''
+		});
+
+		// Memory management section
+		const memorySection = form.createEl('div', { cls: 'config-section' });
+		memorySection.createEl('h3', { text: 'Memory Management' });
+		
+		const clearGroup = memorySection.createEl('div', { cls: 'config-checkbox-group' });
+		const clearCheckbox = clearGroup.createEl('input', {
+			type: 'checkbox',
+			cls: 'config-checkbox'
+		});
+		clearCheckbox.checked = this.agent.message_buffer_autoclear || false;
+		clearGroup.createEl('label', { 
+			text: 'Auto-clear message buffer (agent won\'t remember previous messages)',
+			cls: 'config-checkbox-label'
+		});
+
+		// Buttons
+		const buttonContainer = contentEl.createEl('div', { cls: 'agent-config-buttons' });
+		
+		const saveButton = buttonContainer.createEl('button', {
+			text: 'Save Changes',
+			cls: 'agent-config-create-btn'
+		});
+		
+		const cancelButton = buttonContainer.createEl('button', {
+			text: 'Cancel',
+			cls: 'agent-config-cancel-btn'
+		});
+
+		// Event handlers
+		saveButton.addEventListener('click', async () => {
+			const config: any = {};
+			
+			// Only include fields that have changed
+			if (nameInput.value.trim() !== this.agent.name) {
+				config.name = nameInput.value.trim();
+			}
+			
+			if (descInput.value.trim() !== (this.agent.description || '')) {
+				config.description = descInput.value.trim() || null;
+			}
+			
+			if (systemInput.value.trim() !== (this.agent.system || '')) {
+				config.system = systemInput.value.trim() || null;
+			}
+			
+			const newTags = tagsInput.value.trim() ? 
+				tagsInput.value.split(',').map(tag => tag.trim()).filter(tag => tag) : [];
+			const currentTags = this.agent.tags || [];
+			if (JSON.stringify(newTags) !== JSON.stringify(currentTags)) {
+				config.tags = newTags;
+			}
+			
+			if (clearCheckbox.checked !== (this.agent.message_buffer_autoclear || false)) {
+				config.message_buffer_autoclear = clearCheckbox.checked;
+			}
+
+			// Only proceed if there are changes
+			if (Object.keys(config).length > 0) {
+				await this.onSave(config);
+			}
+			
+			this.close();
+		});
+
+		cancelButton.addEventListener('click', () => {
+			this.close();
+		});
+
+		// Focus the name input
+		nameInput.focus();
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }
 
