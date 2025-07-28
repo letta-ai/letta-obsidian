@@ -1855,8 +1855,15 @@ class LettaChatView extends ItemView {
 			// For cloud instances, check if we have a valid project ID
 			const projectSlug = this.plugin.settings.lettaProjectSlug;
 			
-			if (!projectSlug || projectSlug === 'obsidian-vault' || projectSlug === 'default-project') {
-				// Default project slug is not valid for cloud instances, show project selector
+			// Check if project slug looks like a proper UUID or known invalid values
+			const isValidProjectId = projectSlug && 
+				projectSlug !== 'obsidian-vault' && 
+				projectSlug !== 'default-project' && 
+				projectSlug !== 'filesystem' &&
+				(projectSlug.includes('-') && projectSlug.length > 10); // Basic UUID-like check
+				
+			if (!isValidProjectId) {
+				// Invalid project slug for cloud instances, show project selector
 				new Notice('Please select a valid project first');
 				this.openProjectSelector();
 				return;
@@ -2199,7 +2206,7 @@ class LettaChatView extends ItemView {
 			errorDiv.style.padding = '40px';
 			
 			// Check if this is a project not found error
-			if (error.message && error.message.includes('Project not found')) {
+			if (error.message && (error.message.includes('Project not found') || (error.message.includes('Agent not found') && project))) {
 				errorDiv.createEl('h3', { 
 					text: 'Project Not Found',
 					style: 'margin-bottom: 16px; color: var(--text-error);'
