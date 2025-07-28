@@ -2372,8 +2372,11 @@ class LettaMemoryView extends ItemView {
 		if (!blockData) return;
 
 		try {
-			// Step 1: Create the block
-			const createResponse = await this.plugin.makeRequest('/v1/blocks', {
+			// Alternative approach: Try creating block directly via agent's core memory endpoint
+			console.log('[Letta Plugin] Attempting to create block via agent core-memory endpoint');
+			console.log('[Letta Plugin] Block data:', blockData);
+			
+			const createResponse = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks`, {
 				method: 'POST',
 				body: JSON.stringify({
 					label: blockData.label,
@@ -2383,23 +2386,40 @@ class LettaMemoryView extends ItemView {
 				})
 			});
 
-			console.log('[Letta Plugin] Block created:', createResponse);
+			console.log('[Letta Plugin] Block created via agent endpoint:', createResponse);
 			
-			// Step 2: Attach the block to the agent
-			await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/attach/${createResponse.id}`, {
-				method: 'PATCH'
-			});
-
-			console.log(`[Letta Plugin] Block ${createResponse.id} attached to agent ${this.plugin.agent.id}`);
-			
-			new Notice(`Created and attached memory block: ${blockData.label}`);
+			new Notice(`Created memory block: ${blockData.label}`);
 			
 			// Refresh the blocks list
 			await this.loadBlocks();
 			
-		} catch (error) {
-			console.error('Failed to create memory block:', error);
-			new Notice('Failed to create memory block. Please try again.');
+		} catch (agentEndpointError) {
+			console.error('Agent endpoint failed:', agentEndpointError);
+			
+			// If that fails, try the message approach - simulate the agent creating the block
+			try {
+				console.log('[Letta Plugin] Trying message approach to create memory block');
+				
+				const messageResponse = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/messages`, {
+					method: 'POST',
+					body: JSON.stringify({
+						messages: [{
+							role: 'user',
+							content: `Please create a new memory block with label "${blockData.label}", description "${blockData.description}", and initial content: "${blockData.value}". Use core_memory_append or appropriate memory functions.`
+						}]
+					})
+				});
+				
+				console.log('[Letta Plugin] Message approach result:', messageResponse);
+				new Notice(`Requested agent to create memory block: ${blockData.label}`);
+				
+				// Refresh the blocks list
+				await this.loadBlocks();
+				
+			} catch (messageError) {
+				console.error('Message approach also failed:', messageError);
+				new Notice('Unable to create memory block. This feature may not be supported in the current API version.');
+			}
 		}
 	}
 
