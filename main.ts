@@ -3409,31 +3409,73 @@ class ModelSwitcherModal extends Modal {
 			return;
 		}
 
-		this.filteredModels.forEach(model => {
-			const modelItem = this.modelList.createEl('div', { cls: 'block-search-item' });
-			
-			const header = modelItem.createEl('div', { cls: 'block-search-item-header' });
-			
-			const titleSection = header.createEl('div', { cls: 'block-search-item-title' });
-			titleSection.createEl('h4', { text: model.model });
-			titleSection.createEl('p', { 
-				text: `${model.provider_name} • ${model.provider_category} • Context: ${model.context_window?.toLocaleString() || 'Unknown'}`,
-				cls: 'block-search-item-description'
-			});
+		// Create table structure
+		const table = this.modelList.createEl('table', { cls: 'model-table' });
+		
+		// Table header
+		const thead = table.createEl('thead');
+		const headerRow = thead.createEl('tr');
+		headerRow.createEl('th', { text: 'Model' });
+		headerRow.createEl('th', { text: 'Provider' });
+		headerRow.createEl('th', { text: 'Category' });
+		headerRow.createEl('th', { text: 'Context Window' });
+		headerRow.createEl('th', { text: 'Status' });
 
-			// Current model indicator
+		// Table body
+		const tbody = table.createEl('tbody');
+		
+		this.filteredModels.forEach(model => {
+			const row = tbody.createEl('tr', { cls: 'model-table-row' });
+			
+			// Model name
+			const modelCell = row.createEl('td', { cls: 'model-cell-name' });
+			modelCell.createEl('span', { text: model.model, cls: 'model-name' });
+			
+			// Provider
+			row.createEl('td', { 
+				text: model.provider_name || 'Unknown',
+				cls: 'model-cell-provider'
+			});
+			
+			// Category
+			const categoryCell = row.createEl('td', { cls: 'model-cell-category' });
+			const categoryBadge = categoryCell.createEl('span', { 
+				text: model.provider_category || 'Unknown',
+				cls: `model-category-badge model-category-${model.provider_category || 'unknown'}`
+			});
+			
+			// Context window
+			row.createEl('td', { 
+				text: model.context_window?.toLocaleString() || 'Unknown',
+				cls: 'model-cell-context'
+			});
+			
+			// Status (current indicator)
+			const statusCell = row.createEl('td', { cls: 'model-cell-status' });
 			const currentModel = this.currentAgent.llm_config?.model;
 			if (currentModel === model.model) {
-				const currentBadge = header.createEl('span', { 
+				statusCell.createEl('span', { 
 					text: 'Current',
-					cls: 'block-search-item-chars'
+					cls: 'model-current-badge'
 				});
-				currentBadge.style.backgroundColor = 'var(--interactive-accent)';
-				currentBadge.style.color = 'var(--text-on-accent)';
+			} else {
+				statusCell.createEl('span', { 
+					text: 'Available',
+					cls: 'model-available-badge'
+				});
 			}
 
 			// Click handler
-			modelItem.addEventListener('click', () => this.selectModel(model));
+			row.addEventListener('click', () => this.selectModel(model));
+			row.style.cursor = 'pointer';
+			
+			// Hover effect
+			row.addEventListener('mouseenter', () => {
+				row.style.backgroundColor = 'var(--background-modifier-hover)';
+			});
+			row.addEventListener('mouseleave', () => {
+				row.style.backgroundColor = '';
+			});
 		});
 	}
 
