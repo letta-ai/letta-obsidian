@@ -2048,6 +2048,12 @@ class LettaMemoryView extends ItemView {
 		});
 		createButton.addEventListener('click', () => this.createNewBlock());
 		
+		const attachButton = buttonContainer.createEl('button', { 
+			text: '🔗 Search & Attach',
+			cls: 'letta-memory-refresh-btn'
+		});
+		attachButton.addEventListener('click', () => this.searchAndAttachBlocks());
+		
 		this.refreshButton = buttonContainer.createEl('button', { 
 			text: '↻ Refresh',
 			cls: 'letta-memory-refresh-btn'
@@ -2667,6 +2673,227 @@ class LettaMemoryView extends ItemView {
 			
 			modal.open();
 		});
+	}
+
+	async searchAndAttachBlocks() {
+		if (!this.plugin.agent) {
+			new Notice('Please connect to Letta first');
+			return;
+		}
+
+		try {
+			// Get current agent's attached blocks to filter them out
+			const attachedBlocks = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks`);
+			const attachedBlockIds = new Set(attachedBlocks.map((block: any) => block.id));
+
+			// Build query parameters for block search
+			let queryParams = '?limit=100'; // Get more blocks for searching
+			
+			// If we have a project, filter by project_id
+			if (this.plugin.settings.lettaProjectSlug) {
+				// Try to get project ID from slug - we'll need to look this up
+				try {
+					const projects = await this.plugin.makeRequest('/v1/projects');
+					const currentProject = projects.find((p: any) => p.slug === this.plugin.settings.lettaProjectSlug);
+					if (currentProject) {
+						queryParams += `&project_id=${currentProject.id}`;
+					}
+				} catch (error) {
+					console.warn('Could not get project ID for filtering blocks:', error);
+					// Continue without project filter
+				}
+			}
+
+			// Fetch all available blocks
+			const allBlocks = await this.plugin.makeRequest(`/v1/blocks${queryParams}`);
+			
+			// Filter out already attached blocks and templates
+			const availableBlocks = allBlocks.filter((block: any) => 
+				!attachedBlockIds.has(block.id) && !block.is_template
+			);
+
+			if (availableBlocks.length === 0) {
+				new Notice('No unattached blocks found in the current scope');
+				return;
+			}
+
+			// Show search/selection modal
+			this.showBlockSearchModal(availableBlocks);
+
+		} catch (error) {
+			console.error('Failed to search blocks:', error);
+			new Notice('Failed to search for blocks. Please try again.');
+		}
+	}
+
+	private showBlockSearchModal(blocks: any[]) {
+		const modal = new Modal(this.app);
+		modal.setTitle('Search & Attach Memory Blocks');
+		
+		const { contentEl } = modal;
+		contentEl.style.width = '700px';
+		contentEl.style.height = '500px';
+		
+		// Search input
+		const searchContainer = contentEl.createEl('div');
+		searchContainer.style.marginBottom = '16px';
+		
+		const searchInput = searchContainer.createEl('input', {
+			type: 'text',
+			placeholder: 'Search blocks by label, description, or content...',
+			cls: 'config-input'
+		});
+		searchInput.style.marginBottom = '8px';
+		
+		// Results info
+		const resultsInfo = searchContainer.createEl('div', {
+			text: `Found ${blocks.length} available blocks`,
+			cls: 'config-help'
+		});
+		
+		// Scrollable blocks container
+		const blocksContainer = contentEl.createEl('div');
+		blocksContainer.style.maxHeight = '350px';
+		blocksContainer.style.overflowY = 'auto';
+		blocksContainer.style.border = '1px solid var(--background-modifier-border)';
+		blocksContainer.style.borderRadius = '4px';
+		blocksContainer.style.padding = '8px';
+		
+		// Render all blocks initially
+		const renderBlocks = (filteredBlocks: any[]) => {
+			blocksContainer.empty();
+			resultsInfo.textContent = `Found ${filteredBlocks.length} available blocks`;
+			
+			if (filteredBlocks.length === 0) {
+				blocksContainer.createEl('div', {
+					text: 'No blocks match your search',
+					cls: 'letta-memory-empty'
+				});
+				return;
+			}
+			
+			filteredBlocks.forEach(block => {
+				const blockEl = blocksContainer.createEl('div');
+				blockEl.style.padding = '12px';
+				blockEl.style.border = '1px solid var(--background-modifier-border)';
+				blockEl.style.borderRadius = '6px';
+				blockEl.style.marginBottom = '8px';
+				blockEl.style.cursor = 'pointer';
+				blockEl.style.transition = 'all 0.2s ease';
+				
+				// Block header
+				const headerEl = blockEl.createEl('div');
+				headerEl.style.display = 'flex';
+				headerEl.style.justifyContent = 'space-between';
+				headerEl.style.alignItems = 'flex-start';
+				headerEl.style.marginBottom = '8px';
+				
+				const titleEl = headerEl.createEl('div');
+				titleEl.createEl('h4', {
+					text: block.label || 'Unnamed Block',
+					cls: 'letta-memory-block-title'
+				});
+				titleEl.style.margin = '0';
+				
+				if (block.description) {
+					titleEl.createEl('div', {
+						text: block.description,
+						cls: 'letta-memory-block-description'
+					});
+				}
+				
+				// Character count
+				const charCount = headerEl.createEl('span', {
+					text: `${(block.value || '').length} chars`,
+					cls: 'letta-memory-char-counter'
+				});
+				
+				// Preview of content
+				const contentPreview = blockEl.createEl('div');
+				const preview = (block.value || '').slice(0, 150);
+				contentPreview.textContent = preview + (block.value && block.value.length > 150 ? '...' : '');
+				contentPreview.style.fontSize = '0.85em';
+				contentPreview.style.color = 'var(--text-muted)';
+				contentPreview.style.fontFamily = 'var(--font-monospace)';
+				contentPreview.style.whiteSpace = 'pre-wrap';
+				contentPreview.style.marginTop = '8px';
+				
+				// Hover effects
+				blockEl.addEventListener('mouseenter', () => {
+					blockEl.style.backgroundColor = 'var(--background-modifier-hover)';
+					blockEl.style.borderColor = 'var(--interactive-accent)';
+				});
+				
+				blockEl.addEventListener('mouseleave', () => {
+					blockEl.style.backgroundColor = '';
+					blockEl.style.borderColor = 'var(--background-modifier-border)';
+				});
+				
+				// Click to attach
+				blockEl.addEventListener('click', () => {
+					modal.close();
+					this.attachBlock(block);
+				});
+			});
+		};
+		
+		// Initial render
+		renderBlocks(blocks);
+		
+		// Search functionality
+		searchInput.addEventListener('input', () => {
+			const searchTerm = searchInput.value.toLowerCase();
+			const filteredBlocks = blocks.filter(block => {
+				const label = (block.label || '').toLowerCase();
+				const description = (block.description || '').toLowerCase();
+				const content = (block.value || '').toLowerCase();
+				return label.includes(searchTerm) || 
+					   description.includes(searchTerm) || 
+					   content.includes(searchTerm);
+			});
+			renderBlocks(filteredBlocks);
+		});
+		
+		// Button container
+		const buttonContainer = contentEl.createEl('div');
+		buttonContainer.style.display = 'flex';
+		buttonContainer.style.justifyContent = 'flex-end';
+		buttonContainer.style.marginTop = '16px';
+		
+		const cancelButton = buttonContainer.createEl('button', {
+			text: 'Cancel',
+			cls: 'conflict-btn conflict-btn-cancel'
+		});
+		
+		cancelButton.addEventListener('click', () => modal.close());
+		
+		modal.open();
+		searchInput.focus();
+	}
+
+	async attachBlock(block: any) {
+		if (!this.plugin.agent) {
+			new Notice('Please connect to Letta first');
+			return;
+		}
+
+		try {
+			console.log('[Letta Plugin] Attaching block:', block.label || 'Unnamed', 'to agent:', this.plugin.agent.id);
+			
+			// Attach the block to the agent
+			await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/attach/${block.id}`, {
+				method: 'PATCH'
+			});
+
+			new Notice(`Memory block "${block.label || 'Unnamed'}" attached successfully`);
+			
+			// Refresh the blocks list to show the newly attached block
+			await this.loadBlocks();
+
+		} catch (error) {
+			console.error('Failed to attach block:', error);
+			new Notice(`Failed to attach block "${block.label || 'Unnamed'}". Please try again.`);
+		}
 	}
 
 	async onClose() {
