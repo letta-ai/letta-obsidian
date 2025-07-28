@@ -752,6 +752,45 @@
     margin-bottom: 8px;
 }
 
+.letta-memory-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.letta-memory-action-btn {
+    background: var(--interactive-normal);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    padding: 4px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.8em;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 60px;
+}
+
+.letta-memory-action-btn:hover {
+    background: var(--interactive-hover);
+    transform: translateY(-1px);
+}
+
+.letta-memory-detach-btn:hover {
+    background: var(--color-orange);
+    color: var(--text-on-accent);
+    border-color: var(--color-orange);
+}
+
+.letta-memory-delete-btn:hover {
+    background: var(--text-error);
+    color: var(--text-on-accent);
+    border-color: var(--text-error);
+}
+
 .letta-memory-block-title {
     margin: 0;
     color: var(--text-normal);

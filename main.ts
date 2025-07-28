@@ -269,7 +269,7 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-	private async makeRequest(path: string, options: any = {}) {
+	async makeRequest(path: string, options: any = {}) {
 		const url = `${this.settings.lettaBaseUrl}${path}`;
 		const headers: any = {
 			...options.headers
@@ -2109,16 +2109,38 @@ class LettaMemoryView extends ItemView {
 			
 			// Block header
 			const blockHeader = blockContainer.createEl('div', { cls: 'letta-memory-block-header' });
-			blockHeader.createEl('h4', { 
+			
+			const titleSection = blockHeader.createEl('div', { cls: 'letta-memory-title-section' });
+			titleSection.createEl('h4', { 
 				text: block.label || block.name || 'Unnamed Block',
 				cls: 'letta-memory-block-title'
 			});
-
+			
+			const headerActions = blockHeader.createEl('div', { cls: 'letta-memory-header-actions' });
+			
 			// Character counter
-			const charCounter = blockHeader.createEl('span', { 
+			const charCounter = headerActions.createEl('span', { 
 				text: `${(block.value || '').length}/${block.limit || 5000}`,
 				cls: 'letta-memory-char-counter'
 			});
+			
+			// Detach button
+			const detachButton = headerActions.createEl('button', {
+				text: 'Detach',
+				cls: 'letta-memory-action-btn letta-memory-detach-btn',
+				attr: { title: 'Detach block from agent (keeps block in system)' }
+			});
+			
+			// Delete button
+			const deleteButton = headerActions.createEl('button', {
+				text: 'Delete',
+				cls: 'letta-memory-action-btn letta-memory-delete-btn',
+				attr: { title: 'Permanently delete this block' }
+			});
+			
+			// Event listeners for buttons
+			detachButton.addEventListener('click', () => this.detachBlock(block));
+			deleteButton.addEventListener('click', () => this.deleteBlock(block));
 
 			// Block description
 			if (block.description) {
@@ -2529,6 +2551,121 @@ class LettaMemoryView extends ItemView {
 			
 			modal.open();
 			labelInput.focus();
+		});
+	}
+
+	async detachBlock(block: any) {
+		if (!this.plugin.agent) {
+			new Notice('Please connect to Letta first');
+			return;
+		}
+
+		try {
+			// Show confirmation dialog
+			const confirmed = await this.showConfirmDialog(
+				'Detach Memory Block',
+				`Are you sure you want to detach "${block.label || block.name}" from this agent? The block will remain in the system but won't be accessible to this agent.`,
+				'Detach',
+				'var(--color-orange)'
+			);
+
+			if (!confirmed) return;
+
+			console.log('[Letta Plugin] Detaching block:', block.label || block.name);
+			
+			await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/detach/${block.id}`, {
+				method: 'PATCH'
+			});
+
+			new Notice(`Memory block "${block.label || block.name}" detached successfully`);
+			
+			// Refresh the blocks list
+			await this.loadBlocks();
+
+		} catch (error) {
+			console.error('Failed to detach block:', error);
+			new Notice(`Failed to detach block "${block.label || block.name}". Please try again.`);
+		}
+	}
+
+	async deleteBlock(block: any) {
+		if (!this.plugin.agent) {
+			new Notice('Please connect to Letta first');
+			return;
+		}
+
+		try {
+			// Show confirmation dialog with stronger warning
+			const confirmed = await this.showConfirmDialog(
+				'Delete Memory Block',
+				`⚠️ Are you sure you want to PERMANENTLY DELETE "${block.label || block.name}"? This action cannot be undone and will remove the block from the entire system.`,
+				'Delete Forever',
+				'var(--text-error)'
+			);
+
+			if (!confirmed) return;
+
+			console.log('[Letta Plugin] Deleting block:', block.label || block.name);
+			
+			await this.plugin.makeRequest(`/v1/blocks/${block.id}`, {
+				method: 'DELETE'
+			});
+
+			new Notice(`Memory block "${block.label || block.name}" deleted permanently`);
+			
+			// Refresh the blocks list
+			await this.loadBlocks();
+
+		} catch (error) {
+			console.error('Failed to delete block:', error);
+			new Notice(`Failed to delete block "${block.label || block.name}". Please try again.`);
+		}
+	}
+
+	private showConfirmDialog(title: string, message: string, confirmText: string, confirmColor: string): Promise<boolean> {
+		return new Promise((resolve) => {
+			const modal = new Modal(this.app);
+			modal.setTitle(title);
+			
+			const { contentEl } = modal;
+			
+			// Warning message
+			const messageEl = contentEl.createEl('p', { text: message });
+			messageEl.style.marginBottom = '20px';
+			messageEl.style.lineHeight = '1.4';
+			
+			// Button container
+			const buttonContainer = contentEl.createEl('div');
+			buttonContainer.style.display = 'flex';
+			buttonContainer.style.gap = '12px';
+			buttonContainer.style.justifyContent = 'flex-end';
+			
+			// Cancel button
+			const cancelButton = buttonContainer.createEl('button', {
+				text: 'Cancel',
+				cls: 'conflict-btn conflict-btn-cancel'
+			});
+			
+			// Confirm button
+			const confirmButton = buttonContainer.createEl('button', {
+				text: confirmText,
+				cls: 'conflict-btn'
+			});
+			confirmButton.style.background = confirmColor;
+			confirmButton.style.color = 'var(--text-on-accent)';
+			
+			// Event handlers
+			cancelButton.addEventListener('click', () => {
+				resolve(false);
+				modal.close();
+			});
+			
+			confirmButton.addEventListener('click', () => {
+				resolve(true);
+				modal.close();
+			});
+			
+			modal.open();
 		});
 	}
 
