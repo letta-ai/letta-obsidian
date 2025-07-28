@@ -32,7 +32,7 @@
 .letta-chat-title {
     margin: 0;
     color: var(--text-normal);
-    font-size: 1.1em;
+    font-size: 1.3em;
     font-weight: 600;
     transition: color 0.2s ease;
 }

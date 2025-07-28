@@ -1291,28 +1291,28 @@ class LettaChatView extends ItemView {
 		
 		const configButton = titleContainer.createEl('span', { text: 'Config' });
 		configButton.title = 'Configure agent properties';
-		configButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		configButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px; font-size: 0.8em;';
 		configButton.addEventListener('mouseenter', () => { configButton.style.opacity = '1'; });
 		configButton.addEventListener('mouseleave', () => { configButton.style.opacity = '0.7'; });
 		configButton.addEventListener('click', () => this.openAgentConfig());
 
 		const memoryButton = titleContainer.createEl('span', { text: 'Memory' });
 		memoryButton.title = 'Open memory blocks panel';
-		memoryButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		memoryButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px; font-size: 0.8em;';
 		memoryButton.addEventListener('mouseenter', () => { memoryButton.style.opacity = '1'; });
 		memoryButton.addEventListener('mouseleave', () => { memoryButton.style.opacity = '0.7'; });
 		memoryButton.addEventListener('click', () => this.plugin.openMemoryView());
 
 		const switchAgentButton = titleContainer.createEl('span', { text: 'Agent' });
 		switchAgentButton.title = 'Switch to different agent';
-		switchAgentButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		switchAgentButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px; font-size: 0.8em;';
 		switchAgentButton.addEventListener('mouseenter', () => { switchAgentButton.style.opacity = '1'; });
 		switchAgentButton.addEventListener('mouseleave', () => { switchAgentButton.style.opacity = '0.7'; });
 		switchAgentButton.addEventListener('click', () => this.openAgentSwitcher());
 
 		const adeButton = titleContainer.createEl('span', { text: 'ADE' });
 		adeButton.title = 'Open in Letta Agent Development Environment';
-		adeButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		adeButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px; font-size: 0.8em;';
 		adeButton.addEventListener('mouseenter', () => { adeButton.style.opacity = '1'; });
 		adeButton.addEventListener('mouseleave', () => { adeButton.style.opacity = '0.7'; });
 		adeButton.addEventListener('click', () => this.openInADE());
