@@ -414,10 +414,11 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-	async connectToLetta(): Promise<boolean> {
+	async connectToLetta(attempt: number = 1): Promise<boolean> {
+		const maxAttempts = 5;
 		const isCloudInstance = this.settings.lettaBaseUrl.includes('api.letta.com');
 		
-		console.log(`[Letta Plugin] Starting connection to Letta...`);
+		console.log(`[Letta Plugin] Starting connection to Letta (attempt ${attempt}/${maxAttempts})...`);
 		console.log(`[Letta Plugin] Base URL: ${this.settings.lettaBaseUrl}`);
 		console.log(`[Letta Plugin] Is cloud instance: ${isCloudInstance}`);
 		console.log(`[Letta Plugin] Has API key: ${!!this.settings.lettaApiKey}`);
@@ -429,7 +430,7 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		try {
-			this.updateStatusBar('Connecting...');
+			this.updateStatusBar(attempt === 1 ? 'Connecting...' : `Retrying... (${attempt}/${maxAttempts})`);
 			
 			console.log(`[Letta Plugin] Testing connection with /v1/models/embedding endpoint...`);
 			// Test connection by trying to list embedding models (this endpoint should exist)
@@ -444,7 +445,13 @@ export default class LettaPlugin extends Plugin {
 
 			console.log(`[Letta Plugin] Agent setup successful, connection complete!`);
 			this.updateStatusBar('Connected');
-			new Notice('Successfully connected to Letta');
+			
+			// Only show success notice on first attempt or after retries
+			if (attempt === 1) {
+				new Notice('Successfully connected to Letta');
+			} else {
+				new Notice(`Connected to Letta after ${attempt} attempts`);
+			}
 
 			// Sync vault on startup if configured
 			if (this.settings.syncOnStartup) {
@@ -454,15 +461,33 @@ export default class LettaPlugin extends Plugin {
 
 			return true;
 		} catch (error: any) {
-			console.error('[Letta Plugin] Failed to connect to Letta:', error);
+			console.error(`[Letta Plugin] Connection attempt ${attempt} failed:`, error);
 			console.error('[Letta Plugin] Error details:', {
 				message: error.message,
 				stack: error.stack,
 				name: error.name
 			});
-			this.updateStatusBar('Error');
-			new Notice(`Failed to connect to Letta: ${error.message}`);
-			return false;
+
+			// If we haven't reached max attempts, try again with backoff
+			if (attempt < maxAttempts) {
+				const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Cap at 10 seconds
+				console.log(`[Letta Plugin] Retrying in ${backoffMs}ms...`);
+				
+				// Update status to show retry countdown
+				this.updateStatusBar(`Retry in ${Math.ceil(backoffMs / 1000)}s...`);
+				
+				// Wait for backoff period
+				await new Promise(resolve => setTimeout(resolve, backoffMs));
+				
+				// Recursive retry
+				return await this.connectToLetta(attempt + 1);
+			} else {
+				// All attempts failed
+				console.error('[Letta Plugin] All connection attempts failed');
+				this.updateStatusBar('Connection failed');
+				new Notice(`Failed to connect to Letta after ${maxAttempts} attempts: ${error.message}`);
+				return false;
+			}
 		}
 	}
 
@@ -1290,14 +1315,6 @@ class LettaChatView extends ItemView {
 		adeButton.addEventListener('mouseleave', () => { adeButton.style.opacity = '0.7'; });
 		adeButton.addEventListener('click', () => this.openInADE());
 
-		// Model display button
-		this.modelButton = titleContainer.createEl('span', { text: 'Loading...' });
-		this.modelButton.title = 'Click to change model';
-		this.modelButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
-		this.modelButton.addEventListener('mouseenter', () => { this.modelButton.style.opacity = '1'; });
-		this.modelButton.addEventListener('mouseleave', () => { this.modelButton.style.opacity = '0.7'; });
-		this.modelButton.addEventListener('click', () => this.openModelSwitcher());
-
 		
 		const statusIndicator = header.createEl('div', { cls: 'letta-status-indicator' });
 		this.statusDot = statusIndicator.createEl('span', { cls: 'letta-status-dot' });
@@ -1322,14 +1339,25 @@ class LettaChatView extends ItemView {
 
 		const buttonContainer = this.inputContainer.createEl('div', { cls: 'letta-button-container' });
 		
-		this.sendButton = buttonContainer.createEl('button', {
+		// Model switcher button on the left
+		this.modelButton = buttonContainer.createEl('button', {
+			text: 'Loading...',
+			cls: 'letta-model-button',
+			attr: { 'aria-label': 'Switch model' }
+		});
+		this.modelButton.addEventListener('click', () => this.openModelSwitcher());
+		
+		// Button group on the right
+		const rightButtons = buttonContainer.createEl('div', { cls: 'letta-button-group-right' });
+		
+		this.sendButton = rightButtons.createEl('button', {
 			cls: 'letta-send-button mod-cta',
 			attr: { 'aria-label': 'Send message' }
 		});
 		this.sendButton.createEl('span', { text: 'Send' });
 		
 		// Clear button
-		const clearButton = buttonContainer.createEl('button', {
+		const clearButton = rightButtons.createEl('button', {
 			text: 'Clear',
 			cls: 'letta-clear-button',
 			attr: { 'aria-label': 'Clear chat' }

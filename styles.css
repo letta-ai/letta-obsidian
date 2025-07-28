@@ -128,7 +128,38 @@
 .letta-button-container {
     display: flex;
     gap: 6px;
-    justify-content: flex-end;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.letta-button-group-right {
+    display: flex;
+    gap: 6px;
+}
+
+.letta-model-button {
+    padding: 6px 10px;
+    background: var(--background-primary);
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 3px;
+    font-weight: 400;
+    font-size: 0.8em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    height: 28px;
+    font-family: var(--font-monospace);
+}
+
+.letta-model-button:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+    border-color: var(--background-modifier-border-hover);
+}
+
+.letta-model-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .letta-send-button {
@@ -397,8 +428,13 @@
         gap: 4px;
     }
     
+    .letta-button-group-right {
+        width: 100%;
+    }
+    
     .letta-send-button,
-    .letta-clear-button {
+    .letta-clear-button,
+    .letta-model-button {
         width: 100%;
         justify-content: center;
         height: 32px;
