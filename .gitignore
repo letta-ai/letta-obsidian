@@ -18,5 +18,8 @@ main.js
 # obsidian
 data.json
 
+# Development and testing files
+ai-stuff/
+
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
