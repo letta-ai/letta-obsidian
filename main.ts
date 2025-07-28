@@ -1455,7 +1455,8 @@ class LettaChatView extends ItemView {
 
 	clearChat() {
 		this.chatContainer.empty();
-		// Chat cleared - no welcome message
+		// Update status to show disconnected message if not connected
+		this.updateChatStatus();
 	}
 
 	updateChatStatus() {
@@ -1476,6 +1477,9 @@ class LettaChatView extends ItemView {
 			if (this.modelButton) {
 				this.updateModelButton();
 			}
+			
+			// Remove disconnected message if it exists
+			this.removeDisconnectedMessage();
 		} else {
 			this.statusDot.className = 'letta-status-dot';
 			this.statusDot.style.backgroundColor = 'var(--text-muted)';
@@ -1483,6 +1487,72 @@ class LettaChatView extends ItemView {
 			if (this.modelButton) {
 				this.modelButton.textContent = 'N/A';
 			}
+			
+			// Show disconnected message in chat area
+			this.showDisconnectedMessage();
+		}
+	}
+	
+	showDisconnectedMessage() {
+		// Remove any existing disconnected message
+		this.removeDisconnectedMessage();
+		
+		// Create disconnected message container
+		const disconnectedContainer = this.chatContainer.createEl('div', { 
+			cls: 'letta-disconnected-container' 
+		});
+		
+		// Large disconnected message
+		const disconnectedMessage = disconnectedContainer.createEl('div', { 
+			cls: 'letta-disconnected-message' 
+		});
+		
+		disconnectedMessage.createEl('div', { 
+			text: '🔌', 
+			cls: 'letta-disconnected-icon' 
+		});
+		
+		disconnectedMessage.createEl('h2', { 
+			text: 'You are not connected to Letta', 
+			cls: 'letta-disconnected-title' 
+		});
+		
+		disconnectedMessage.createEl('p', { 
+			text: 'Connect to start chatting with your AI agent about your vault contents.', 
+			cls: 'letta-disconnected-subtitle' 
+		});
+		
+		// Connect button
+		const connectButton = disconnectedMessage.createEl('button', {
+			text: 'Connect to Letta',
+			cls: 'letta-connect-button'
+		});
+		
+		connectButton.addEventListener('click', async () => {
+			connectButton.disabled = true;
+			connectButton.textContent = 'Connecting...';
+			
+			try {
+				const connected = await this.plugin.connectToLetta();
+				if (connected) {
+					// Connection successful - message will be removed by updateChatStatus
+				} else {
+					// Connection failed - reset button
+					connectButton.disabled = false;
+					connectButton.textContent = 'Connect to Letta';
+				}
+			} catch (error) {
+				// Connection failed - reset button
+				connectButton.disabled = false;
+				connectButton.textContent = 'Connect to Letta';
+			}
+		});
+	}
+	
+	removeDisconnectedMessage() {
+		const existingMessage = this.chatContainer.querySelector('.letta-disconnected-container');
+		if (existingMessage) {
+			existingMessage.remove();
 		}
 	}
 
