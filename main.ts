@@ -2117,65 +2117,75 @@ class LettaChatView extends ItemView {
 				return;
 			}
 			
-			const agentList = contentEl.createEl('div');
+			// Create table structure
+			const agentList = contentEl.createEl('div', { cls: 'agent-selector-list' });
 			agentList.style.maxHeight = '450px';
 			agentList.style.overflowY = 'auto';
+			agentList.style.border = '1px solid var(--background-modifier-border)';
+			agentList.style.borderRadius = '6px';
+			
+			const table = agentList.createEl('table', { cls: 'model-table' });
+			
+			// Table header
+			const thead = table.createEl('thead');
+			const headerRow = thead.createEl('tr');
+			headerRow.createEl('th', { text: 'Agent Name' });
+			headerRow.createEl('th', { text: 'Template' });
+			headerRow.createEl('th', { text: 'Agent ID' });
+			headerRow.createEl('th', { text: 'Status' });
+
+			// Table body
+			const tbody = table.createEl('tbody');
 			
 			for (const agent of agents) {
-				const agentEl = agentList.createEl('div');
-				agentEl.style.padding = '16px';
-				agentEl.style.border = '1px solid var(--background-modifier-border)';
-				agentEl.style.borderRadius = '8px';
-				agentEl.style.marginBottom = '12px';
-				agentEl.style.cursor = 'pointer';
-				agentEl.style.transition = 'background 0.2s ease';
+				const row = tbody.createEl('tr', { cls: 'model-table-row' });
 				
-				// Highlight current agent
-				if (agent.id === this.plugin.agent?.id) {
-					agentEl.style.border = '2px solid var(--interactive-accent)';
-					agentEl.style.backgroundColor = 'var(--background-modifier-hover)';
-				}
+				// Agent name
+				const nameCell = row.createEl('td', { cls: 'model-cell-name' });
+				nameCell.createEl('span', { text: agent.name, cls: 'model-name' });
 				
-				const nameEl = agentEl.createEl('div', { text: agent.name });
-				nameEl.style.fontWeight = '600';
-				nameEl.style.marginBottom = '8px';
-				nameEl.style.fontSize = '1.1em';
-				
-				if (agent.id === this.plugin.agent?.id) {
-					const currentBadge = agentEl.createEl('span', { text: 'CURRENT' });
-					currentBadge.style.fontSize = '0.7em';
-					currentBadge.style.color = 'var(--interactive-accent)';
-					currentBadge.style.fontWeight = '600';
-					currentBadge.style.marginLeft = '8px';
-				}
-				
-				const templateEl = agentEl.createEl('div', { text: `Template: ${agent.template_id || 'Unknown'}` });
-				templateEl.style.fontSize = '0.9em';
-				templateEl.style.color = 'var(--text-muted)';
-				templateEl.style.marginBottom = '4px';
-				
-				const idEl = agentEl.createEl('div', { text: `ID: ${agent.id}` });
-				idEl.style.fontSize = '0.8em';
-				idEl.style.color = 'var(--text-faint)';
-				idEl.style.fontFamily = 'var(--font-monospace)';
-				
-				agentEl.addEventListener('mouseenter', () => {
-					if (agent.id !== this.plugin.agent?.id) {
-						agentEl.style.backgroundColor = 'var(--background-modifier-hover)';
-					}
+				// Template
+				row.createEl('td', { 
+					text: agent.template_id || 'Unknown',
+					cls: 'model-cell-provider'
 				});
 				
-				agentEl.addEventListener('mouseleave', () => {
-					if (agent.id !== this.plugin.agent?.id) {
-						agentEl.style.backgroundColor = '';
-					}
+				// Agent ID (shortened)
+				const idCell = row.createEl('td', { cls: 'model-cell-context' });
+				const shortId = agent.id.substring(0, 8) + '...';
+				idCell.createEl('span', { 
+					text: shortId,
+					title: agent.id // Show full ID on hover
 				});
 				
-				agentEl.addEventListener('click', () => {
-					if (agent.id !== this.plugin.agent?.id) {
-						modal.close();
-						this.switchToAgent(agent, project);
-					}
+				// Status (current indicator)
+				const statusCell = row.createEl('td', { cls: 'model-cell-status' });
+				const isCurrentAgent = agent.id === this.plugin.agent?.id;
+				if (isCurrentAgent) {
+					statusCell.createEl('span', { 
+						text: 'Current',
+						cls: 'model-current-badge'
+					});
+				} else {
+					statusCell.createEl('span', { 
+						text: 'Available',
+						cls: 'model-available-badge'
+					});
+				}
+
+				// Click handler - allow clicking on current agent too
+				row.addEventListener('click', () => {
+					modal.close();
+					this.switchToAgent(agent, project);
+				});
+				row.style.cursor = 'pointer';
+				
+				// Hover effect
+				row.addEventListener('mouseenter', () => {
+					row.style.backgroundColor = 'var(--background-modifier-hover)';
+				});
+				row.addEventListener('mouseleave', () => {
+					row.style.backgroundColor = '';
 				});
 			}
 			
