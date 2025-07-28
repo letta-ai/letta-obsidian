@@ -81,7 +81,6 @@ interface AgentConfig {
 	agent_type?: 'memgpt_agent' | 'memgpt_v2_agent' | 'react_agent' | 'workflow_agent' | 'split_thread_agent' | 'sleeptime_agent' | 'voice_convo_agent' | 'voice_sleeptime_agent';
 	description?: string;
 	model?: string;
-	embedding?: string;
 	include_base_tools?: boolean;
 	include_multi_agent_tools?: boolean;
 	include_default_source?: boolean;
@@ -564,6 +563,12 @@ export default class LettaPlugin extends Plugin {
 
 				console.log(`[Letta Plugin] Creating new agent with config:`, agentConfig);
 
+				// Get embedding config for agent creation
+				const embeddingConfigs = await this.makeRequest('/v1/models/embedding');
+				const embeddingConfig = embeddingConfigs.find((config: any) => 
+					config.handle === 'letta/letta-free' || (config.handle && config.handle.includes('letta'))
+				) || embeddingConfigs[0];
+
 				// Create new agent with user configuration
 				const isCloudInstance = this.settings.lettaBaseUrl.includes('api.letta.com');
 				const agentBody: any = {
@@ -571,7 +576,7 @@ export default class LettaPlugin extends Plugin {
 					agent_type: agentConfig.agent_type,
 					description: agentConfig.description,
 					model: agentConfig.model,
-					embedding: agentConfig.embedding,
+					embedding_config: embeddingConfig,
 					include_base_tools: agentConfig.include_base_tools,
 					include_multi_agent_tools: agentConfig.include_multi_agent_tools,
 					include_default_source: agentConfig.include_default_source,
