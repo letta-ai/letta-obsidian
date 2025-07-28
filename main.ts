@@ -261,6 +261,12 @@ export default class LettaPlugin extends Plugin {
 		if (this.statusBarItem) {
 			this.statusBarItem.setText(`Letta: ${status}`);
 		}
+		
+		// Also update chat status if chat view is open
+		const chatLeaf = this.app.workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE)[0];
+		if (chatLeaf && chatLeaf.view instanceof LettaChatView) {
+			(chatLeaf.view as LettaChatView).updateChatStatus();
+		}
 	}
 
 	private async makeRequest(path: string, options: any = {}) {
@@ -1201,6 +1207,8 @@ class LettaChatView extends ItemView {
 	messageInput: HTMLTextAreaElement;
 	sendButton: HTMLButtonElement;
 	agentNameElement: HTMLElement;
+	statusDot: HTMLElement;
+	statusText: HTMLElement;
 
 	constructor(leaf: WorkspaceLeaf, plugin: LettaPlugin) {
 		super(leaf);
@@ -1235,18 +1243,27 @@ class LettaChatView extends ItemView {
 		this.agentNameElement.addEventListener('click', () => this.editAgentName());
 		
 		const configButton = titleContainer.createEl('button', { cls: 'letta-config-button' });
-		configButton.innerHTML = '⚙️';
+		configButton.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1 1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
 		configButton.title = 'Configure agent properties';
 		configButton.addEventListener('click', () => this.openAgentConfig());
 
 		const memoryButton = titleContainer.createEl('button', { cls: 'letta-config-button' });
-		memoryButton.innerHTML = '🧠';
+		memoryButton.textContent = 'Memory';
 		memoryButton.title = 'Open memory blocks panel';
 		memoryButton.addEventListener('click', () => this.plugin.openMemoryView());
+
+		const switchAgentButton = titleContainer.createEl('button', { cls: 'letta-config-button' });
+		switchAgentButton.textContent = 'Agent';
+		switchAgentButton.title = 'Switch to different agent';
+		switchAgentButton.addEventListener('click', () => this.openAgentSwitcher());
+
 		
 		const statusIndicator = header.createEl('div', { cls: 'letta-status-indicator' });
-		statusIndicator.createEl('span', { cls: 'letta-status-dot letta-status-connected' });
-		statusIndicator.createEl('span', { text: 'Connected', cls: 'letta-status-text' });
+		this.statusDot = statusIndicator.createEl('span', { cls: 'letta-status-dot' });
+		this.statusText = statusIndicator.createEl('span', { cls: 'letta-status-text' });
+		
+		// Set initial status based on current connection state
+		this.updateChatStatus();
 
 		// Chat container
 		this.chatContainer = container.createEl('div', { cls: 'letta-chat-container' });
@@ -1294,8 +1311,7 @@ class LettaChatView extends ItemView {
 			this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 80) + 'px';
 		});
 
-		// Add welcome message
-		this.addMessage('assistant', 'Hello! 👋 I can help you explore your vault. What would you like to know?', '🤖 Welcome');
+		// Start with empty chat
 	}
 
 	async onClose() {
@@ -1367,8 +1383,21 @@ class LettaChatView extends ItemView {
 
 	clearChat() {
 		this.chatContainer.empty();
-		// Re-add welcome message
-		this.addMessage('assistant', 'Hello! 👋 I can help you explore your vault. What would you like to know?', '🤖 Welcome');
+		// Chat cleared - no welcome message
+	}
+
+	updateChatStatus() {
+		// Determine connection status based on plugin state
+		const isConnected = this.plugin.agent && this.plugin.source;
+		
+		if (isConnected) {
+			this.statusDot.className = 'letta-status-dot letta-status-connected';
+			this.statusText.textContent = 'Connected';
+		} else {
+			this.statusDot.className = 'letta-status-dot';
+			this.statusDot.style.backgroundColor = 'var(--text-muted)';
+			this.statusText.textContent = 'Disconnected';
+		}
 	}
 
 	async editAgentName() {
@@ -1469,8 +1498,17 @@ class LettaChatView extends ItemView {
 
 	async openAgentConfig() {
 		if (!this.plugin.agent) {
-			new Notice('Please connect to Letta first');
-			return;
+			// Try to connect first
+			try {
+				await this.plugin.connectToLetta();
+				if (!this.plugin.agent) {
+					new Notice('Please configure your Letta connection first');
+					return;
+				}
+			} catch (error) {
+				new Notice('Failed to connect to Letta. Please check your settings.');
+				return;
+			}
 		}
 
 		// Get current agent details and blocks
@@ -1580,7 +1618,7 @@ class LettaChatView extends ItemView {
 						break;
 					case 'assistant_message':
 						if (responseMessage.content) {
-							this.addMessage('assistant', responseMessage.content, '🤖 Assistant');
+							this.addMessage('assistant', responseMessage.content, `🤖 ${this.plugin.settings.agentName}`);
 						}
 						break;
 				}
@@ -1598,6 +1636,371 @@ class LettaChatView extends ItemView {
 			this.messageInput.focus();
 		}
 	}
+
+	async openAgentSwitcher() {
+		if (!this.plugin.settings.lettaApiKey) {
+			new Notice('Please configure your Letta API key first');
+			return;
+		}
+
+		const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
+		
+		if (isCloudInstance) {
+			// For cloud instances, show agents from current project first
+			const currentProject = { 
+				id: this.plugin.settings.projectSlug, 
+				name: this.plugin.settings.projectSlug || 'Current Project',
+				slug: this.plugin.settings.projectSlug 
+			};
+			this.openAgentSelector(currentProject, true); // true indicates it's the current project
+		} else {
+			// For local instances, show all agents directly
+			this.openAgentSelector();
+		}
+	}
+
+	async openProjectSelector() {
+		const modal = new Modal(this.app);
+		modal.setTitle('Select Project');
+		
+		const { contentEl } = modal;
+		contentEl.style.width = '700px';
+		contentEl.style.height = '500px';
+		
+		// Loading state
+		const loadingEl = contentEl.createEl('div', { 
+			text: 'Loading projects and counting agents...', 
+			cls: 'letta-memory-empty' 
+		});
+		
+		try {
+			console.log('[Letta Plugin] Making request to /v1/projects');
+			const projectsResponse = await this.plugin.makeRequest('/v1/projects');
+			console.log('[Letta Plugin] Projects response:', projectsResponse);
+			loadingEl.remove();
+			
+			// Handle different response formats
+			let projects;
+			if (Array.isArray(projectsResponse)) {
+				projects = projectsResponse;
+			} else if (projectsResponse.projects) {
+				projects = projectsResponse.projects;
+			} else {
+				projects = [];
+			}
+			
+			if (!projects || projects.length === 0) {
+				contentEl.createEl('div', { 
+					text: 'No projects found', 
+					cls: 'letta-memory-empty' 
+				});
+				return;
+			}
+			
+			const projectList = contentEl.createEl('div');
+			projectList.style.maxHeight = '400px';
+			projectList.style.overflowY = 'auto';
+			
+			// Pre-fetch agent counts for each project
+			console.log('[Letta Plugin] Fetching agent counts for projects:', projects);
+			const projectsWithCounts = await Promise.all(
+				projects.map(async (project) => {
+					try {
+						const agents = await this.plugin.makeRequest(`/v1/agents?project_id=${project.id}`);
+						console.log(`[Letta Plugin] Project ${project.name} has ${agents?.length || 0} agents:`, agents);
+						return { ...project, agentCount: agents?.length || 0 };
+					} catch (error) {
+						console.warn(`Failed to get agent count for project ${project.name}:`, error);
+						return { ...project, agentCount: 0 };
+					}
+				})
+			);
+			console.log('[Letta Plugin] Projects with counts:', projectsWithCounts);
+			
+			for (const project of projectsWithCounts) {
+				const projectEl = projectList.createEl('div');
+				projectEl.style.padding = '12px';
+				projectEl.style.border = '1px solid var(--background-modifier-border)';
+				projectEl.style.borderRadius = '8px';
+				projectEl.style.marginBottom = '8px';
+				projectEl.style.cursor = 'pointer';
+				projectEl.style.transition = 'background 0.2s ease';
+				
+				// Grey out projects with no agents
+				if (project.agentCount === 0) {
+					projectEl.style.opacity = '0.6';
+					projectEl.style.cursor = 'not-allowed';
+				}
+				
+				const headerEl = projectEl.createEl('div');
+				headerEl.style.display = 'flex';
+				headerEl.style.justifyContent = 'space-between';
+				headerEl.style.alignItems = 'center';
+				headerEl.style.marginBottom = '4px';
+				headerEl.style.gap = '12px';
+				
+				const nameEl = headerEl.createEl('div', { text: project.name });
+				nameEl.style.fontWeight = '600';
+				nameEl.style.flex = '1';
+				nameEl.style.minWidth = '0';
+				nameEl.style.overflow = 'hidden';
+				nameEl.style.textOverflow = 'ellipsis';
+				nameEl.style.whiteSpace = 'nowrap';
+				
+				const countEl = headerEl.createEl('div', { 
+					text: `${project.agentCount || 0} agent${(project.agentCount || 0) !== 1 ? 's' : ''}` 
+				});
+				countEl.style.fontSize = '0.8em';
+				countEl.style.color = (project.agentCount || 0) > 0 ? 'var(--color-green)' : 'var(--text-muted)';
+				countEl.style.fontWeight = '500';
+				countEl.style.flexShrink = '0';
+				countEl.style.whiteSpace = 'nowrap';
+				countEl.style.backgroundColor = 'var(--background-modifier-border)';
+				countEl.style.padding = '2px 6px';
+				countEl.style.borderRadius = '4px';
+				
+				const slugEl = projectEl.createEl('div', { text: project.slug });
+				slugEl.style.fontSize = '0.9em';
+				slugEl.style.color = 'var(--text-muted)';
+				
+				if (project.agentCount === 0) {
+					const noAgentsEl = projectEl.createEl('div', { text: 'No agents available' });
+					noAgentsEl.style.fontSize = '0.8em';
+					noAgentsEl.style.color = 'var(--text-faint)';
+					noAgentsEl.style.fontStyle = 'italic';
+					noAgentsEl.style.marginTop = '4px';
+				}
+				
+				projectEl.addEventListener('mouseenter', () => {
+					if (project.agentCount > 0) {
+						projectEl.style.backgroundColor = 'var(--background-modifier-hover)';
+					}
+				});
+				
+				projectEl.addEventListener('mouseleave', () => {
+					projectEl.style.backgroundColor = '';
+				});
+				
+				projectEl.addEventListener('click', () => {
+					if (project.agentCount > 0) {
+						console.log('[Letta Plugin] Project selected:', project);
+						modal.close();
+						this.openAgentSelector(project);
+					} else {
+						new Notice(`Project "${project.name}" has no agents available`);
+					}
+				});
+			}
+			
+		} catch (error) {
+			console.error('[Letta Plugin] Failed to load projects:', error);
+			loadingEl.textContent = `Failed to load projects: ${error.message || 'Please check your connection.'}`;
+		}
+		
+		modal.open();
+	}
+
+	async openAgentSelector(project?: any, isCurrentProject?: boolean) {
+		const modal = new Modal(this.app);
+		modal.setTitle(project ? `Select Agent - ${project.name}` : 'Select Agent');
+		
+		const { contentEl } = modal;
+		contentEl.style.width = '700px';
+		contentEl.style.height = '600px';
+		
+		// Add navigation buttons for cloud instances
+		if (project && this.plugin.settings.lettaBaseUrl.includes('api.letta.com')) {
+			const buttonContainer = contentEl.createEl('div');
+			buttonContainer.style.display = 'flex';
+			buttonContainer.style.gap = '8px';
+			buttonContainer.style.marginBottom = '16px';
+			
+			if (isCurrentProject) {
+				const changeProjectButton = buttonContainer.createEl('button', { 
+					text: 'Change Project',
+					cls: 'letta-clear-button'
+				});
+				changeProjectButton.addEventListener('click', () => {
+					modal.close();
+					this.openProjectSelector();
+				});
+			} else {
+				const backButton = buttonContainer.createEl('button', { 
+					text: '← Back to Projects',
+					cls: 'letta-clear-button'
+				});
+				backButton.addEventListener('click', () => {
+					modal.close();
+					this.openProjectSelector();
+				});
+			}
+		}
+		
+		// Loading state
+		const loadingEl = contentEl.createEl('div', { 
+			text: 'Loading agents...', 
+			cls: 'letta-memory-empty' 
+		});
+		
+		try {
+			// Build query params for agents request
+			const params = new URLSearchParams();
+			if (project) {
+				params.append('project_id', project.id);
+			}
+			
+			const queryString = params.toString();
+			const endpoint = `/v1/agents${queryString ? '?' + queryString : ''}`;
+			
+			const agents = await this.plugin.makeRequest(endpoint);
+			loadingEl.remove();
+			
+			if (!agents || agents.length === 0) {
+				const emptyDiv = contentEl.createEl('div', { cls: 'letta-memory-empty' });
+				emptyDiv.style.textAlign = 'center';
+				emptyDiv.style.padding = '40px';
+				
+				emptyDiv.createEl('div', { 
+					text: project ? `No agents found in "${project.name}"` : 'No agents found',
+					cls: 'letta-memory-empty'
+				});
+				
+				if (project) {
+					if (isCurrentProject) {
+						emptyDiv.createEl('p', { 
+							text: 'Your current project doesn\'t have any agents yet. Try selecting a different project or create a new agent.',
+							cls: 'letta-memory-empty'
+						});
+						
+						const changeProjectButton = emptyDiv.createEl('button', { 
+							text: 'Change Project',
+							cls: 'letta-clear-button'
+						});
+						changeProjectButton.style.marginTop = '16px';
+						changeProjectButton.addEventListener('click', () => {
+							modal.close();
+							this.openProjectSelector();
+						});
+					} else {
+						emptyDiv.createEl('p', { 
+							text: 'This project doesn\'t have any agents yet. Try selecting a different project or create a new agent.',
+							cls: 'letta-memory-empty'
+						});
+						
+						const backButton = emptyDiv.createEl('button', { 
+							text: '← Back to Projects',
+							cls: 'letta-clear-button'
+						});
+						backButton.style.marginTop = '16px';
+						backButton.addEventListener('click', () => {
+							modal.close();
+							this.openProjectSelector();
+						});
+					}
+				}
+				return;
+			}
+			
+			const agentList = contentEl.createEl('div');
+			agentList.style.maxHeight = '450px';
+			agentList.style.overflowY = 'auto';
+			
+			for (const agent of agents) {
+				const agentEl = agentList.createEl('div');
+				agentEl.style.padding = '16px';
+				agentEl.style.border = '1px solid var(--background-modifier-border)';
+				agentEl.style.borderRadius = '8px';
+				agentEl.style.marginBottom = '12px';
+				agentEl.style.cursor = 'pointer';
+				agentEl.style.transition = 'background 0.2s ease';
+				
+				// Highlight current agent
+				if (agent.id === this.plugin.agent?.id) {
+					agentEl.style.border = '2px solid var(--interactive-accent)';
+					agentEl.style.backgroundColor = 'var(--background-modifier-hover)';
+				}
+				
+				const nameEl = agentEl.createEl('div', { text: agent.name });
+				nameEl.style.fontWeight = '600';
+				nameEl.style.marginBottom = '8px';
+				nameEl.style.fontSize = '1.1em';
+				
+				if (agent.id === this.plugin.agent?.id) {
+					const currentBadge = agentEl.createEl('span', { text: 'CURRENT' });
+					currentBadge.style.fontSize = '0.7em';
+					currentBadge.style.color = 'var(--interactive-accent)';
+					currentBadge.style.fontWeight = '600';
+					currentBadge.style.marginLeft = '8px';
+				}
+				
+				const templateEl = agentEl.createEl('div', { text: `Template: ${agent.template_id || 'Unknown'}` });
+				templateEl.style.fontSize = '0.9em';
+				templateEl.style.color = 'var(--text-muted)';
+				templateEl.style.marginBottom = '4px';
+				
+				const idEl = agentEl.createEl('div', { text: `ID: ${agent.id}` });
+				idEl.style.fontSize = '0.8em';
+				idEl.style.color = 'var(--text-faint)';
+				idEl.style.fontFamily = 'var(--font-monospace)';
+				
+				agentEl.addEventListener('mouseenter', () => {
+					if (agent.id !== this.plugin.agent?.id) {
+						agentEl.style.backgroundColor = 'var(--background-modifier-hover)';
+					}
+				});
+				
+				agentEl.addEventListener('mouseleave', () => {
+					if (agent.id !== this.plugin.agent?.id) {
+						agentEl.style.backgroundColor = '';
+					}
+				});
+				
+				agentEl.addEventListener('click', () => {
+					if (agent.id !== this.plugin.agent?.id) {
+						modal.close();
+						this.switchToAgent(agent, project);
+					}
+				});
+			}
+			
+		} catch (error) {
+			loadingEl.textContent = 'Failed to load agents. Please check your connection.';
+			console.error('Failed to load agents:', error);
+		}
+		
+		modal.open();
+	}
+
+	async switchToAgent(agent: any, project?: any) {
+		try {
+			// Clear current chat
+			this.clearChat();
+			
+			// Update plugin settings
+			this.plugin.settings.agentName = agent.name;
+			if (project) {
+				this.plugin.settings.projectSlug = project.slug;
+			}
+			await this.plugin.saveSettings();
+			
+			// Update plugin agent reference
+			this.plugin.agent = agent;
+			
+			// Update UI
+			this.agentNameElement.textContent = agent.name;
+			
+			// Show success message
+			this.addMessage('assistant', `Switched to agent: **${agent.name}**${project ? ` (Project: ${project.name})` : ''}`, '🤖 System');
+			
+			new Notice(`Switched to agent: ${agent.name}`);
+			
+		} catch (error) {
+			console.error('Failed to switch agent:', error);
+			new Notice('Failed to switch agent. Please try again.');
+			this.addMessage('assistant', '❌ **Error**: Failed to switch agent. Please try again.', '🚨 Error');
+		}
+	}
+
 }
 
 class LettaMemoryView extends ItemView {
@@ -1635,7 +2038,17 @@ class LettaMemoryView extends ItemView {
 		const header = container.createEl('div', { cls: 'letta-memory-header' });
 		header.createEl('h3', { text: 'Agent Memory Blocks', cls: 'letta-memory-title' });
 		
-		this.refreshButton = header.createEl('button', { 
+		const buttonContainer = header.createEl('div');
+		buttonContainer.style.display = 'flex';
+		buttonContainer.style.gap = '8px';
+		
+		const createButton = buttonContainer.createEl('button', { 
+			text: '+ New Block',
+			cls: 'letta-memory-refresh-btn'
+		});
+		createButton.addEventListener('click', () => this.createNewBlock());
+		
+		this.refreshButton = buttonContainer.createEl('button', { 
 			text: '↻ Refresh',
 			cls: 'letta-memory-refresh-btn'
 		});
@@ -1946,6 +2359,119 @@ class LettaMemoryView extends ItemView {
 		contentContainer.createEl('div', { 
 			text: message,
 			cls: 'letta-memory-error'
+		});
+	}
+
+	async createNewBlock() {
+		if (!this.plugin.agent) {
+			new Notice('Please connect to Letta first');
+			return;
+		}
+
+		const blockData = await this.promptForNewBlock();
+		if (!blockData) return;
+
+		try {
+			// Create the new memory block via API
+			await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks`, {
+				method: 'POST',
+				body: JSON.stringify({
+					label: blockData.label,
+					value: blockData.value,
+					limit: blockData.limit
+				})
+			});
+
+			new Notice(`Created memory block: ${blockData.label}`);
+			
+			// Refresh the blocks list
+			await this.loadBlocks();
+			
+		} catch (error) {
+			console.error('Failed to create memory block:', error);
+			new Notice('Failed to create memory block. Please try again.');
+		}
+	}
+
+	private promptForNewBlock(): Promise<{label: string, value: string, limit: number} | null> {
+		return new Promise((resolve) => {
+			const modal = new Modal(this.app);
+			modal.setTitle('Create New Memory Block');
+			
+			const { contentEl } = modal;
+			contentEl.style.width = '500px';
+			
+			// Label input
+			contentEl.createEl('div', { text: 'Block Label:', cls: 'config-label' });
+			const labelInput = contentEl.createEl('input', {
+				type: 'text',
+				placeholder: 'e.g., user_preferences, project_context',
+				cls: 'config-input'
+			});
+			labelInput.style.marginBottom = '16px';
+			
+			// Value textarea
+			contentEl.createEl('div', { text: 'Initial Content:', cls: 'config-label' });
+			const valueInput = contentEl.createEl('textarea', {
+				placeholder: 'Enter the initial content for this memory block...',
+				cls: 'config-textarea'
+			});
+			valueInput.style.height = '120px';
+			valueInput.style.marginBottom = '16px';
+			
+			// Limit input
+			contentEl.createEl('div', { text: 'Character Limit:', cls: 'config-label' });
+			const limitInput = contentEl.createEl('input', {
+				type: 'number',
+				value: '2000',
+				min: '100',
+				max: '8000',
+				cls: 'config-input'
+			});
+			limitInput.style.marginBottom = '16px';
+			
+			const buttonContainer = contentEl.createEl('div');
+			buttonContainer.style.display = 'flex';
+			buttonContainer.style.gap = '8px';
+			buttonContainer.style.justifyContent = 'flex-end';
+			
+			const createButton = buttonContainer.createEl('button', {
+				text: 'Create Block',
+				cls: 'mod-cta'
+			});
+			
+			const cancelButton = buttonContainer.createEl('button', {
+				text: 'Cancel'
+			});
+			
+			createButton.addEventListener('click', () => {
+				const label = labelInput.value.trim();
+				const value = valueInput.value.trim();
+				const limit = parseInt(limitInput.value) || 2000;
+				
+				if (!label) {
+					new Notice('Please enter a block label');
+					labelInput.focus();
+					return;
+				}
+				
+				if (!value) {
+					new Notice('Please enter some initial content');
+					valueInput.focus();
+					return;
+				}
+				
+				resolve({ label, value, limit });
+				modal.close();
+			});
+			
+			cancelButton.addEventListener('click', () => {
+				resolve(null);
+				modal.close();
+			});
+			
+			modal.open();
+			labelInput.focus();
 		});
 	}
 
