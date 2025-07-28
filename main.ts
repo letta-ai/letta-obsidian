@@ -1326,6 +1326,9 @@ class LettaChatView extends ItemView {
 		// Chat container
 		this.chatContainer = container.createEl('div', { cls: 'letta-chat-container' });
 		
+		// Now that chat container exists, update status to show disconnected message if needed
+		this.updateChatStatus();
+		
 		// Input container
 		this.inputContainer = container.createEl('div', { cls: 'letta-input-container' });
 		
@@ -1494,6 +1497,11 @@ class LettaChatView extends ItemView {
 	}
 	
 	showDisconnectedMessage() {
+		// Only show if chat container exists
+		if (!this.chatContainer) {
+			return;
+		}
+		
 		// Remove any existing disconnected message
 		this.removeDisconnectedMessage();
 		
@@ -1550,6 +1558,10 @@ class LettaChatView extends ItemView {
 	}
 	
 	removeDisconnectedMessage() {
+		if (!this.chatContainer) {
+			return;
+		}
+		
 		const existingMessage = this.chatContainer.querySelector('.letta-disconnected-container');
 		if (existingMessage) {
 			existingMessage.remove();
