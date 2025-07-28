@@ -39,15 +39,16 @@
 .letta-config-button {
     background: none;
     border: none;
-    padding: 4px;
+    padding: 4px 8px;
     border-radius: 3px;
     cursor: pointer;
-    font-size: 0.9em;
+    font-size: 0.85em;
     opacity: 0.7;
     transition: all 0.2s ease;
     display: flex;
     align-items: center;
     justify-content: center;
+    font-weight: 500;
 }
 
 .letta-config-button:hover {
@@ -89,7 +90,7 @@
 .letta-chat-container {
     flex: 1;
     overflow-y: auto;
-    padding: 16px 20px;
+    padding: 8px 12px;
     background: var(--background-primary);
     min-height: 0; /* Important for flex scrolling */
 }
@@ -97,8 +98,8 @@
 .letta-input-container {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 12px 16px;
+    gap: 6px;
+    padding: 8px 12px;
     border-top: 1px solid var(--background-modifier-border);
     background: var(--background-secondary);
 }
@@ -109,18 +110,18 @@
 
 .letta-message-input {
     width: 100%;
-    min-height: 36px;
-    max-height: 80px;
-    padding: 8px 12px;
+    min-height: 28px;
+    max-height: 60px;
+    padding: 6px 10px;
     border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
+    border-radius: 4px;
     background: var(--background-primary);
     color: var(--text-normal);
     font-family: var(--font-interface);
-    font-size: var(--font-ui-small);
+    font-size: 0.85em;
     resize: none;
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    line-height: 1.3;
+    line-height: 1.2;
 }
 
 .letta-message-input:focus {
@@ -136,23 +137,24 @@
 
 .letta-button-container {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     justify-content: flex-end;
 }
 
 .letta-send-button {
-    padding: 8px 16px;
+    padding: 6px 12px;
     background: var(--interactive-accent);
     color: var(--text-on-accent);
     border: none;
-    border-radius: 4px;
+    border-radius: 3px;
     font-weight: 500;
-    font-size: 0.85em;
+    font-size: 0.8em;
     cursor: pointer;
     transition: all 0.2s ease;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
+    height: 28px;
 }
 
 .letta-send-button:hover:not(:disabled) {
@@ -189,15 +191,16 @@
 }
 
 .letta-clear-button {
-    padding: 8px 12px;
+    padding: 6px 10px;
     background: var(--background-primary);
     color: var(--text-muted);
     border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
+    border-radius: 3px;
     font-weight: 400;
-    font-size: 0.85em;
+    font-size: 0.8em;
     cursor: pointer;
     transition: all 0.2s ease;
+    height: 28px;
 }
 
 .letta-clear-button:hover {
@@ -206,91 +209,83 @@
     border-color: var(--background-modifier-border-hover);
 }
 
-/* Chat Messages */
+/* Chat Messages - Compact Slack-style */
 .letta-message {
-    margin-bottom: 12px;
-    padding: 12px 16px;
-    border-radius: 12px;
+    margin-bottom: 4px;
+    padding: 4px 12px;
     position: relative;
-    transition: all 0.3s ease;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    max-width: 85%;
+    max-width: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.letta-message:hover {
+    background: var(--background-modifier-hover-border);
 }
 
 .letta-message-user {
+    border-left: 3px solid var(--color-blue);
     background: var(--color-blue-bg);
-    margin-left: auto;
-    margin-right: 8px;
-    border-top-right-radius: 4px;
 }
 
 .letta-message-assistant {
-    background: var(--background-secondary);
-    margin-right: auto;
-    margin-left: 8px;
-    border-top-left-radius: 4px;
-    border: 1px solid var(--background-modifier-border-hover);
+    border-left: 3px solid var(--color-green);
+    background: transparent;
 }
 
 .letta-message-reasoning {
+    border-left: 3px solid var(--color-purple);
     background: var(--color-purple-bg);
-    opacity: 0.95;
-    margin-right: auto;
-    margin-left: 8px;
-    border: 1px solid var(--color-purple);
-    border-opacity: 0.2;
-    padding: 10px 14px;
+    opacity: 0.8;
+    font-size: 0.9em;
 }
 
 .letta-message-tool-call {
+    border-left: 3px solid var(--color-cyan);
     background: var(--color-cyan-bg);
-    margin: 0 8px;
-    border: 1px solid var(--color-cyan);
-    border-opacity: 0.2;
-    padding: 10px 14px;
+    font-size: 0.9em;
 }
 
 .letta-message-tool-result {
-    background: var(--color-green-bg);
-    margin: 0 8px;
-    border: 1px solid var(--color-green);
-    border-opacity: 0.2;
-    padding: 10px 14px;
+    border-left: 3px solid var(--color-orange);
+    background: var(--color-orange-bg);
+    font-size: 0.9em;
 }
 
 .letta-message-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid var(--background-modifier-border-hover);
+    gap: 8px;
+    margin-bottom: 2px;
+    min-height: 20px;
 }
 
 .letta-message-title {
     font-weight: 600;
     color: var(--text-normal);
-    font-size: 0.9em;
+    font-size: 0.8em;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
 }
 
 .letta-message-timestamp {
-    font-size: 0.75em;
+    font-size: 0.7em;
     color: var(--text-faint);
     font-weight: 400;
     font-family: var(--font-monospace);
+    opacity: 0.7;
 }
 
 .letta-message-content {
     color: var(--text-normal);
-    line-height: 1.6;
-    font-size: 0.95em;
+    line-height: 1.4;
+    font-size: 0.9em;
 }
 
 .letta-message-content p {
-    margin: 0 0 12px 0;
+    margin: 0 0 6px 0;
 }
 
 .letta-message-content p:last-child {
@@ -298,13 +293,13 @@
 }
 
 .letta-message-content ul {
-    margin: 8px 0;
-    padding-left: 20px;
+    margin: 4px 0;
+    padding-left: 16px;
 }
 
 .letta-message-content li {
-    margin: 4px 0;
-    line-height: 1.5;
+    margin: 2px 0;
+    line-height: 1.4;
     color: var(--text-normal);
 }
 
@@ -382,78 +377,50 @@
 /* Mobile adjustments for sidebar */
 @media (max-width: 768px) {
     .letta-chat-header {
-        padding: 10px 12px;
+        padding: 8px 10px;
+    }
+    
+    .letta-chat-container {
+        padding: 6px 8px;
     }
     
     .letta-message {
-        max-width: 90%;
-    }
-    
-    .letta-message-user {
-        margin-left: auto;
-        margin-right: 4px;
-    }
-    
-    .letta-message-assistant {
-        margin-right: auto;
-        margin-left: 4px;
-    }
-    
-    .letta-message-reasoning {
-        margin-right: auto;
-        margin-left: 4px;
-        padding: 8px 12px;
-    }
-    
-    .letta-message-tool-call,
-    .letta-message-tool-result {
-        margin: 0 4px;
-        padding: 8px 12px;
+        padding: 3px 8px;
+        margin-bottom: 3px;
     }
     
     .letta-input-container {
-        padding: 10px 12px;
+        padding: 6px 8px;
     }
     
     .letta-button-container {
         flex-direction: column;
-        gap: 6px;
+        gap: 4px;
     }
     
     .letta-send-button,
     .letta-clear-button {
         width: 100%;
         justify-content: center;
+        height: 32px;
     }
 }
 
 /* Dark theme adjustments */
-.theme-dark .letta-message {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
 .theme-dark .letta-message-user {
-    background: rgba(59, 130, 246, 0.15);
-}
-
-.theme-dark .letta-message-assistant {
-    background: var(--background-secondary);
-    border-color: var(--background-modifier-border);
+    background: rgba(59, 130, 246, 0.1);
 }
 
 .theme-dark .letta-message-reasoning {
-    background: rgba(147, 51, 234, 0.15);
-    border-color: rgba(147, 51, 234, 0.3);
+    background: rgba(147, 51, 234, 0.1);
 }
 
 .theme-dark .letta-message-tool-call {
-    background: rgba(6, 182, 212, 0.15);
-    border-color: rgba(6, 182, 212, 0.3);
+    background: rgba(6, 182, 212, 0.1);
 }
 
 .theme-dark .letta-message-tool-result {
-    background: rgba(34, 197, 94, 0.15);
-    border-color: rgba(34, 197, 94, 0.3);
+    background: rgba(251, 146, 60, 0.1);
 }
 
 /* Enhanced focus states */
