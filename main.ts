@@ -39,6 +39,27 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 interface LettaAgent {
 	id: string;
 	name: string;
+	llm_config?: {
+		model: string;
+		model_endpoint_type: string;
+		provider_name: string;
+		provider_category: 'base' | 'byok';
+		temperature?: number;
+		max_tokens?: number;
+		context_window?: number;
+	};
+}
+
+interface LettaModel {
+	model: string;
+	model_endpoint_type: string;
+	provider_name: string;
+	provider_category: 'base' | 'byok';
+	context_window: number;
+	model_endpoint?: string;
+	model_wrapper?: string;
+	temperature?: number;
+	max_tokens?: number;
 }
 
 interface LettaSource {
@@ -1209,6 +1230,7 @@ class LettaChatView extends ItemView {
 	agentNameElement: HTMLElement;
 	statusDot: HTMLElement;
 	statusText: HTMLElement;
+	modelButton: HTMLElement;
 
 	constructor(leaf: WorkspaceLeaf, plugin: LettaPlugin) {
 		super(leaf);
@@ -1267,6 +1289,14 @@ class LettaChatView extends ItemView {
 		adeButton.addEventListener('mouseenter', () => { adeButton.style.opacity = '1'; });
 		adeButton.addEventListener('mouseleave', () => { adeButton.style.opacity = '0.7'; });
 		adeButton.addEventListener('click', () => this.openInADE());
+
+		// Model display button
+		this.modelButton = titleContainer.createEl('span', { text: 'Loading...' });
+		this.modelButton.title = 'Click to change model';
+		this.modelButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		this.modelButton.addEventListener('mouseenter', () => { this.modelButton.style.opacity = '1'; });
+		this.modelButton.addEventListener('mouseleave', () => { this.modelButton.style.opacity = '0.7'; });
+		this.modelButton.addEventListener('click', () => this.openModelSwitcher());
 
 		
 		const statusIndicator = header.createEl('div', { cls: 'letta-status-indicator' });
@@ -1410,10 +1440,14 @@ class LettaChatView extends ItemView {
 				: '';
 			
 			this.statusText.textContent = `Connected${projectInfo}`;
+			
+			// Update model button
+			this.updateModelButton();
 		} else {
 			this.statusDot.className = 'letta-status-dot';
 			this.statusDot.style.backgroundColor = 'var(--text-muted)';
 			this.statusText.textContent = 'Disconnected';
+			this.modelButton.textContent = 'N/A';
 		}
 	}
 
@@ -1430,6 +1464,40 @@ class LettaChatView extends ItemView {
 		window.open(adeUrl, '_blank');
 		
 		new Notice('Opening agent in Letta ADE...');
+	}
+
+	async updateModelButton() {
+		if (!this.plugin.agent) {
+			this.modelButton.textContent = 'N/A';
+			return;
+		}
+
+		try {
+			// Fetch the current agent details to get model info
+			const agent = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`);
+			
+			if (agent && agent.llm_config && agent.llm_config.model) {
+				// Display just the model name for brevity
+				const modelName = agent.llm_config.model;
+				this.modelButton.textContent = modelName;
+				this.modelButton.title = `Current model: ${modelName}\nProvider: ${agent.llm_config.provider_name || 'Unknown'}\nClick to change model`;
+			} else {
+				this.modelButton.textContent = 'Unknown';
+			}
+		} catch (error) {
+			console.error('Error fetching agent model info:', error);
+			this.modelButton.textContent = 'Error';
+		}
+	}
+
+	openModelSwitcher() {
+		if (!this.plugin.agent) {
+			new Notice('Please connect to Letta first');
+			return;
+		}
+
+		const modal = new ModelSwitcherModal(this.app, this.plugin, this.plugin.agent);
+		modal.open();
 	}
 
 	async editAgentName() {
@@ -3168,6 +3236,249 @@ class AgentConfigModal extends Modal {
 		if (this.resolve) {
 			this.resolve(null);
 		}
+	}
+}
+
+class ModelSwitcherModal extends Modal {
+	plugin: LettaPlugin;
+	currentAgent: LettaAgent;
+	models: LettaModel[] = [];
+	filteredModels: LettaModel[] = [];
+	
+	// Filter controls
+	providerCategorySelect: HTMLSelectElement;
+	providerNameSelect: HTMLSelectElement;
+	searchInput: HTMLInputElement;
+	
+	// Model list
+	modelList: HTMLElement;
+	
+	constructor(app: App, plugin: LettaPlugin, currentAgent: LettaAgent) {
+		super(app);
+		this.plugin = plugin;
+		this.currentAgent = currentAgent;
+	}
+
+	async onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass('model-switcher-modal');
+
+		// Header
+		const header = contentEl.createEl('div', { cls: 'agent-config-header' });
+		header.createEl('h2', { text: 'Select Model' });
+		header.createEl('p', { 
+			text: `Choose a model for agent: ${this.currentAgent.name}`,
+			cls: 'agent-config-subtitle'
+		});
+
+		// Content area
+		const content = contentEl.createEl('div', { cls: 'agent-config-form' });
+
+		// Current model info
+		const currentSection = content.createEl('div', { cls: 'config-section' });
+		currentSection.createEl('h3', { text: 'Current Model' });
+		
+		const currentModel = this.currentAgent.llm_config?.model || 'Unknown';
+		const currentProvider = this.currentAgent.llm_config?.provider_name || 'Unknown';
+		const currentCategory = this.currentAgent.llm_config?.provider_category || 'Unknown';
+		
+		currentSection.createEl('p', { 
+			text: `Model: ${currentModel}`,
+			cls: 'config-help'
+		});
+		currentSection.createEl('p', { 
+			text: `Provider: ${currentProvider} (${currentCategory})`,
+			cls: 'config-help'
+		});
+
+		// Filters section
+		const filtersSection = content.createEl('div', { cls: 'config-section' });
+		filtersSection.createEl('h3', { text: 'Filter Models' });
+
+		// Provider category filter
+		const categoryGroup = filtersSection.createEl('div', { cls: 'config-group' });
+		categoryGroup.createEl('label', { text: 'Provider Category:', cls: 'config-label' });
+		this.providerCategorySelect = categoryGroup.createEl('select', { cls: 'config-select' });
+		this.providerCategorySelect.createEl('option', { text: 'All Categories', value: '' });
+		this.providerCategorySelect.createEl('option', { text: 'Base (Letta-hosted)', value: 'base' });
+		this.providerCategorySelect.createEl('option', { text: 'BYOK (Bring Your Own Key)', value: 'byok' });
+
+		// Provider name filter
+		const providerGroup = filtersSection.createEl('div', { cls: 'config-group' });
+		providerGroup.createEl('label', { text: 'Provider:', cls: 'config-label' });
+		this.providerNameSelect = providerGroup.createEl('select', { cls: 'config-select' });
+		this.providerNameSelect.createEl('option', { text: 'All Providers', value: '' });
+
+		// Search filter
+		const searchGroup = filtersSection.createEl('div', { cls: 'config-group' });
+		searchGroup.createEl('label', { text: 'Search Models:', cls: 'config-label' });
+		this.searchInput = searchGroup.createEl('input', { 
+			cls: 'config-input',
+			attr: { type: 'text', placeholder: 'Search by model name...' }
+		});
+
+		// Models section
+		const modelsSection = content.createEl('div', { cls: 'config-section' });
+		modelsSection.createEl('h3', { text: 'Available Models' });
+		
+		this.modelList = modelsSection.createEl('div', { cls: 'block-search-list' });
+		this.modelList.createEl('div', { 
+			text: 'Loading models...',
+			cls: 'block-search-empty'
+		});
+
+		// Buttons
+		const buttons = contentEl.createEl('div', { cls: 'agent-config-buttons' });
+		
+		const cancelBtn = buttons.createEl('button', { 
+			text: 'Cancel',
+			cls: 'agent-config-cancel-btn'
+		});
+		cancelBtn.addEventListener('click', () => this.close());
+
+		// Load models and setup event listeners
+		await this.loadModels();
+		this.setupEventListeners();
+	}
+
+	async loadModels() {
+		try {
+			const response = await this.plugin.makeRequest('/v1/models/');
+			this.models = response || [];
+			this.updateProviderOptions();
+			this.filterModels();
+		} catch (error) {
+			console.error('Error loading models:', error);
+			this.modelList.empty();
+			this.modelList.createEl('div', { 
+				text: 'Error loading models. Please try again.',
+				cls: 'block-search-empty'
+			});
+		}
+	}
+
+	updateProviderOptions() {
+		// Get unique provider names
+		const providers = [...new Set(this.models.map(m => m.provider_name).filter(Boolean))];
+		
+		// Clear existing options (keep the "All Providers" option)
+		while (this.providerNameSelect.children.length > 1) {
+			this.providerNameSelect.removeChild(this.providerNameSelect.lastChild!);
+		}
+		
+		// Add provider options
+		providers.sort().forEach(provider => {
+			this.providerNameSelect.createEl('option', { 
+				text: provider,
+				value: provider
+			});
+		});
+	}
+
+	setupEventListeners() {
+		this.providerCategorySelect.addEventListener('change', () => this.filterModels());
+		this.providerNameSelect.addEventListener('change', () => this.filterModels());
+		this.searchInput.addEventListener('input', () => this.filterModels());
+	}
+
+	filterModels() {
+		const categoryFilter = this.providerCategorySelect.value;
+		const providerFilter = this.providerNameSelect.value;
+		const searchFilter = this.searchInput.value.toLowerCase();
+
+		this.filteredModels = this.models.filter(model => {
+			const matchesCategory = !categoryFilter || model.provider_category === categoryFilter;
+			const matchesProvider = !providerFilter || model.provider_name === providerFilter;
+			const matchesSearch = !searchFilter || model.model.toLowerCase().includes(searchFilter);
+			
+			return matchesCategory && matchesProvider && matchesSearch;
+		});
+
+		this.renderModels();
+	}
+
+	renderModels() {
+		this.modelList.empty();
+
+		if (this.filteredModels.length === 0) {
+			this.modelList.createEl('div', { 
+				text: 'No models found matching the current filters.',
+				cls: 'block-search-empty'
+			});
+			return;
+		}
+
+		this.filteredModels.forEach(model => {
+			const modelItem = this.modelList.createEl('div', { cls: 'block-search-item' });
+			
+			const header = modelItem.createEl('div', { cls: 'block-search-item-header' });
+			
+			const titleSection = header.createEl('div', { cls: 'block-search-item-title' });
+			titleSection.createEl('h4', { text: model.model });
+			titleSection.createEl('p', { 
+				text: `${model.provider_name} • ${model.provider_category} • Context: ${model.context_window?.toLocaleString() || 'Unknown'}`,
+				cls: 'block-search-item-description'
+			});
+
+			// Current model indicator
+			const currentModel = this.currentAgent.llm_config?.model;
+			if (currentModel === model.model) {
+				const currentBadge = header.createEl('span', { 
+					text: 'Current',
+					cls: 'block-search-item-chars'
+				});
+				currentBadge.style.backgroundColor = 'var(--interactive-accent)';
+				currentBadge.style.color = 'var(--text-on-accent)';
+			}
+
+			// Click handler
+			modelItem.addEventListener('click', () => this.selectModel(model));
+		});
+	}
+
+	async selectModel(model: LettaModel) {
+		try {
+			// Update the agent's LLM config
+			const updateData = {
+				llm_config: {
+					...this.currentAgent.llm_config,
+					model: model.model,
+					model_endpoint_type: model.model_endpoint_type,
+					provider_name: model.provider_name,
+					provider_category: model.provider_category,
+					context_window: model.context_window,
+					model_endpoint: model.model_endpoint,
+					model_wrapper: model.model_wrapper
+				}
+			};
+
+			await this.plugin.makeRequest(`/v1/agents/${this.currentAgent.id}`, {
+				method: 'PATCH',
+				body: updateData
+			});
+
+			new Notice(`Model updated to ${model.model}`);
+			
+			// Update the current agent data
+			this.currentAgent.llm_config = updateData.llm_config;
+			
+			// Refresh the model button in the chat view
+			const chatLeaf = this.app.workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE)[0];
+			if (chatLeaf && chatLeaf.view instanceof LettaChatView) {
+				(chatLeaf.view as LettaChatView).updateModelButton();
+			}
+
+			this.close();
+		} catch (error) {
+			console.error('Error updating model:', error);
+			new Notice('Failed to update model. Please try again.');
+		}
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }
 

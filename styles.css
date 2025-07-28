@@ -422,7 +422,8 @@
 
 /* Agent Configuration Modal */
 .agent-config-modal .modal,
-.agent-property-modal .modal {
+.agent-property-modal .modal,
+.model-switcher-modal .modal {
     width: 90vw;
     height: 90vh;
     max-width: 800px;
@@ -430,7 +431,8 @@
 }
 
 .agent-config-modal,
-.agent-property-modal {
+.agent-property-modal,
+.model-switcher-modal {
     display: flex;
     flex-direction: column;
     height: 100%;
