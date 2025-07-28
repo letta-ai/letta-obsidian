@@ -9,7 +9,12 @@ This is a Letta AI Agent plugin for Obsidian that allows users to chat with a st
 - **Stateful AI Agent**: Uses Letta's persistent memory system for conversation continuity
 - **Automatic Vault Sync**: Syncs markdown files to Letta with directory structure preservation
 - **Real-time Updates**: Auto-syncs file changes when files are created, modified, or deleted
-- **Chat Interface**: Beautiful modal chat UI with support for reasoning, tool calls, and responses
+- **Integrated Chat Interface**: Sidebar panel with support for reasoning, tool calls, and responses
+- **Memory Block Management**: Full CRUD operations for agent memory blocks with conflict resolution
+- **Block Search & Attach**: Search and attach existing memory blocks across projects
+- **Project-Aware Interface**: Displays current project context and manages multi-project workflows
+- **ADE Integration**: Direct links to Letta's web-based Agent Development Environment
+- **Agent Switching**: Easy switching between different agents within projects
 - **File Change Detection**: Only syncs files that have actually changed (compares sizes and timestamps)
 - **Directory Structure Preservation**: Encodes paths using `__` separators (e.g., `folder__subfolder__file.md`)
 
@@ -22,8 +27,10 @@ This is a Letta AI Agent plugin for Obsidian that allows users to chat with a st
 
 ### Main Plugin Classes
 - **LettaPlugin**: Main plugin class extending Obsidian's Plugin
-- **LettaChatModal**: Modal dialog for the chat interface
+- **LettaChatView**: Sidebar chat interface with integrated controls
+- **LettaMemoryView**: Memory block management interface
 - **LettaSettingTab**: Settings configuration page
+- **AgentConfigModal**: Agent configuration and switching interface
 
 ### Key Components
 1. **Letta Client Integration**: Handles API communication with Letta service
