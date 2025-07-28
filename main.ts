@@ -1509,11 +1509,6 @@ class LettaChatView extends ItemView {
 			cls: 'letta-disconnected-message' 
 		});
 		
-		disconnectedMessage.createEl('div', { 
-			text: '🔌', 
-			cls: 'letta-disconnected-icon' 
-		});
-		
 		disconnectedMessage.createEl('h2', { 
 			text: 'You are not connected to Letta', 
 			cls: 'letta-disconnected-title' 
