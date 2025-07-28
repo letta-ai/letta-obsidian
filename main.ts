@@ -2731,33 +2731,26 @@ class LettaMemoryView extends ItemView {
 		modal.setTitle('Search & Attach Memory Blocks');
 		
 		const { contentEl } = modal;
-		contentEl.style.width = '700px';
-		contentEl.style.height = '500px';
+		contentEl.addClass('block-search-modal');
+		
+		// Content section
+		const content = contentEl.createEl('div', { cls: 'block-search-content' });
 		
 		// Search input
-		const searchContainer = contentEl.createEl('div');
-		searchContainer.style.marginBottom = '16px';
-		
-		const searchInput = searchContainer.createEl('input', {
+		const searchInput = content.createEl('input', {
 			type: 'text',
 			placeholder: 'Search blocks by label, description, or content...',
-			cls: 'config-input'
+			cls: 'block-search-input'
 		});
-		searchInput.style.marginBottom = '8px';
 		
 		// Results info
-		const resultsInfo = searchContainer.createEl('div', {
+		const resultsInfo = content.createEl('div', {
 			text: `Found ${blocks.length} available blocks`,
-			cls: 'config-help'
+			cls: 'block-search-results-info'
 		});
 		
 		// Scrollable blocks container
-		const blocksContainer = contentEl.createEl('div');
-		blocksContainer.style.maxHeight = '350px';
-		blocksContainer.style.overflowY = 'auto';
-		blocksContainer.style.border = '1px solid var(--background-modifier-border)';
-		blocksContainer.style.borderRadius = '4px';
-		blocksContainer.style.padding = '8px';
+		const blocksContainer = content.createEl('div', { cls: 'block-search-list' });
 		
 		// Render all blocks initially
 		const renderBlocks = (filteredBlocks: any[]) => {
@@ -2767,67 +2760,40 @@ class LettaMemoryView extends ItemView {
 			if (filteredBlocks.length === 0) {
 				blocksContainer.createEl('div', {
 					text: 'No blocks match your search',
-					cls: 'letta-memory-empty'
+					cls: 'block-search-empty'
 				});
 				return;
 			}
 			
 			filteredBlocks.forEach(block => {
-				const blockEl = blocksContainer.createEl('div');
-				blockEl.style.padding = '12px';
-				blockEl.style.border = '1px solid var(--background-modifier-border)';
-				blockEl.style.borderRadius = '6px';
-				blockEl.style.marginBottom = '8px';
-				blockEl.style.cursor = 'pointer';
-				blockEl.style.transition = 'all 0.2s ease';
+				const blockEl = blocksContainer.createEl('div', { cls: 'block-search-item' });
 				
 				// Block header
-				const headerEl = blockEl.createEl('div');
-				headerEl.style.display = 'flex';
-				headerEl.style.justifyContent = 'space-between';
-				headerEl.style.alignItems = 'flex-start';
-				headerEl.style.marginBottom = '8px';
+				const headerEl = blockEl.createEl('div', { cls: 'block-search-item-header' });
 				
-				const titleEl = headerEl.createEl('div');
+				const titleEl = headerEl.createEl('div', { cls: 'block-search-item-title' });
+				
 				titleEl.createEl('h4', {
-					text: block.label || 'Unnamed Block',
-					cls: 'letta-memory-block-title'
+					text: block.label || 'Unnamed Block'
 				});
-				titleEl.style.margin = '0';
 				
 				if (block.description) {
 					titleEl.createEl('div', {
 						text: block.description,
-						cls: 'letta-memory-block-description'
+						cls: 'block-search-item-description'
 					});
 				}
 				
 				// Character count
-				const charCount = headerEl.createEl('span', {
+				headerEl.createEl('span', {
 					text: `${(block.value || '').length} chars`,
-					cls: 'letta-memory-char-counter'
+					cls: 'block-search-item-chars'
 				});
 				
 				// Preview of content
-				const contentPreview = blockEl.createEl('div');
-				const preview = (block.value || '').slice(0, 150);
-				contentPreview.textContent = preview + (block.value && block.value.length > 150 ? '...' : '');
-				contentPreview.style.fontSize = '0.85em';
-				contentPreview.style.color = 'var(--text-muted)';
-				contentPreview.style.fontFamily = 'var(--font-monospace)';
-				contentPreview.style.whiteSpace = 'pre-wrap';
-				contentPreview.style.marginTop = '8px';
-				
-				// Hover effects
-				blockEl.addEventListener('mouseenter', () => {
-					blockEl.style.backgroundColor = 'var(--background-modifier-hover)';
-					blockEl.style.borderColor = 'var(--interactive-accent)';
-				});
-				
-				blockEl.addEventListener('mouseleave', () => {
-					blockEl.style.backgroundColor = '';
-					blockEl.style.borderColor = 'var(--background-modifier-border)';
-				});
+				const preview = (block.value || '').slice(0, 200);
+				const contentPreview = blockEl.createEl('div', { cls: 'block-search-item-preview' });
+				contentPreview.textContent = preview + (block.value && block.value.length > 200 ? '...' : '');
 				
 				// Click to attach
 				blockEl.addEventListener('click', () => {
@@ -2855,10 +2821,7 @@ class LettaMemoryView extends ItemView {
 		});
 		
 		// Button container
-		const buttonContainer = contentEl.createEl('div');
-		buttonContainer.style.display = 'flex';
-		buttonContainer.style.justifyContent = 'flex-end';
-		buttonContainer.style.marginTop = '16px';
+		const buttonContainer = content.createEl('div', { cls: 'block-search-buttons' });
 		
 		const cancelButton = buttonContainer.createEl('button', {
 			text: 'Cancel',
@@ -2880,12 +2843,47 @@ class LettaMemoryView extends ItemView {
 		try {
 			console.log('[Letta Plugin] Attaching block:', block.label || 'Unnamed', 'to agent:', this.plugin.agent.id);
 			
-			// Attach the block to the agent
-			await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/attach/${block.id}`, {
-				method: 'PATCH'
-			});
-
-			new Notice(`Memory block "${block.label || 'Unnamed'}" attached successfully`);
+			// First, get current agent state to ensure we have the latest block list
+			const currentAgent = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`);
+			const currentBlocks = currentAgent.memory?.blocks || [];
+			
+			console.log('[Letta Plugin] Current blocks before attach:', currentBlocks.map((b: any) => b.label || b.id));
+			
+			// Check if block is already attached
+			const isAlreadyAttached = currentBlocks.some((b: any) => b.id === block.id);
+			if (isAlreadyAttached) {
+				new Notice(`Memory block "${block.label || 'Unnamed'}" is already attached to this agent`);
+				return;
+			}
+			
+			// Try the standard attach endpoint first
+			try {
+				await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/attach/${block.id}`, {
+					method: 'PATCH'
+				});
+				
+				console.log('[Letta Plugin] Successfully attached block using attach endpoint');
+				new Notice(`Memory block "${block.label || 'Unnamed'}" attached successfully`);
+				
+			} catch (attachError) {
+				console.warn('[Letta Plugin] Attach endpoint failed, trying alternative approach:', attachError);
+				
+				// Alternative approach: Update agent with complete block list
+				const updatedBlockIds = [...currentBlocks.map((b: any) => b.id), block.id];
+				
+				await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`, {
+					method: 'PATCH',
+					body: {
+						memory: {
+							...currentAgent.memory,
+							blocks: updatedBlockIds
+						}
+					}
+				});
+				
+				console.log('[Letta Plugin] Successfully attached block using agent update approach');
+				new Notice(`Memory block "${block.label || 'Unnamed'}" attached successfully`);
+			}
 			
 			// Refresh the blocks list to show the newly attached block
 			await this.loadBlocks();
