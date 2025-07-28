@@ -2169,9 +2169,74 @@ class LettaChatView extends ItemView {
 				});
 			}
 			
-		} catch (error) {
-			loadingEl.textContent = 'Failed to load agents. Please check your connection.';
+		} catch (error: any) {
 			console.error('Failed to load agents:', error);
+			loadingEl.remove();
+			
+			// Create error container
+			const errorDiv = contentEl.createEl('div', { cls: 'letta-memory-error' });
+			errorDiv.style.textAlign = 'center';
+			errorDiv.style.padding = '40px';
+			
+			// Check if this is a project not found error
+			if (error.message && error.message.includes('Project not found')) {
+				errorDiv.createEl('h3', { 
+					text: 'Project Not Found',
+					style: 'margin-bottom: 16px; color: var(--text-error);'
+				});
+				
+				errorDiv.createEl('p', { 
+					text: `The project "${project?.id || 'default-project'}" does not exist or you don't have access to it.`,
+					style: 'margin-bottom: 16px;'
+				});
+				
+				// For cloud instances, offer to change project
+				if (this.plugin.settings.lettaBaseUrl.includes('api.letta.com')) {
+					const changeProjectButton = errorDiv.createEl('button', { 
+						text: 'Select Different Project',
+						cls: 'letta-connect-button'
+					});
+					changeProjectButton.style.marginRight = '12px';
+					changeProjectButton.addEventListener('click', () => {
+						modal.close();
+						this.openProjectSelector();
+					});
+				}
+				
+				// Settings button
+				const settingsButton = errorDiv.createEl('button', { 
+					text: 'Check Settings',
+					cls: 'letta-model-button'
+				});
+				settingsButton.addEventListener('click', () => {
+					modal.close();
+					// Open Obsidian settings to the plugin page
+					const settingsTab = this.app.setting.openTabById('letta-ai-agent');
+					if (settingsTab) {
+						this.app.setting.open();
+					}
+				});
+			} else {
+				// Generic error handling
+				errorDiv.createEl('h3', { 
+					text: 'Failed to Load Agents',
+					style: 'margin-bottom: 16px; color: var(--text-error);'
+				});
+				
+				errorDiv.createEl('p', { 
+					text: 'Please check your connection and try again.',
+					style: 'margin-bottom: 16px;'
+				});
+				
+				const retryButton = errorDiv.createEl('button', { 
+					text: 'Retry',
+					cls: 'letta-connect-button'
+				});
+				retryButton.addEventListener('click', () => {
+					modal.close();
+					this.openAgentSelector(project, isCurrentProject);
+				});
+			}
 		}
 		
 		modal.open();
