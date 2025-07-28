@@ -1358,17 +1358,9 @@ class LettaChatView extends ItemView {
 			attr: { 'aria-label': 'Send message' }
 		});
 		this.sendButton.createEl('span', { text: 'Send' });
-		
-		// Clear button
-		const clearButton = rightButtons.createEl('button', {
-			text: 'Clear',
-			cls: 'letta-clear-button',
-			attr: { 'aria-label': 'Clear chat' }
-		});
 
 		// Event listeners
 		this.sendButton.addEventListener('click', () => this.sendMessage());
-		clearButton.addEventListener('click', () => this.clearChat());
 		
 		// Update status now that all UI elements are created
 		this.updateChatStatus();

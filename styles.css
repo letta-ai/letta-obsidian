@@ -211,24 +211,6 @@
     100% { left: 100%; }
 }
 
-.letta-clear-button {
-    padding: 6px 10px;
-    background: var(--background-primary);
-    color: var(--text-muted);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 3px;
-    font-weight: 400;
-    font-size: 0.8em;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    height: 28px;
-}
-
-.letta-clear-button:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
-    border-color: var(--background-modifier-border-hover);
-}
 
 /* Chat Messages - Compact Slack-style */
 .letta-message {
@@ -433,7 +415,6 @@
     }
     
     .letta-send-button,
-    .letta-clear-button,
     .letta-model-button {
         width: 100%;
         justify-content: center;
@@ -450,8 +431,7 @@
     box-shadow: 0 0 0 1px var(--interactive-accent), 0 2px 8px rgba(var(--interactive-accent-rgb), 0.15);
 }
 
-.letta-send-button:focus-visible,
-.letta-clear-button:focus-visible {
+.letta-send-button:focus-visible {
     outline: 2px solid var(--interactive-accent);
     outline-offset: 2px;
 }
