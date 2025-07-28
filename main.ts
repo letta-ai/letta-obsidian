@@ -1242,22 +1242,23 @@ class LettaChatView extends ItemView {
 		this.agentNameElement.title = 'Click to edit agent name';
 		this.agentNameElement.addEventListener('click', () => this.editAgentName());
 		
-		const configButton = titleContainer.createEl('button');
+		const configButton = titleContainer.createEl('span', { cls: 'clickable-icon' });
 		configButton.innerHTML = `⚙️`;
 		configButton.title = 'Configure agent properties';
-		configButton.style.cssText = 'all: revert; margin: 0 4px;';
 		configButton.addEventListener('click', () => this.openAgentConfig());
 
-		const memoryButton = titleContainer.createEl('button');
-		memoryButton.textContent = 'Memory';
+		const memoryButton = titleContainer.createEl('span', { text: 'Memory' });
 		memoryButton.title = 'Open memory blocks panel';
-		memoryButton.style.cssText = 'all: revert; margin: 0 4px;';
+		memoryButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		memoryButton.addEventListener('mouseenter', () => { memoryButton.style.opacity = '1'; });
+		memoryButton.addEventListener('mouseleave', () => { memoryButton.style.opacity = '0.7'; });
 		memoryButton.addEventListener('click', () => this.plugin.openMemoryView());
 
-		const switchAgentButton = titleContainer.createEl('button');
-		switchAgentButton.textContent = 'Agent';
+		const switchAgentButton = titleContainer.createEl('span', { text: 'Agent' });
 		switchAgentButton.title = 'Switch to different agent';
-		switchAgentButton.style.cssText = 'all: revert; margin: 0 4px;';
+		switchAgentButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		switchAgentButton.addEventListener('mouseenter', () => { switchAgentButton.style.opacity = '1'; });
+		switchAgentButton.addEventListener('mouseleave', () => { switchAgentButton.style.opacity = '0.7'; });
 		switchAgentButton.addEventListener('click', () => this.openAgentSwitcher());
 
 		
@@ -1395,7 +1396,13 @@ class LettaChatView extends ItemView {
 		
 		if (isConnected) {
 			this.statusDot.className = 'letta-status-dot letta-status-connected';
-			this.statusText.textContent = 'Connected';
+			
+			// Show project info if available
+			const projectInfo = this.plugin.settings.lettaProjectSlug 
+				? ` • Project: ${this.plugin.settings.lettaProjectSlug}`
+				: '';
+			
+			this.statusText.textContent = `Connected${projectInfo}`;
 		} else {
 			this.statusDot.className = 'letta-status-dot';
 			this.statusDot.style.backgroundColor = 'var(--text-muted)';
@@ -2039,28 +2046,28 @@ class LettaMemoryView extends ItemView {
 
 		// Header
 		const header = container.createEl('div', { cls: 'letta-memory-header' });
-		header.createEl('h3', { text: 'Agent Memory Blocks', cls: 'letta-memory-title' });
+		header.createEl('h3', { text: 'Memory', cls: 'letta-memory-title' });
 		
 		const buttonContainer = header.createEl('div');
 		buttonContainer.style.display = 'flex';
 		buttonContainer.style.gap = '8px';
 		
-		const createButton = buttonContainer.createEl('button', { 
-			text: '+ New Block',
-			cls: 'letta-memory-refresh-btn'
-		});
+		const createButton = buttonContainer.createEl('span', { text: 'New' });
+		createButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		createButton.addEventListener('mouseenter', () => { createButton.style.opacity = '1'; });
+		createButton.addEventListener('mouseleave', () => { createButton.style.opacity = '0.7'; });
 		createButton.addEventListener('click', () => this.createNewBlock());
 		
-		const attachButton = buttonContainer.createEl('button', { 
-			text: '📋 Manage Blocks',
-			cls: 'letta-memory-refresh-btn'
-		});
+		const attachButton = buttonContainer.createEl('span', { text: 'Manage' });
+		attachButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		attachButton.addEventListener('mouseenter', () => { attachButton.style.opacity = '1'; });
+		attachButton.addEventListener('mouseleave', () => { attachButton.style.opacity = '0.7'; });
 		attachButton.addEventListener('click', () => this.searchAndAttachBlocks());
 		
-		this.refreshButton = buttonContainer.createEl('button', { 
-			text: '↻ Refresh',
-			cls: 'letta-memory-refresh-btn'
-		});
+		this.refreshButton = buttonContainer.createEl('span', { text: 'Refresh' });
+		this.refreshButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		this.refreshButton.addEventListener('mouseenter', () => { this.refreshButton.style.opacity = '1'; });
+		this.refreshButton.addEventListener('mouseleave', () => { this.refreshButton.style.opacity = '0.7'; });
 		this.refreshButton.addEventListener('click', () => this.loadBlocks());
 
 		// Content container
@@ -2082,7 +2089,8 @@ class LettaMemoryView extends ItemView {
 				}
 			}
 
-			this.refreshButton.disabled = true;
+			this.refreshButton.style.opacity = '0.5';
+			this.refreshButton.style.pointerEvents = 'none';
 			this.refreshButton.textContent = 'Loading...';
 
 			// Fetch blocks from API
@@ -2095,7 +2103,8 @@ class LettaMemoryView extends ItemView {
 			console.error('Failed to load memory blocks:', error);
 			this.showError('Failed to load memory blocks');
 		} finally {
-			this.refreshButton.disabled = false;
+			this.refreshButton.style.opacity = '0.7';
+			this.refreshButton.style.pointerEvents = 'auto';
 			this.refreshButton.textContent = '↻ Refresh';
 		}
 	}

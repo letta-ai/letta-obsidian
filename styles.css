@@ -686,25 +686,6 @@
     font-weight: 600;
 }
 
-.letta-memory-refresh-btn {
-    background: var(--interactive-normal);
-    color: var(--text-normal);
-    border: 1px solid var(--background-modifier-border);
-    padding: 6px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.85em;
-    transition: background 0.2s ease;
-}
-
-.letta-memory-refresh-btn:hover:not(:disabled) {
-    background: var(--interactive-hover);
-}
-
-.letta-memory-refresh-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
 
 .letta-memory-content {
     flex: 1;
