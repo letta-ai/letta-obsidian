@@ -2390,11 +2390,8 @@ class LettaMemoryView extends ItemView {
 			// Step 2: Attach the block to the agent
 			console.log(`[Letta Plugin] Attaching block ${createResponse.id} to agent ${this.plugin.agent.id}`);
 			
-			const attachResponse = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/blocks/attach`, {
-				method: 'POST',
-				body: {
-					block_id: createResponse.id
-				}
+			const attachResponse = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/attach/${createResponse.id}`, {
+				method: 'PATCH'
 			});
 
 			console.log('[Letta Plugin] Block attached successfully:', attachResponse);
