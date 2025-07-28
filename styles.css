@@ -99,6 +99,10 @@
     padding: 8px 12px;
     background: var(--background-primary);
     min-height: 0; /* Important for flex scrolling */
+    user-select: text;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
 }
 
 .letta-input-container {
@@ -224,6 +228,10 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+    user-select: text;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
 }
 
 .letta-message:hover {
@@ -288,6 +296,11 @@
     color: var(--text-normal);
     line-height: 1.4;
     font-size: 0.9em;
+    user-select: text;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    cursor: text;
 }
 
 .letta-message-content p {
