@@ -2402,12 +2402,15 @@ class LettaMemoryView extends ItemView {
 				
 				const messageResponse = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/messages`, {
 					method: 'POST',
-					body: JSON.stringify({
+					body: {
 						messages: [{
 							role: 'user',
-							content: `Please create a new memory block with label "${blockData.label}", description "${blockData.description}", and initial content: "${blockData.value}". Use core_memory_append or appropriate memory functions.`
+							content: [{
+								type: 'text',
+								text: `Please create a new memory block with label "${blockData.label}", description "${blockData.description}", and initial content: "${blockData.value}". Use core_memory_append or appropriate memory functions.`
+							}]
 						}]
-					})
+					}
 				});
 				
 				console.log('[Letta Plugin] Message approach result:', messageResponse);
