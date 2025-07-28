@@ -3216,6 +3216,7 @@ class AgentConfigModal extends Modal {
 			include_multi_agent_tools: false,
 			include_default_source: false,
 			tags: ['obsidian', 'assistant'],
+			model: 'letta/letta-free',
 			memory_blocks: [
 				{
 					value: 'You are an AI assistant integrated with an Obsidian vault. You have access to the user\'s markdown files and can help them explore, organize, and work with their notes. Be helpful, knowledgeable, and concise.',
@@ -3314,14 +3315,14 @@ class AgentConfigModal extends Modal {
 		const modelGroup = advancedSection.createEl('div', { cls: 'config-group' });
 		modelGroup.createEl('label', { text: 'Model (Optional)', cls: 'config-label' });
 		const modelHelp = modelGroup.createEl('div', { 
-			text: 'Format: provider/model-name (e.g., openai/gpt-4)', 
+			text: 'Format: provider/model-name (default: letta/letta-free)', 
 			cls: 'config-help' 
 		});
 		const modelInput = modelGroup.createEl('input', { 
 			type: 'text', 
-			value: this.config.model || '',
+			value: this.config.model || 'letta/letta-free',
 			cls: 'config-input',
-			attr: { placeholder: 'e.g., openai/gpt-4' }
+			attr: { placeholder: 'letta/letta-free' }
 		});
 		modelInput.addEventListener('input', () => {
 			this.config.model = modelInput.value || undefined;
