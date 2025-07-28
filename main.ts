@@ -1261,6 +1261,13 @@ class LettaChatView extends ItemView {
 		switchAgentButton.addEventListener('mouseleave', () => { switchAgentButton.style.opacity = '0.7'; });
 		switchAgentButton.addEventListener('click', () => this.openAgentSwitcher());
 
+		const adeButton = titleContainer.createEl('span', { text: 'ADE' });
+		adeButton.title = 'Open in Letta Agent Development Environment';
+		adeButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		adeButton.addEventListener('mouseenter', () => { adeButton.style.opacity = '1'; });
+		adeButton.addEventListener('mouseleave', () => { adeButton.style.opacity = '0.7'; });
+		adeButton.addEventListener('click', () => this.openInADE());
+
 		
 		const statusIndicator = header.createEl('div', { cls: 'letta-status-indicator' });
 		this.statusDot = statusIndicator.createEl('span', { cls: 'letta-status-dot' });
@@ -1408,6 +1415,21 @@ class LettaChatView extends ItemView {
 			this.statusDot.style.backgroundColor = 'var(--text-muted)';
 			this.statusText.textContent = 'Disconnected';
 		}
+	}
+
+	openInADE() {
+		if (!this.plugin.agent) {
+			new Notice('Please connect to Letta first');
+			return;
+		}
+
+		// Construct the ADE URL for the current agent
+		const adeUrl = `https://app.letta.com/agents/${this.plugin.agent.id}`;
+		
+		// Open in external browser
+		window.open(adeUrl, '_blank');
+		
+		new Notice('Opening agent in Letta ADE...');
 	}
 
 	async editAgentName() {
