@@ -1367,6 +1367,9 @@ class LettaChatView extends ItemView {
 		this.sendButton.addEventListener('click', () => this.sendMessage());
 		clearButton.addEventListener('click', () => this.clearChat());
 		
+		// Update status now that all UI elements are created
+		this.updateChatStatus();
+		
 		this.messageInput.addEventListener('keydown', (evt) => {
 			if (evt.key === 'Enter' && !evt.shiftKey) {
 				evt.preventDefault();
@@ -1469,13 +1472,17 @@ class LettaChatView extends ItemView {
 			
 			this.statusText.textContent = `Connected${projectInfo}`;
 			
-			// Update model button
-			this.updateModelButton();
+			// Update model button if it exists
+			if (this.modelButton) {
+				this.updateModelButton();
+			}
 		} else {
 			this.statusDot.className = 'letta-status-dot';
 			this.statusDot.style.backgroundColor = 'var(--text-muted)';
 			this.statusText.textContent = 'Disconnected';
-			this.modelButton.textContent = 'N/A';
+			if (this.modelButton) {
+				this.modelButton.textContent = 'N/A';
+			}
 		}
 	}
 
