@@ -2378,7 +2378,8 @@ class LettaMemoryView extends ItemView {
 				body: JSON.stringify({
 					label: blockData.label,
 					value: blockData.value,
-					limit: blockData.limit
+					limit: blockData.limit,
+					description: blockData.description
 				})
 			});
 
@@ -2393,7 +2394,7 @@ class LettaMemoryView extends ItemView {
 		}
 	}
 
-	private promptForNewBlock(): Promise<{label: string, value: string, limit: number} | null> {
+	private promptForNewBlock(): Promise<{label: string, value: string, limit: number, description: string} | null> {
 		return new Promise((resolve) => {
 			const modal = new Modal(this.app);
 			modal.setTitle('Create New Memory Block');
@@ -2409,6 +2410,15 @@ class LettaMemoryView extends ItemView {
 				cls: 'config-input'
 			});
 			labelInput.style.marginBottom = '16px';
+			
+			// Description input
+			contentEl.createEl('div', { text: 'Description:', cls: 'config-label' });
+			const descriptionInput = contentEl.createEl('input', {
+				type: 'text',
+				placeholder: 'Brief description of what this block is for...',
+				cls: 'config-input'
+			});
+			descriptionInput.style.marginBottom = '16px';
 			
 			// Value textarea
 			contentEl.createEl('div', { text: 'Initial Content:', cls: 'config-label' });
@@ -2446,6 +2456,7 @@ class LettaMemoryView extends ItemView {
 			
 			createButton.addEventListener('click', () => {
 				const label = labelInput.value.trim();
+				const description = descriptionInput.value.trim();
 				const value = valueInput.value.trim();
 				const limit = parseInt(limitInput.value) || 2000;
 				
@@ -2455,13 +2466,19 @@ class LettaMemoryView extends ItemView {
 					return;
 				}
 				
+				if (!description) {
+					new Notice('Please enter a description');
+					descriptionInput.focus();
+					return;
+				}
+				
 				if (!value) {
 					new Notice('Please enter some initial content');
 					valueInput.focus();
 					return;
 				}
 				
-				resolve({ label, value, limit });
+				resolve({ label, description, value, limit });
 				modal.close();
 			});
 			
