@@ -1242,19 +1242,22 @@ class LettaChatView extends ItemView {
 		this.agentNameElement.title = 'Click to edit agent name';
 		this.agentNameElement.addEventListener('click', () => this.editAgentName());
 		
-		const configButton = titleContainer.createEl('button', { cls: 'letta-config-button' });
-		configButton.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1 1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
+		const configButton = titleContainer.createEl('button');
+		configButton.innerHTML = `⚙️`;
 		configButton.title = 'Configure agent properties';
+		configButton.style.cssText = 'all: revert; margin: 0 4px;';
 		configButton.addEventListener('click', () => this.openAgentConfig());
 
-		const memoryButton = titleContainer.createEl('button', { cls: 'letta-config-button' });
+		const memoryButton = titleContainer.createEl('button');
 		memoryButton.textContent = 'Memory';
 		memoryButton.title = 'Open memory blocks panel';
+		memoryButton.style.cssText = 'all: revert; margin: 0 4px;';
 		memoryButton.addEventListener('click', () => this.plugin.openMemoryView());
 
-		const switchAgentButton = titleContainer.createEl('button', { cls: 'letta-config-button' });
+		const switchAgentButton = titleContainer.createEl('button');
 		switchAgentButton.textContent = 'Agent';
 		switchAgentButton.title = 'Switch to different agent';
+		switchAgentButton.style.cssText = 'all: revert; margin: 0 4px;';
 		switchAgentButton.addEventListener('click', () => this.openAgentSwitcher());
 
 		
@@ -2049,7 +2052,7 @@ class LettaMemoryView extends ItemView {
 		createButton.addEventListener('click', () => this.createNewBlock());
 		
 		const attachButton = buttonContainer.createEl('button', { 
-			text: '🔗 Search & Attach',
+			text: '📋 Manage Blocks',
 			cls: 'letta-memory-refresh-btn'
 		});
 		attachButton.addEventListener('click', () => this.searchAndAttachBlocks());
@@ -2728,7 +2731,7 @@ class LettaMemoryView extends ItemView {
 
 	private showBlockSearchModal(blocks: any[]) {
 		const modal = new Modal(this.app);
-		modal.setTitle('Search & Attach Memory Blocks');
+		modal.setTitle('Manage Memory Blocks');
 		
 		const { contentEl } = modal;
 		contentEl.addClass('block-search-modal');
