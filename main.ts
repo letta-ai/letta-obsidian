@@ -1852,11 +1852,21 @@ class LettaChatView extends ItemView {
 		const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
 		
 		if (isCloudInstance) {
-			// For cloud instances, show agents from current project first
+			// For cloud instances, check if we have a valid project ID
+			const projectSlug = this.plugin.settings.lettaProjectSlug;
+			
+			if (!projectSlug || projectSlug === 'obsidian-vault' || projectSlug === 'default-project') {
+				// Default project slug is not valid for cloud instances, show project selector
+				new Notice('Please select a valid project first');
+				this.openProjectSelector();
+				return;
+			}
+			
+			// Show agents from current project first  
 			const currentProject = { 
-				id: this.plugin.settings.projectSlug, 
-				name: this.plugin.settings.projectSlug || 'Current Project',
-				slug: this.plugin.settings.projectSlug 
+				id: projectSlug, 
+				name: projectSlug || 'Current Project',
+				slug: projectSlug 
 			};
 			this.openAgentSelector(currentProject, true); // true indicates it's the current project
 		} else {
@@ -2250,7 +2260,7 @@ class LettaChatView extends ItemView {
 			// Update plugin settings
 			this.plugin.settings.agentName = agent.name;
 			if (project) {
-				this.plugin.settings.projectSlug = project.slug;
+				this.plugin.settings.lettaProjectSlug = project.slug;
 			}
 			await this.plugin.saveSettings();
 			
