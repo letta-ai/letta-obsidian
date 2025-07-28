@@ -1289,9 +1289,11 @@ class LettaChatView extends ItemView {
 		this.agentNameElement.title = 'Click to edit agent name';
 		this.agentNameElement.addEventListener('click', () => this.editAgentName());
 		
-		const configButton = titleContainer.createEl('span', { cls: 'clickable-icon' });
-		configButton.innerHTML = `⚙️`;
+		const configButton = titleContainer.createEl('span', { text: 'Config' });
 		configButton.title = 'Configure agent properties';
+		configButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px;';
+		configButton.addEventListener('mouseenter', () => { configButton.style.opacity = '1'; });
+		configButton.addEventListener('mouseleave', () => { configButton.style.opacity = '0.7'; });
 		configButton.addEventListener('click', () => this.openAgentConfig());
 
 		const memoryButton = titleContainer.createEl('span', { text: 'Memory' });
