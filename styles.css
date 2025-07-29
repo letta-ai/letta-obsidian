@@ -212,60 +212,204 @@
 }
 
 
-/* Chat Messages - Compact Slack-style */
+/* Chat Messages - Modern Bubble Style */
 .letta-message {
-    margin-bottom: 4px;
-    padding: 4px 12px;
-    position: relative;
-    max-width: none;
+    margin-bottom: 12px;
     display: flex;
-    flex-direction: column;
-    gap: 2px;
-    user-select: text;
+    position: relative;
+    word-wrap: break-word;
+    line-height: 1.4;
+    
+    /* Enable text selection */
     -webkit-user-select: text;
     -moz-user-select: text;
     -ms-user-select: text;
-}
-
-.letta-message:hover {
-    background: var(--background-modifier-hover-border);
+    user-select: text;
 }
 
 .letta-message-user {
-    border-left: 3px solid var(--color-blue);
-    background: var(--color-blue-bg);
+    justify-content: flex-end;
+}
+
+.letta-message-user .letta-message-bubble {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    margin-left: auto;
+    border-radius: 18px 6px 18px 18px;
+    max-width: 70%;
 }
 
 .letta-message-assistant {
-    border-left: 3px solid var(--color-green);
-    background: transparent;
+    justify-content: flex-start;
+}
+
+.letta-message-assistant .letta-message-bubble {
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px 18px 18px 18px;
+    max-width: 70%;
 }
 
 .letta-message-reasoning {
-    border-left: 3px solid var(--color-purple);
-    background: var(--color-purple-bg);
-    opacity: 0.8;
+    justify-content: flex-start;
+    margin-bottom: 6px;
+}
+
+.letta-message-reasoning .letta-message-bubble {
+    background: var(--background-secondary-alt);
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    max-width: 85%;
     font-size: 0.9em;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.letta-message-reasoning .letta-message-bubble:hover {
+    background: var(--background-modifier-hover);
 }
 
 .letta-message-tool-call {
-    border-left: 3px solid var(--color-cyan);
-    background: var(--color-cyan-bg);
+    justify-content: flex-start;
+    margin-bottom: 6px;
+}
+
+.letta-message-tool-call .letta-message-bubble {
+    background: var(--background-primary-alt);
+    color: var(--text-normal);
+    border: 1px solid var(--color-cyan);
+    border-radius: 8px;
+    max-width: 85%;
     font-size: 0.9em;
 }
 
 .letta-message-tool-result {
-    border-left: 3px solid var(--color-orange);
-    background: var(--color-orange-bg);
+    justify-content: flex-start;
+    margin-bottom: 6px;
+}
+
+.letta-message-tool-result .letta-message-bubble {
+    background: var(--background-primary-alt);
+    color: var(--text-normal);
+    border: 1px solid var(--color-orange);
+    border-radius: 8px;
+    max-width: 85%;
     font-size: 0.9em;
+}
+
+/* Expandable content for reasoning and tool calls */
+.letta-expandable-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    transition: all 0.2s ease;
+}
+
+.letta-expandable-header:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--background-modifier-border-hover);
+}
+
+.letta-expandable-title {
+    font-weight: 500;
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+
+.letta-expandable-chevron {
+    color: var(--text-muted);
+    font-size: 0.8em;
+    margin-left: 8px;
+    transition: transform 0.2s ease;
+}
+
+.letta-expandable-content {
+    max-height: 500px;
+    overflow: hidden;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+    padding: 12px;
+    background: var(--background-primary);
+    border-radius: 0 0 8px 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-top: none;
+    opacity: 1;
+}
+
+.letta-expandable-collapsed {
+    max-height: 0;
+    padding: 0 12px;
+    opacity: 0;
+}
+
+/* Reasoning button and content */
+.letta-reasoning-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-faint);
+    font-size: 0.7em;
+    padding: 2px 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    opacity: 0.6;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.letta-reasoning-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-muted);
+    opacity: 1;
+}
+
+.letta-reasoning-btn.letta-reasoning-expanded {
+    background: var(--background-modifier-border);
+    color: var(--text-normal);
+    opacity: 1;
+}
+
+.letta-reasoning-content {
+    display: none;
+    background: var(--background-secondary-alt);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 6px 0;
+    font-size: 0.9em;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.letta-reasoning-content.letta-reasoning-visible {
+    display: block;
+}
+
+.letta-message-bubble {
+    padding: 8px 12px;
+    position: relative;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
 .letta-message-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
     margin-bottom: 2px;
     min-height: 20px;
+}
+
+.letta-message-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .letta-message-title {

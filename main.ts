@@ -1167,27 +1167,125 @@ class LettaChatView extends ItemView {
 		// Clean up any resources if needed
 	}
 
-	addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: string, title?: string) {
+	addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: string, title?: string, reasoningContent?: string) {
 		const messageEl = this.chatContainer.createEl('div', { 
 			cls: `letta-message letta-message-${type}` 
 		});
 
+		// Create bubble wrapper
+		const bubbleEl = messageEl.createEl('div', { cls: 'letta-message-bubble' });
+
 		// Add timestamp
 		const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 		
-		if (title) {
-			const titleEl = messageEl.createEl('div', { cls: 'letta-message-header' });
-			titleEl.createEl('span', { cls: 'letta-message-title', text: title });
-			titleEl.createEl('span', { cls: 'letta-message-timestamp', text: timestamp });
-		}
-
-		const contentEl = messageEl.createEl('div', { cls: 'letta-message-content' });
-		
-		// Handle different content types
+		// For tool messages, make them expandable (but not reasoning - that goes in assistant messages)
 		if (type === 'tool-call' || type === 'tool-result') {
+			const headerEl = bubbleEl.createEl('div', { cls: 'letta-expandable-header' });
+			
+			// Remove emojis from titles
+			let cleanTitle = title || type;
+			if (cleanTitle.includes('🔧')) cleanTitle = 'Tool Call';
+			if (cleanTitle.includes('📊')) cleanTitle = 'Tool Result';
+			
+			headerEl.createEl('span', { cls: 'letta-expandable-title', text: cleanTitle });
+			headerEl.createEl('span', { cls: 'letta-message-timestamp', text: timestamp });
+			const chevronEl = headerEl.createEl('span', { cls: 'letta-expandable-chevron', text: '▼' });
+			
+			const contentEl = bubbleEl.createEl('div', { 
+				cls: 'letta-expandable-content letta-expandable-collapsed'
+			});
+			
+			// Handle content formatting for tool calls/results
 			const pre = contentEl.createEl('pre', { cls: 'letta-code-block' });
 			pre.createEl('code', { text: content });
+			
+			// Add click handler for expand/collapse
+			headerEl.addEventListener('click', () => {
+				const isCollapsed = contentEl.classList.contains('letta-expandable-collapsed');
+				if (isCollapsed) {
+					contentEl.removeClass('letta-expandable-collapsed');
+					chevronEl.textContent = '▲';
+				} else {
+					contentEl.addClass('letta-expandable-collapsed');
+					chevronEl.textContent = '▼';
+				}
+			});
+			
+		} else if (type === 'reasoning') {
+			// Skip standalone reasoning messages - they should be part of assistant messages
+			return;
+			
 		} else {
+			// Regular messages (user/assistant)
+			if (title && type !== 'user') {
+				const headerEl = bubbleEl.createEl('div', { cls: 'letta-message-header' });
+				
+				// Left side: title and timestamp
+				const leftSide = headerEl.createEl('div', { cls: 'letta-message-header-left' });
+				
+				// Remove emojis from titles
+				let cleanTitle = title.replace(/🤖|👤|🚨|✅|❌|🔌/g, '').trim();
+				leftSide.createEl('span', { cls: 'letta-message-title', text: cleanTitle });
+				leftSide.createEl('span', { cls: 'letta-message-timestamp', text: timestamp });
+				
+				// Right side: reasoning button if reasoning content exists
+				if (type === 'assistant' && reasoningContent) {
+					const reasoningBtn = headerEl.createEl('button', { 
+						cls: 'letta-reasoning-btn letta-reasoning-collapsed',
+						text: '···'
+					});
+					
+					// Add click handler for reasoning toggle
+					reasoningBtn.addEventListener('click', (e) => {
+						e.stopPropagation();
+						const isCollapsed = reasoningBtn.classList.contains('letta-reasoning-collapsed');
+						if (isCollapsed) {
+							reasoningBtn.removeClass('letta-reasoning-collapsed');
+							reasoningBtn.addClass('letta-reasoning-expanded');
+						} else {
+							reasoningBtn.addClass('letta-reasoning-collapsed');
+							reasoningBtn.removeClass('letta-reasoning-expanded');
+						}
+						
+						// Toggle reasoning content visibility
+						const reasoningEl = bubbleEl.querySelector('.letta-reasoning-content');
+						if (reasoningEl) {
+							reasoningEl.classList.toggle('letta-reasoning-visible');
+						}
+					});
+				}
+			}
+
+			// Add reasoning content if provided (for assistant messages)
+			if (type === 'assistant' && reasoningContent) {
+				const reasoningEl = bubbleEl.createEl('div', { cls: 'letta-reasoning-content' });
+				
+				// Enhanced markdown-like formatting for reasoning
+				let formattedReasoning = reasoningContent
+					.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+					.replace(/\*(.*?)\*/g, '<em>$1</em>')
+					.replace(/`([^`]+)`/g, '<code>$1</code>')
+					.replace(/^- (.+)$/gm, '<li>$1</li>')
+					.replace(/^• (.+)$/gm, '<li>$1</li>')
+					.replace(/\n\n/g, '</p><p>')
+					.replace(/^\n/g, '')
+					.replace(/\n$/g, '');
+				
+				// Wrap consecutive list items in <ul> tags
+				formattedReasoning = formattedReasoning.replace(/(<li>.*?<\/li>)(\s*<li>.*?<\/li>)*/g, (match) => {
+					return '<ul>' + match + '</ul>';
+				});
+				
+				// Wrap in paragraphs if needed
+				if (formattedReasoning.includes('</p><p>') && !formattedReasoning.startsWith('<')) {
+					formattedReasoning = '<p>' + formattedReasoning + '</p>';
+				}
+				
+				reasoningEl.innerHTML = formattedReasoning;
+			}
+
+			const contentEl = bubbleEl.createEl('div', { cls: 'letta-message-content' });
+			
 			// Enhanced markdown-like formatting
 			let formattedContent = content
 				.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
@@ -1249,6 +1347,9 @@ class LettaChatView extends ItemView {
 		}
 
 		try {
+			// Clear any pending reasoning from previous sessions
+			this.pendingReasoning = '';
+			
 			// Load last 50 messages by default
 			const messages = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/messages?limit=50`);
 			
@@ -1276,6 +1377,11 @@ class LettaChatView extends ItemView {
 	}
 
 	displayHistoricalMessage(message: any) {
+		// Skip heartbeat messages - these are automated system messages
+		if (message.type === 'heartbeat') {
+			return;
+		}
+		
 		// Parse different message types based on Letta's message structure
 		switch (message.message_type) {
 			case 'user_message':
@@ -1286,25 +1392,30 @@ class LettaChatView extends ItemView {
 			
 			case 'reasoning_message':
 				if (message.reasoning) {
-					this.addMessage('reasoning', message.reasoning, '🧠 Reasoning');
+					// Store reasoning to be attached to the next assistant message
+					this.pendingReasoning += message.reasoning;
 				}
 				break;
 			
 			case 'tool_call_message':
 				if (message.tool_call) {
-					this.addMessage('tool-call', JSON.stringify(message.tool_call, null, 2), '🔧 Tool Call');
+					this.addMessage('tool-call', JSON.stringify(message.tool_call, null, 2), 'Tool Call');
 				}
 				break;
 			
 			case 'tool_return_message':
 				if (message.tool_return) {
-					this.addMessage('tool-result', JSON.stringify(message.tool_return, null, 2), '📊 Tool Result');
+					this.addMessage('tool-result', JSON.stringify(message.tool_return, null, 2), 'Tool Result');
 				}
 				break;
 			
 			case 'assistant_message':
 				if (message.content || message.text) {
-					this.addMessage('assistant', message.content || message.text || '', `🤖 ${this.plugin.settings.agentName}`);
+					// Use accumulated reasoning with this assistant message
+					this.addMessage('assistant', message.content || message.text || '', 
+						this.plugin.settings.agentName, this.pendingReasoning || undefined);
+					// Clear pending reasoning after using it
+					this.pendingReasoning = '';
 				}
 				break;
 			
@@ -1648,13 +1759,13 @@ class LettaChatView extends ItemView {
 
 		// Check connection and auto-connect if needed
 		if (!this.plugin.agent || !this.plugin.source) {
-			this.addMessage('assistant', '🔌 Connecting to Letta...', '🤖 System');
+			this.addMessage('assistant', 'Connecting to Letta...', 'System');
 			const connected = await this.plugin.connectToLetta();
 			if (!connected) {
-				this.addMessage('assistant', '❌ **Connection failed**. Please check your settings and try again.', '🚨 Error');
+				this.addMessage('assistant', '**Connection failed**. Please check your settings and try again.', 'Error');
 				return;
 			}
-			this.addMessage('assistant', '✅ **Connected!** You can now chat with your agent.', '🤖 System');
+			this.addMessage('assistant', '**Connected!** You can now chat with your agent.', 'System');
 		}
 
 		// Disable input while processing
@@ -1664,7 +1775,7 @@ class LettaChatView extends ItemView {
 		this.sendButton.addClass('letta-button-loading');
 
 		// Add user message to chat
-		this.addMessage('user', message, '👤 You');
+		this.addMessage('user', message);
 
 		// Clear and reset input
 		this.messageInput.value = '';
@@ -1703,7 +1814,7 @@ class LettaChatView extends ItemView {
 
 		} catch (error: any) {
 			console.error('Failed to send message:', error);
-			this.addMessage('assistant', `❌ **Error**: ${error.message}\n\nPlease check your connection and try again.`, '🚨 Error');
+			this.addMessage('assistant', `**Error**: ${error.message}\n\nPlease check your connection and try again.`, 'Error');
 		} finally {
 			// Re-enable input
 			this.messageInput.disabled = false;
@@ -1717,17 +1828,19 @@ class LettaChatView extends ItemView {
 	private currentReasoningMessage: HTMLElement | null = null;
 	private currentAssistantMessage: HTMLElement | null = null;
 	private currentToolCallMessage: HTMLElement | null = null;
+	private pendingReasoning: string = '';
 
 	handleStreamingChunk(chunk: any) {
+		// Skip heartbeat messages - these are automated system messages
+		if (chunk.type === 'heartbeat') {
+			return;
+		}
+		
 		switch (chunk.message_type) {
 			case 'reasoning_message':
 				if (chunk.reasoning) {
-					if (!this.currentReasoningMessage) {
-						// Create new reasoning message
-						this.currentReasoningMessage = this.addStreamingMessage('reasoning', '', '🧠 Reasoning');
-					}
-					// Append to current reasoning message
-					this.appendToStreamingMessage(this.currentReasoningMessage, chunk.reasoning);
+					// Accumulate reasoning for the next assistant message
+					this.pendingReasoning += chunk.reasoning;
 				}
 				break;
 
@@ -1735,23 +1848,25 @@ class LettaChatView extends ItemView {
 				if (chunk.tool_call) {
 					// Create new tool call message
 					this.currentToolCallMessage = this.addStreamingMessage('tool-call', 
-						JSON.stringify(chunk.tool_call, null, 2), '🔧 Tool Call');
+						JSON.stringify(chunk.tool_call, null, 2), 'Tool Call');
 				}
 				break;
 
 			case 'tool_return_message':
 				if (chunk.tool_return) {
 					// Create tool result message
-					this.addMessage('tool-result', JSON.stringify(chunk.tool_return, null, 2), '📊 Tool Result');
+					this.addMessage('tool-result', JSON.stringify(chunk.tool_return, null, 2), 'Tool Result');
 				}
 				break;
 
 			case 'assistant_message':
 				if (chunk.assistant_message) {
 					if (!this.currentAssistantMessage) {
-						// Create new assistant message
+						// Create new assistant message with accumulated reasoning
 						this.currentAssistantMessage = this.addStreamingMessage('assistant', '', 
-							`🤖 ${this.plugin.settings.agentName}`);
+							this.plugin.settings.agentName, this.pendingReasoning || undefined);
+						// Clear pending reasoning after using it
+						this.pendingReasoning = '';
 					}
 					// Append to current assistant message
 					this.appendToStreamingMessage(this.currentAssistantMessage, chunk.assistant_message);
@@ -1763,27 +1878,108 @@ class LettaChatView extends ItemView {
 				this.currentReasoningMessage = null;
 				this.currentAssistantMessage = null;
 				this.currentToolCallMessage = null;
+				this.pendingReasoning = '';
 				break;
 		}
 	}
 
-	addStreamingMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: string, title?: string): HTMLElement {
+	addStreamingMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: string, title?: string, reasoningContent?: string): HTMLElement {
 		const messageEl = this.chatContainer.createEl('div', { 
 			cls: `letta-message letta-message-${type}` 
 		});
 
-		if (title) {
-			const headerEl = messageEl.createEl('div', { cls: 'letta-message-header' });
-			headerEl.createEl('span', { text: title, cls: 'letta-message-title' });
-			
-			const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-			headerEl.createEl('span', { text: timestamp, cls: 'letta-message-timestamp' });
-		}
+		// Create bubble wrapper
+		const bubbleEl = messageEl.createEl('div', { cls: 'letta-message-bubble' });
 
-		const contentEl = messageEl.createEl('div', { 
-			cls: 'letta-message-content',
-			text: content
-		});
+		// Add timestamp
+		const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		
+		// For tool messages, make them expandable (but not reasoning - that goes in assistant messages)
+		if (type === 'tool-call' || type === 'tool-result') {
+			const headerEl = bubbleEl.createEl('div', { cls: 'letta-expandable-header' });
+			
+			// Remove emojis from titles
+			let cleanTitle = title || type;
+			if (cleanTitle.includes('🔧')) cleanTitle = 'Tool Call';
+			if (cleanTitle.includes('📊')) cleanTitle = 'Tool Result';
+			
+			headerEl.createEl('span', { cls: 'letta-expandable-title', text: cleanTitle });
+			headerEl.createEl('span', { cls: 'letta-message-timestamp', text: timestamp });
+			const chevronEl = headerEl.createEl('span', { cls: 'letta-expandable-chevron', text: '▼' });
+			
+			const contentEl = bubbleEl.createEl('div', { 
+				cls: 'letta-expandable-content letta-expandable-collapsed',
+				text: content
+			});
+			
+			// Add click handler for expand/collapse
+			headerEl.addEventListener('click', () => {
+				const isCollapsed = contentEl.classList.contains('letta-expandable-collapsed');
+				if (isCollapsed) {
+					contentEl.removeClass('letta-expandable-collapsed');
+					chevronEl.textContent = '▲';
+				} else {
+					contentEl.addClass('letta-expandable-collapsed');
+					chevronEl.textContent = '▼';
+				}
+			});
+			
+		} else if (type === 'reasoning') {
+			// Skip standalone reasoning messages - they should be part of assistant messages
+			return messageEl; // Return empty element that won't be displayed
+			
+		} else {
+			// Regular messages (user/assistant)
+			if (title && type !== 'user') {
+				const headerEl = bubbleEl.createEl('div', { cls: 'letta-message-header' });
+				
+				// Left side: title and timestamp
+				const leftSide = headerEl.createEl('div', { cls: 'letta-message-header-left' });
+				
+				// Remove emojis from titles
+				let cleanTitle = title.replace(/🤖|👤|🚨|✅|❌|🔌/g, '').trim();
+				leftSide.createEl('span', { cls: 'letta-message-title', text: cleanTitle });
+				leftSide.createEl('span', { cls: 'letta-message-timestamp', text: timestamp });
+				
+				// Right side: reasoning button if reasoning content exists
+				if (type === 'assistant' && reasoningContent) {
+					const reasoningBtn = headerEl.createEl('button', { 
+						cls: 'letta-reasoning-btn letta-reasoning-collapsed',
+						text: '···'
+					});
+					
+					// Add click handler for reasoning toggle
+					reasoningBtn.addEventListener('click', (e) => {
+						e.stopPropagation();
+						const isCollapsed = reasoningBtn.classList.contains('letta-reasoning-collapsed');
+						if (isCollapsed) {
+							reasoningBtn.removeClass('letta-reasoning-collapsed');
+							reasoningBtn.addClass('letta-reasoning-expanded');
+						} else {
+							reasoningBtn.addClass('letta-reasoning-collapsed');
+							reasoningBtn.removeClass('letta-reasoning-expanded');
+						}
+						
+						// Toggle reasoning content visibility
+						const reasoningEl = bubbleEl.querySelector('.letta-reasoning-content');
+						if (reasoningEl) {
+							reasoningEl.classList.toggle('letta-reasoning-visible');
+						}
+					});
+				}
+			}
+
+			// Add reasoning content if provided (for assistant messages)
+			if (type === 'assistant' && reasoningContent) {
+				const reasoningEl = bubbleEl.createEl('div', { cls: 'letta-reasoning-content' });
+				reasoningEl.textContent = reasoningContent; // Start with plain text for streaming
+			}
+
+			const contentEl = bubbleEl.createEl('div', { 
+				cls: 'letta-message-content',
+				text: content
+			});
+		}
 
 		// Auto-scroll to bottom
 		setTimeout(() => {
@@ -1797,7 +1993,9 @@ class LettaChatView extends ItemView {
 	}
 
 	appendToStreamingMessage(messageEl: HTMLElement, newContent: string) {
-		const contentEl = messageEl.querySelector('.letta-message-content');
+		// Look for content in both regular and expandable structures
+		const contentEl = messageEl.querySelector('.letta-message-content') || 
+						  messageEl.querySelector('.letta-expandable-content');
 		if (contentEl) {
 			contentEl.textContent = (contentEl.textContent || '') + newContent;
 			
@@ -1813,26 +2011,38 @@ class LettaChatView extends ItemView {
 
 	processNonStreamingMessages(messages: any[]) {
 		// Process response messages (fallback for when streaming fails)
+		let tempReasoning = '';
+		
 		for (const responseMessage of messages) {
+			// Skip heartbeat messages - these are automated system messages
+			if (responseMessage.type === 'heartbeat') {
+				continue;
+			}
+			
 			switch (responseMessage.message_type) {
 				case 'reasoning_message':
 					if (responseMessage.reasoning) {
-						this.addMessage('reasoning', responseMessage.reasoning, '🧠 Reasoning');
+						// Accumulate reasoning for the next assistant message
+						tempReasoning += responseMessage.reasoning;
 					}
 					break;
 				case 'tool_call_message':
 					if (responseMessage.tool_call) {
-						this.addMessage('tool-call', JSON.stringify(responseMessage.tool_call, null, 2), '🔧 Tool Call');
+						this.addMessage('tool-call', JSON.stringify(responseMessage.tool_call, null, 2), 'Tool Call');
 					}
 					break;
 				case 'tool_return_message':
 					if (responseMessage.tool_return) {
-						this.addMessage('tool-result', JSON.stringify(responseMessage.tool_return, null, 2), '📊 Tool Result');
+						this.addMessage('tool-result', JSON.stringify(responseMessage.tool_return, null, 2), 'Tool Result');
 					}
 					break;
 				case 'assistant_message':
 					if (responseMessage.content) {
-						this.addMessage('assistant', responseMessage.content, `🤖 ${this.plugin.settings.agentName}`);
+						// Use accumulated reasoning with this assistant message
+						this.addMessage('assistant', responseMessage.content, this.plugin.settings.agentName, 
+							tempReasoning || undefined);
+						// Clear temp reasoning after using it
+						tempReasoning = '';
 					}
 					break;
 			}
@@ -2297,14 +2507,14 @@ class LettaChatView extends ItemView {
 			this.agentNameElement.textContent = agent.name;
 			
 			// Show success message
-			this.addMessage('assistant', `Switched to agent: **${agent.name}**${project ? ` (Project: ${project.name})` : ''}`, '🤖 System');
+			this.addMessage('assistant', `Switched to agent: **${agent.name}**${project ? ` (Project: ${project.name})` : ''}`, 'System');
 			
 			new Notice(`Switched to agent: ${agent.name}`);
 			
 		} catch (error) {
 			console.error('Failed to switch agent:', error);
 			new Notice('Failed to switch agent. Please try again.');
-			this.addMessage('assistant', '❌ **Error**: Failed to switch agent. Please try again.', '🚨 Error');
+			this.addMessage('assistant', '**Error**: Failed to switch agent. Please try again.', 'Error');
 		}
 	}
 
