@@ -1096,6 +1096,7 @@ class LettaChatView extends ItemView {
 	sendButton: HTMLButtonElement;
 	agentNameElement: HTMLElement;
 	statusDot: HTMLElement;
+	streamingDisabled: boolean = false; // Track if streaming should be disabled due to rate limits
 	statusText: HTMLElement;
 	modelButton: HTMLElement;
 
@@ -2330,12 +2331,14 @@ class LettaChatView extends ItemView {
 		this.messageInput.style.height = 'auto';
 
 		try {
-			// Try streaming first, fallback to non-streaming on CORS/network errors
+			// Check if streaming is disabled due to previous rate limits
 			const isLocalInstance = !this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
-			console.log('[Letta Plugin] Sending message, isLocalInstance:', isLocalInstance);
-			let useStreaming = true;
+			const shouldAttemptStreaming = !this.streamingDisabled;
 			
-			if (isLocalInstance) {
+			console.log('[Letta Plugin] Sending message, isLocalInstance:', isLocalInstance, 'streamingDisabled:', this.streamingDisabled);
+			let useStreaming = shouldAttemptStreaming;
+			
+			if (shouldAttemptStreaming && isLocalInstance) {
 				// For local instances, try streaming but be ready to fallback
 				try {
 					console.log('[Letta Plugin] Attempting streaming for local instance...');
@@ -2344,11 +2347,18 @@ class LettaChatView extends ItemView {
 					});
 					console.log('[Letta Plugin] Streaming completed successfully');
 				} catch (streamError: any) {
-					console.log('[Letta Plugin] Streaming failed (likely CORS), falling back to non-streaming:', streamError.message);
+					console.log('[Letta Plugin] Streaming failed, falling back to non-streaming:', streamError.message);
 					useStreaming = false;
 					
-					// Show appropriate warning to user
+					// If it's a rate limit, disable streaming temporarily
 					if (streamError.message.includes('429') || streamError.message.includes('Rate limited')) {
+						this.streamingDisabled = true;
+						// Re-enable streaming after 1 minute
+						setTimeout(() => {
+							this.streamingDisabled = false;
+							console.log('[Letta Plugin] Re-enabled streaming after rate limit cooldown');
+						}, 60000);
+						
 						this.addRateLimitMessage(`Rate Limited - You've reached the rate limit for your account. Please wait a moment before sending another message.\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans:\nhttps://app.letta.com/settings/organization/billing`);
 					} else {
 						// Likely CORS issue for local instances
@@ -2364,7 +2374,7 @@ class LettaChatView extends ItemView {
 					const messages = await this.plugin.sendMessageToAgent(message);
 					this.processNonStreamingMessages(messages);
 				}
-			} else {
+			} else if (shouldAttemptStreaming) {
 				// For cloud instances, use streaming
 				try {
 					console.log('[Letta Plugin] Attempting streaming for cloud instance...');
@@ -2374,9 +2384,17 @@ class LettaChatView extends ItemView {
 					console.log('[Letta Plugin] Streaming completed successfully');
 				} catch (streamError: any) {
 					console.log('[Letta Plugin] Cloud streaming failed, falling back to non-streaming:', streamError.message);
+					useStreaming = false;
 					
-					// Show rate limiting warning to user if applicable
+					// If it's a rate limit, disable streaming temporarily
 					if (streamError.message.includes('429') || streamError.message.includes('Rate limited')) {
+						this.streamingDisabled = true;
+						// Re-enable streaming after 1 minute
+						setTimeout(() => {
+							this.streamingDisabled = false;
+							console.log('[Letta Plugin] Re-enabled streaming after rate limit cooldown');
+						}, 60000);
+						
 						this.addRateLimitMessage(`Rate Limited - You've reached the rate limit for your account. Please wait a moment before sending another message.\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans:\nhttps://app.letta.com/settings/organization/billing`);
 					}
 					
@@ -2389,6 +2407,13 @@ class LettaChatView extends ItemView {
 					const messages = await this.plugin.sendMessageToAgent(message);
 					this.processNonStreamingMessages(messages);
 				}
+			}
+			
+			// If streaming is disabled or wasn't attempted, use non-streaming API directly
+			if (!useStreaming) {
+				console.log('[Letta Plugin] Using non-streaming API directly');
+				const messages = await this.plugin.sendMessageToAgent(message);
+				this.processNonStreamingMessages(messages);
 			}
 
 		} catch (error: any) {
