@@ -265,9 +265,26 @@ export default class LettaPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	// Get detailed connection status text
+	getConnectionStatusText(): string {
+		const isCloudInstance = this.settings.lettaBaseUrl.includes('api.letta.com');
+		
+		if (isCloudInstance) {
+			const projectInfo = this.settings.lettaProjectSlug
+				? ` • ${this.settings.lettaProjectSlug}`
+				: '';
+			return `Connected to Letta Cloud${projectInfo}`;
+		} else {
+			// Show base URL for local/custom instances
+			return `Connected to ${this.settings.lettaBaseUrl}`;
+		}
+	}
+
 	updateStatusBar(status: string) {
 		if (this.statusBarItem) {
-			this.statusBarItem.setText(`Letta: ${status}`);
+			// Use detailed connection text for "Connected" status
+			const displayStatus = status === 'Connected' ? this.getConnectionStatusText() : status;
+			this.statusBarItem.setText(`Letta: ${displayStatus}`);
 		}
 		
 		// Also update chat status if chat view is open
@@ -1242,6 +1259,11 @@ class LettaChatView extends ItemView {
 	addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: string, title?: string, reasoningContent?: string) {
 		// Hide typing indicator when real content arrives
 		this.hideTypingIndicator();
+		
+		// Clean up previous tool calls when starting a new assistant message
+		if (type === 'assistant') {
+			this.cleanupPreviousToolCalls();
+		}
 		// Debug: Check for system_alert content being added as regular message
 		if (content && content.includes('"type": "system_alert"')) {
 			console.error('[Letta Plugin] ALERT: system_alert content being added as regular message!');
@@ -1528,13 +1550,49 @@ class LettaChatView extends ItemView {
 		if (!toolResult) return toolResult;
 
 		try {
-			// Try to parse as JSON
+			// Try to parse as JSON first
 			const parsed = JSON.parse(toolResult);
 			// If successful, return pretty-printed JSON
 			return JSON.stringify(parsed, null, 2);
 		} catch (e) {
-			// If not valid JSON, return original string
-			return toolResult;
+			// If not valid JSON, check if it's a repr-style string (quoted with escapes)
+			let formatted = toolResult;
+			
+			// Check if it's wrapped in quotes like a Python repr string
+			if (formatted.startsWith('"') && formatted.endsWith('"')) {
+				try {
+					// Try to parse it as a JSON string to handle escapes properly
+					formatted = JSON.parse(formatted);
+				} catch (parseError) {
+					// If JSON parsing fails, manually remove outer quotes and process escapes
+					formatted = formatted.slice(1, -1);
+					
+					// Handle escaped newlines
+					formatted = formatted.replace(/\\n/g, '\n');
+					
+					// Handle escaped quotes
+					formatted = formatted.replace(/\\"/g, '"');
+					
+					// Handle escaped backslashes
+					formatted = formatted.replace(/\\\\/g, '\\');
+				}
+			} else {
+				// Handle escaped sequences even without quotes
+				formatted = formatted.replace(/\\n/g, '\n');
+				formatted = formatted.replace(/\\"/g, '"');
+				formatted = formatted.replace(/\\\\/g, '\\');
+			}
+			
+			// Clean up extensive === separators - replace long chains with simple dividers
+			formatted = formatted.replace(/={10,}/g, '---\n');
+			
+			// Clean up any remaining === separators at start/end
+			formatted = formatted.replace(/^===+\s*/, '').replace(/\s*===+$/, '');
+			
+			// Clean up multiple consecutive newlines
+			formatted = formatted.replace(/\n{3,}/g, '\n\n');
+			
+			return formatted.trim();
 		}
 	}
 
@@ -1761,13 +1819,8 @@ class LettaChatView extends ItemView {
 		if (isConnected) {
 			this.statusDot.className = 'letta-status-dot letta-status-connected';
 			
-			// Show project info only for cloud instances
-			const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
-			const projectInfo = (isCloudInstance && this.plugin.settings.lettaProjectSlug)
-				? ` • Project: ${this.plugin.settings.lettaProjectSlug}`
-				: '';
-			
-			this.statusText.textContent = `Connected${projectInfo}`;
+			// Use the plugin's helper method for consistent status text
+			this.statusText.textContent = this.plugin.getConnectionStatusText();
 			
 			// Update model button if it exists
 			if (this.modelButton) {
@@ -2349,6 +2402,11 @@ class LettaChatView extends ItemView {
 	}
 
 	addStreamingMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: string, title?: string, reasoningContent?: string): HTMLElement {
+		// Clean up previous tool calls when starting a new assistant message
+		if (type === 'assistant') {
+			this.cleanupPreviousToolCalls();
+		}
+		
 		const messageEl = this.chatContainer.createEl('div', { 
 			cls: `letta-message letta-message-${type}` 
 		});
@@ -2431,7 +2489,20 @@ class LettaChatView extends ItemView {
 		return messageEl;
 	}
 
+	// Clean up wavy lines and prominent styling from previous tool calls
+	cleanupPreviousToolCalls() {
+		// Remove wavy lines and prominent styling from all previous tool calls
+		const allWavyLines = this.chatContainer.querySelectorAll('.letta-tool-curve');
+		allWavyLines.forEach(line => line.remove());
+		
+		const allProminentHeaders = this.chatContainer.querySelectorAll('.letta-tool-prominent');
+		allProminentHeaders.forEach(header => header.removeClass('letta-tool-prominent'));
+	}
+
 	addToolInteractionMessage(reasoning: string, toolCall: string): HTMLElement {
+		// Clean up previous tool calls when a new one starts
+		this.cleanupPreviousToolCalls();
+		
 		// Parse tool call to extract tool name
 		let toolName = 'Tool Call';
 		try {
@@ -2508,17 +2579,13 @@ class LettaChatView extends ItemView {
 		const toolLeftSide = toolCallHeader.createEl('div', { cls: 'letta-tool-left' });
 		const toolTitle = toolLeftSide.createEl('span', { cls: 'letta-expandable-title letta-tool-name', text: toolName });
 		
-		// Add loading indicator that will be replaced when result comes in
-		const loadingIndicator = toolLeftSide.createEl('span', { 
-			cls: 'letta-tool-loading',
-			text: ' •••'
-		});
+		// No loading indicator - just the wavy line animation shows loading state
 		
 		// Curvy connecting line (SVG) - continuous flowing wave
 		const connectionLine = toolCallHeader.createEl('div', { cls: 'letta-tool-connection' });
 		connectionLine.innerHTML = `
 			<svg viewBox="0 0 400 12" class="letta-tool-curve" preserveAspectRatio="none">
-				<path d="M -50,6 Q -25,2 0,6 T 50,6 T 100,6 T 150,6 T 200,6 T 250,6 T 300,6 T 350,6 T 400,6 T 450,6" 
+				<path d="M 0,6 Q 12.5,2 25,6 Q 37.5,10 50,6 Q 62.5,2 75,6 Q 87.5,10 100,6 Q 112.5,2 125,6 Q 137.5,10 150,6 Q 162.5,2 175,6 Q 187.5,10 200,6 Q 212.5,2 225,6 Q 237.5,10 250,6 Q 262.5,2 275,6 Q 287.5,10 300,6 Q 312.5,2 325,6 Q 337.5,10 350,6 Q 362.5,2 375,6 Q 387.5,10 400,6 Q 412.5,2 425,6 Q 437.5,10 450,6" 
 					  stroke="var(--interactive-accent)" 
 					  stroke-width="1.5" 
 					  fill="none" 
@@ -2553,7 +2620,7 @@ class LettaChatView extends ItemView {
 			cls: 'letta-expandable-header letta-tool-section letta-tool-result-pending'
 		});
 		toolResultHeader.style.display = 'none';
-		toolResultHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Result' });
+		const toolResultTitle = toolResultHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Result' });
 		const toolResultChevron = toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron', text: '○' });
 		
 		const toolResultContent = bubbleEl.createEl('div', { 
@@ -2576,10 +2643,18 @@ class LettaChatView extends ItemView {
 		const bubbleEl = messageEl.querySelector('.letta-message-bubble');
 		if (!bubbleEl) return;
 
-		// Remove loading indicator from tool call header
-		const loadingIndicator = bubbleEl.querySelector('.letta-tool-loading');
-		if (loadingIndicator) {
-			loadingIndicator.remove();
+		// Loading state was shown by wavy line animation only (no text indicator)
+
+		// Remove wavy line animation now that tool call is complete
+		const wavyLine = bubbleEl.querySelector('.letta-tool-curve');
+		if (wavyLine) {
+			wavyLine.remove();
+		}
+
+		// Remove prominent styling from tool call header now that it's complete
+		const toolCallHeader = bubbleEl.querySelector('.letta-tool-prominent');
+		if (toolCallHeader) {
+			toolCallHeader.removeClass('letta-tool-prominent');
 		}
 
 		// Show the tool result section
@@ -2587,15 +2662,38 @@ class LettaChatView extends ItemView {
 		const toolResultContent = bubbleEl.querySelector('.letta-expandable-content:last-child') as HTMLElement;
 		
 		if (toolResultHeader && toolResultContent) {
+			// Format the result and get a preview
+			const formattedResult = this.formatToolResult(toolResult);
+			
+			// Create a preview (first 100 characters, single line)
+			let preview = formattedResult
+				.replace(/\n/g, ' ') // Replace newlines with spaces
+				.substring(0, 100) // Limit to 100 characters
+				.trim();
+			
+			// Remove quotes from preview if it starts and ends with them
+			if (preview.startsWith('"') && preview.endsWith('"')) {
+				preview = preview.slice(1, -1);
+			}
+			
+			const previewText = preview + (formattedResult.length > 100 ? '...' : '');
+			
+			// Update the title to show the preview instead of "Tool Result"
+			const toolResultTitle = toolResultHeader.querySelector('.letta-expandable-title');
+			if (toolResultTitle) {
+				toolResultTitle.textContent = previewText;
+			}
+			
 			// Make visible
 			toolResultHeader.style.display = 'flex';
 			toolResultContent.style.display = 'block';
 			toolResultHeader.removeClass('letta-tool-result-pending');
 
-			// Add content with JSON pretty-printing
-			const toolResultPre = toolResultContent.createEl('pre', { cls: 'letta-code-block' });
-			const formattedResult = this.formatToolResult(toolResult);
-			toolResultPre.createEl('code', { text: formattedResult });
+			// Add full content to expandable section
+			const toolResultDiv = toolResultContent.createEl('div', { 
+				cls: 'letta-tool-result-text',
+				text: formattedResult 
+			});
 
 			// Add click handler for tool result expand/collapse
 			const toolResultChevron = toolResultHeader.querySelector('.letta-expandable-chevron');

@@ -320,6 +320,18 @@
     font-size: 0.9em;
 }
 
+/* Tool result preview styling */
+.letta-tool-section .letta-expandable-title {
+    color: var(--text-normal);
+    font-weight: 400;
+    font-family: var(--font-monospace);
+    font-size: 0.85em;
+    max-width: 500px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .letta-expandable-chevron {
     color: var(--text-muted);
     font-size: 0.8em;
@@ -1765,7 +1777,7 @@
     stroke-width: 1.5;
     fill: none;
     opacity: 0.7;
-    animation: letta-wave-slide 3s linear infinite;
+    animation: letta-wave-slide 2s linear infinite;
 }
 
 @keyframes letta-wave-slide {
@@ -1773,7 +1785,7 @@
         transform: translateX(0);
     }
     100% {
-        transform: translateX(-100px);
+        transform: translateX(-50px);
     }
 }
 
@@ -1808,6 +1820,16 @@
     color: var(--interactive-accent);
     font-weight: 500;
     animation: letta-tool-loading-prominent 1.5s ease-in-out infinite;
+}
+
+/* Tool result text styling */
+.letta-tool-result-text {
+    padding: 8px 12px;
+    color: var(--text-normal);
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-family: var(--font-text);
 }
 
 @keyframes letta-tool-loading-prominent {
