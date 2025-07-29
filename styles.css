@@ -423,6 +423,41 @@
     color: var(--text-muted);
 }
 
+/* Modal styling for embedding model change confirmation */
+.modal-button-container {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.modal-button-container button {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.modal-button-container button:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--background-modifier-border-hover);
+}
+
+.modal-button-container button.mod-cta {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border-color: var(--interactive-accent);
+}
+
+.modal-button-container button.mod-warning {
+    background: var(--color-red);
+    color: var(--text-on-accent);
+    border-color: var(--color-red);
+}
+
 .letta-message-bubble {
     padding: 8px 12px;
     position: relative;

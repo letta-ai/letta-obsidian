@@ -8,6 +8,7 @@ import {
 	PluginSettingTab, 
 	Setting,
 	TFile,
+	TFolder,
 	requestUrl,
 	ItemView,
 	WorkspaceLeaf
@@ -24,6 +25,7 @@ interface LettaPluginSettings {
 	sourceName: string;
 	autoSync: boolean;
 	syncOnStartup: boolean;
+	embeddingModel: string;
 }
 
 const DEFAULT_SETTINGS: LettaPluginSettings = {
@@ -33,7 +35,8 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	agentName: 'Obsidian Assistant',
 	sourceName: 'obsidian-vault-files',
 	autoSync: true,
-	syncOnStartup: true
+	syncOnStartup: true,
+	embeddingModel: 'letta/letta-free'
 }
 
 interface LettaAgent {
@@ -169,7 +172,6 @@ export default class LettaPlugin extends Plugin {
 				if (folder && folder instanceof TFolder) {
 					// Focus the file explorer and reveal the folder
 					this.app.workspace.leftSplit.expand();
-					this.app.workspace.revealActiveFile();
 					new Notice('📁 Letta Memory Blocks folder is now visible in the file explorer');
 				} else {
 					new Notice('Letta Memory Blocks folder not found. Use "Open Memory Block Files" to create it.');
@@ -485,9 +487,22 @@ export default class LettaPlugin extends Plugin {
 			if (existingSource) {
 				this.source = { id: existingSource.id, name: existingSource.name };
 			} else {
-				// Create new source
+				// Create new source with selected embedding model
 				const embeddingConfigs = await this.makeRequest('/v1/models/embedding');
-				const embeddingConfig = embeddingConfigs[0];
+				
+				// Find the selected embedding model, fall back to first available or letta-free
+				let embeddingConfig = embeddingConfigs.find((config: any) => 
+					config.handle === this.settings.embeddingModel
+				);
+				
+				if (!embeddingConfig) {
+					// Fallback to letta-free or first available
+					embeddingConfig = embeddingConfigs.find((config: any) => 
+						config.handle === 'letta/letta-free' || (config.handle && config.handle.includes('letta'))
+					) || embeddingConfigs[0];
+					
+					console.warn(`[Letta Plugin] Selected embedding model "${this.settings.embeddingModel}" not found, using fallback: ${embeddingConfig?.handle}`);
+				}
 
 				const newSource = await this.makeRequest('/v1/sources', {
 					method: 'POST',
@@ -499,6 +514,7 @@ export default class LettaPlugin extends Plugin {
 				});
 
 				this.source = { id: newSource.id, name: newSource.name };
+				console.log(`[Letta Plugin] Created new source with embedding model: ${embeddingConfig.handle}`);
 			}
 		} catch (error) {
 			console.error('Failed to setup source:', error);
@@ -528,7 +544,7 @@ export default class LettaPlugin extends Plugin {
 					const currentSourceIds = agentSources.map((s: any) => s.id);
 					currentSourceIds.push(this.source!.id);
 					
-					await this.makeRequest(`/v1/agents/${this.agent.id}`, {
+					await this.makeRequest(`/v1/agents/${this.agent?.id}`, {
 						method: 'PATCH',
 						body: {
 							source_ids: currentSourceIds
@@ -623,7 +639,7 @@ export default class LettaPlugin extends Plugin {
 			this.updateStatusBar('Syncing...');
 			
 			// Get existing files from Letta
-			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+			const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
 			const existingFilesMap = new Map();
 			existingFiles.forEach((file: any) => {
 				existingFilesMap.set(file.file_name, file);
@@ -658,7 +674,7 @@ export default class LettaPlugin extends Plugin {
 
 					if (shouldUpload) {
 						// Delete existing file to avoid duplicates
-						await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
+						await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
 							method: 'DELETE'
 						});
 					}
@@ -681,7 +697,7 @@ export default class LettaPlugin extends Plugin {
 						`--${boundary}--`
 					].join('\r\n');
 
-					await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
+					await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
 						method: 'POST',
 						headers: {
 							'Content-Type': `multipart/form-data; boundary=${boundary}`
@@ -730,14 +746,14 @@ export default class LettaPlugin extends Plugin {
 			const content = await this.app.vault.read(file);
 
 			// Check if file exists in Letta and get metadata
-			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+			const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
 			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 			
 			let action = 'uploaded';
 			
 			if (existingFile) {
 				// Delete existing file first
-				await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
+				await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
 					method: 'DELETE'
 				});
 				action = 'updated';
@@ -756,7 +772,7 @@ export default class LettaPlugin extends Plugin {
 				`--${boundary}--`
 			].join('\r\n');
 
-			await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
+			await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': `multipart/form-data; boundary=${boundary}`
@@ -806,10 +822,10 @@ export default class LettaPlugin extends Plugin {
 
 			// Delete existing file if it exists
 			try {
-				const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+				const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
 				const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 				if (existingFile) {
-					await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
+					await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
 						method: 'DELETE'
 					});
 				}
@@ -830,7 +846,7 @@ export default class LettaPlugin extends Plugin {
 				`--${boundary}--`
 			].join('\r\n');
 
-			await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
+			await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': `multipart/form-data; boundary=${boundary}`
@@ -862,11 +878,11 @@ export default class LettaPlugin extends Plugin {
 
 		try {
 			const encodedPath = this.encodeFilePath(file.path);
-			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+			const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
 			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 			
 			if (existingFile) {
-				await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
+				await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
 					method: 'DELETE'
 				});
 			}
@@ -897,11 +913,15 @@ export default class LettaPlugin extends Plugin {
 			// Our view could not be found in the workspace, create a new leaf
 			// in the right sidebar for it
 			leaf = workspace.getRightLeaf(false);
-			await leaf.setViewState({ type: LETTA_CHAT_VIEW_TYPE, active: true });
+			if (leaf) {
+				await leaf.setViewState({ type: LETTA_CHAT_VIEW_TYPE, active: true });
+			}
 		}
 
 		// "Reveal" the leaf in case it is in a collapsed sidebar
-		workspace.revealLeaf(leaf);
+		if (leaf) {
+			workspace.revealLeaf(leaf);
+		}
 	}
 
 	async openMemoryView(): Promise<void> {
@@ -926,17 +946,21 @@ export default class LettaPlugin extends Plugin {
 			// Our view could not be found in the workspace, create a new leaf
 			// in the right sidebar for it
 			leaf = workspace.getRightLeaf(false);
-			await leaf.setViewState({ type: LETTA_MEMORY_VIEW_TYPE, active: true });
+			if (leaf) {
+				await leaf.setViewState({ type: LETTA_MEMORY_VIEW_TYPE, active: true });
+			}
 		}
 
 		// "Reveal" the leaf in case it is in a collapsed sidebar
-		workspace.revealLeaf(leaf);
+		if (leaf) {
+			workspace.revealLeaf(leaf);
+		}
 	}
 
 	async sendMessageToAgent(message: string): Promise<LettaMessage[]> {
 		if (!this.agent) throw new Error('Agent not connected');
 
-		const response = await this.makeRequest(`/v1/agents/${this.agent.id}/messages`, {
+		const response = await this.makeRequest(`/v1/agents/${this.agent?.id}/messages`, {
 			method: 'POST',
 			body: {
 				messages: [{
@@ -955,7 +979,7 @@ export default class LettaPlugin extends Plugin {
 	async sendMessageToAgentStreaming(message: string, onChunk: (chunk: any) => void): Promise<void> {
 		if (!this.agent) throw new Error('Agent not connected');
 
-		const url = `${this.settings.lettaBaseUrl}/v1/agents/${this.agent.id}/messages/stream`;
+		const url = `${this.settings.lettaBaseUrl}/v1/agents/${this.agent?.id}/messages/stream`;
 		const headers: Record<string, string> = {
 			'Content-Type': 'application/json'
 		};
@@ -1233,18 +1257,35 @@ class LettaChatView extends ItemView {
 				
 				// Enhanced markdown-like formatting for reasoning
 				let formattedReasoning = reasoningContent
+					// Trim leading and trailing whitespace first
+					.trim()
+					// Normalize multiple consecutive newlines to double newlines
+					.replace(/\n{3,}/g, '\n\n')
+					// Handle bold and italic
 					.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
 					.replace(/\*(.*?)\*/g, '<em>$1</em>')
 					.replace(/`([^`]+)`/g, '<code>$1</code>')
-					.replace(/^- (.+)$/gm, '<li>$1</li>')
-					.replace(/^• (.+)$/gm, '<li>$1</li>')
+					// Handle numbered lists (1. 2. 3. etc.)
+					.replace(/^(\d+)\.\s+(.+)$/gm, '<li class="numbered-list">$2</li>')
+					// Handle bullet lists
+					.replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>')
+					// Handle double newlines as paragraph breaks first
 					.replace(/\n\n/g, '</p><p>')
-					.replace(/^\n/g, '')
-					.replace(/\n$/g, '');
+					// Convert remaining single newlines to <br> tags
+					.replace(/\n/g, '<br>');
 				
-				// Wrap consecutive list items in <ul> tags
-				formattedReasoning = formattedReasoning.replace(/(<li>.*?<\/li>)(\s*<li>.*?<\/li>)*/g, (match) => {
-					return '<ul>' + match + '</ul>';
+				// Wrap consecutive numbered list items in <ol> tags
+				formattedReasoning = formattedReasoning.replace(/(<li class="numbered-list">.*?<\/li>)(\s*<br>\s*<li class="numbered-list">.*?<\/li>)*/g, (match) => {
+					// Remove the <br> tags between numbered list items and wrap in <ol>
+					const cleanMatch = match.replace(/<br>\s*/g, '');
+					return '<ol>' + cleanMatch + '</ol>';
+				});
+				
+				// Wrap consecutive regular list items in <ul> tags
+				formattedReasoning = formattedReasoning.replace(/(<li>(?!.*class="numbered-list").*?<\/li>)(\s*<br>\s*<li>(?!.*class="numbered-list").*?<\/li>)*/g, (match) => {
+					// Remove the <br> tags between list items and wrap in <ul>
+					const cleanMatch = match.replace(/<br>\s*/g, '');
+					return '<ul>' + cleanMatch + '</ul>';
 				});
 				
 				// Wrap in paragraphs if needed
@@ -1259,18 +1300,35 @@ class LettaChatView extends ItemView {
 			
 			// Enhanced markdown-like formatting
 			let formattedContent = content
+				// Trim leading and trailing whitespace first
+				.trim()
+				// Normalize multiple consecutive newlines to double newlines
+				.replace(/\n{3,}/g, '\n\n')
+				// Handle bold and italic
 				.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
 				.replace(/\*(.*?)\*/g, '<em>$1</em>')
 				.replace(/`([^`]+)`/g, '<code>$1</code>')
-				.replace(/^- (.+)$/gm, '<li>$1</li>')
-				.replace(/^• (.+)$/gm, '<li>$1</li>')
+				// Handle numbered lists (1. 2. 3. etc.)
+				.replace(/^(\d+)\.\s+(.+)$/gm, '<li class="numbered-list">$2</li>')
+				// Handle bullet lists
+				.replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>')
+				// Handle double newlines as paragraph breaks first
 				.replace(/\n\n/g, '</p><p>')
-				.replace(/^\n/g, '')
-				.replace(/\n$/g, '');
+				// Convert remaining single newlines to <br> tags
+				.replace(/\n/g, '<br>');
 			
-			// Wrap consecutive list items in <ul> tags
-			formattedContent = formattedContent.replace(/(<li>.*?<\/li>)(\s*<li>.*?<\/li>)*/g, (match) => {
-				return '<ul>' + match + '</ul>';
+			// Wrap consecutive numbered list items in <ol> tags
+			formattedContent = formattedContent.replace(/(<li class="numbered-list">.*?<\/li>)(\s*<br>\s*<li class="numbered-list">.*?<\/li>)*/g, (match) => {
+				// Remove the <br> tags between numbered list items and wrap in <ol>
+				const cleanMatch = match.replace(/<br>\s*/g, '');
+				return '<ol>' + cleanMatch + '</ol>';
+			});
+			
+			// Wrap consecutive regular list items in <ul> tags
+			formattedContent = formattedContent.replace(/(<li>(?!.*class="numbered-list").*?<\/li>)(\s*<br>\s*<li>(?!.*class="numbered-list").*?<\/li>)*/g, (match) => {
+				// Remove the <br> tags between list items and wrap in <ul>
+				const cleanMatch = match.replace(/<br>\s*/g, '');
+				return '<ul>' + cleanMatch + '</ul>';
 			});
 			
 			// Wrap in paragraphs if needed
@@ -1322,7 +1380,7 @@ class LettaChatView extends ItemView {
 			this.pendingReasoning = '';
 			
 			// Load last 50 messages by default
-			const messages = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/messages?limit=50`);
+			const messages = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}/messages?limit=50`);
 			
 			if (!messages || messages.length === 0) {
 				return;
@@ -1525,7 +1583,7 @@ class LettaChatView extends ItemView {
 		}
 
 		// Construct the ADE URL for the current agent
-		const adeUrl = `https://app.letta.com/agents/${this.plugin.agent.id}`;
+		const adeUrl = `https://app.letta.com/agents/${this.plugin.agent?.id}`;
 		
 		// Open in external browser
 		window.open(adeUrl, '_blank');
@@ -1541,7 +1599,7 @@ class LettaChatView extends ItemView {
 
 		try {
 			// Fetch the current agent details to get model info
-			const agent = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`);
+			const agent = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}`);
 			
 			if (agent && agent.llm_config && agent.llm_config.model) {
 				// Display just the model name for brevity
@@ -1579,7 +1637,7 @@ class LettaChatView extends ItemView {
 		if (newName && newName !== currentName) {
 			try {
 				// Update agent name via API
-				await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`, {
+				await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}`, {
 					method: 'PATCH',
 					body: { name: newName }
 				});
@@ -1680,8 +1738,8 @@ class LettaChatView extends ItemView {
 
 		// Get current agent details and blocks
 		const [agentDetails, blocks] = await Promise.all([
-			this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`),
-			this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks`)
+			this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}`),
+			this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}/core-memory/blocks`)
 		]);
 		
 		const modal = new AgentPropertyModal(this.app, agentDetails, blocks, async (updatedConfig) => {
@@ -1691,7 +1749,7 @@ class LettaChatView extends ItemView {
 
 				// Update agent properties if any changed
 				if (Object.keys(agentConfig).length > 0) {
-					await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`, {
+					await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}`, {
 						method: 'PATCH',
 						body: agentConfig
 					});
@@ -1700,7 +1758,7 @@ class LettaChatView extends ItemView {
 				// Update blocks if any changed
 				if (blockUpdates && blockUpdates.length > 0) {
 					await Promise.all(blockUpdates.map(async (blockUpdate: any) => {
-						await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/${blockUpdate.label}`, {
+						await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}/core-memory/blocks/${blockUpdate.label}`, {
 							method: 'PATCH',
 							body: { value: blockUpdate.value }
 						});
@@ -1712,7 +1770,9 @@ class LettaChatView extends ItemView {
 					this.plugin.settings.agentName = agentConfig.name;
 					await this.plugin.saveSettings();
 					this.agentNameElement.textContent = agentConfig.name;
-					this.plugin.agent.name = agentConfig.name;
+					if (this.plugin.agent) {
+						this.plugin.agent.name = agentConfig.name;
+					}
 				}
 
 				const hasAgentChanges = Object.keys(agentConfig).length > 0;
@@ -1975,17 +2035,30 @@ class LettaChatView extends ItemView {
 			
 			// Enhanced markdown-like formatting for reasoning
 			let formattedReasoning = reasoning
+				// Trim leading and trailing whitespace first
+				.trim()
+				// Normalize multiple consecutive newlines to double newlines
+				.replace(/\n{3,}/g, '\n\n')
+				// Handle bold and italic
 				.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
 				.replace(/\*(.*?)\*/g, '<em>$1</em>')
 				.replace(/`([^`]+)`/g, '<code>$1</code>')
-				.replace(/^- (.+)$/gm, '<li>$1</li>')
-				.replace(/^• (.+)$/gm, '<li>$1</li>')
+				// Handle numbered lists (1. 2. 3. etc.)
+				.replace(/^(\d+)\.\s+(.+)$/gm, '<li class="numbered-list">$2</li>')
+				// Handle bullet lists
+				.replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>')
+				// Handle double newlines as paragraph breaks first
 				.replace(/\n\n/g, '</p><p>')
-				.replace(/^\n/g, '')
-				.replace(/\n$/g, '');
+				// Convert remaining single newlines to <br> tags
+				.replace(/\n/g, '<br>');
 			
-			// Wrap consecutive list items in <ul> tags
-			formattedReasoning = formattedReasoning.replace(/(<li>.*?<\/li>)(\s*<li>.*?<\/li>)*/g, (match) => {
+			// Wrap consecutive numbered list items in <ol> tags
+			formattedReasoning = formattedReasoning.replace(/(<li class="numbered-list">.*?<\/li>)(\s*<li class="numbered-list">.*?<\/li>)*/g, (match) => {
+				return '<ol>' + match + '</ol>';
+			});
+			
+			// Wrap consecutive bullet list items in <ul> tags
+			formattedReasoning = formattedReasoning.replace(/(<li>(?!.*class="numbered-list").*?<\/li>)(\s*<li>(?!.*class="numbered-list").*?<\/li>)*/g, (match) => {
 				return '<ul>' + match + '</ul>';
 			});
 			
@@ -2022,16 +2095,16 @@ class LettaChatView extends ItemView {
 
 		// Tool result placeholder (will be filled later)
 		const toolResultHeader = bubbleEl.createEl('div', { 
-			cls: 'letta-expandable-header letta-tool-section letta-tool-result-pending',
-			style: 'display: none;' 
+			cls: 'letta-expandable-header letta-tool-section letta-tool-result-pending'
 		});
+		toolResultHeader.style.display = 'none';
 		toolResultHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Result' });
 		const toolResultChevron = toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron', text: '▼' });
 		
 		const toolResultContent = bubbleEl.createEl('div', { 
-			cls: 'letta-expandable-content letta-expandable-collapsed',
-			style: 'display: none;'
+			cls: 'letta-expandable-content letta-expandable-collapsed'
 		});
+		toolResultContent.style.display = 'none';
 
 		// Auto-scroll to bottom
 		setTimeout(() => {
@@ -2237,7 +2310,7 @@ class LettaChatView extends ItemView {
 			// Pre-fetch agent counts for each project
 			console.log('[Letta Plugin] Fetching agent counts for projects:', projects);
 			const projectsWithCounts = await Promise.all(
-				projects.map(async (project) => {
+				projects.map(async (project: any) => {
 					try {
 						const agents = await this.plugin.makeRequest(`/v1/agents?project_id=${project.id}`);
 						console.log(`[Letta Plugin] Project ${project.name} has ${agents?.length || 0} agents:`, agents);
@@ -2530,15 +2603,15 @@ class LettaChatView extends ItemView {
 			
 			// Check if this is a project not found error
 			if (error.message && (error.message.includes('Project not found') || (error.message.includes('Agent not found') && project))) {
-				errorDiv.createEl('h3', { 
-					text: 'Project Not Found',
-					style: 'margin-bottom: 16px; color: var(--text-error);'
+				const errorTitle = errorDiv.createEl('h3', { 
+					text: 'Project Not Found'
 				});
+				errorTitle.style.cssText = 'margin-bottom: 16px; color: var(--text-error);';
 				
-				errorDiv.createEl('p', { 
-					text: `The project "${project?.id || 'default-project'}" does not exist or you don't have access to it.`,
-					style: 'margin-bottom: 16px;'
+				const errorText = errorDiv.createEl('p', { 
+					text: `The project "${project?.id || 'default-project'}" does not exist or you don't have access to it.`
 				});
+				errorText.style.cssText = 'margin-bottom: 16px;';
 				
 				// For cloud instances, offer to change project
 				if (this.plugin.settings.lettaBaseUrl.includes('api.letta.com')) {
@@ -2561,22 +2634,22 @@ class LettaChatView extends ItemView {
 				settingsButton.addEventListener('click', () => {
 					modal.close();
 					// Open Obsidian settings to the plugin page
-					const settingsTab = this.app.setting.openTabById('letta-ai-agent');
-					if (settingsTab) {
-						this.app.setting.open();
-					}
+					// @ts-ignore
+					this.app.setting.open();
+					// @ts-ignore 
+					this.app.setting.openTabById('letta-ai-agent');
 				});
 			} else {
 				// Generic error handling
-				errorDiv.createEl('h3', { 
-					text: 'Failed to Load Agents',
-					style: 'margin-bottom: 16px; color: var(--text-error);'
+				const errorTitle = errorDiv.createEl('h3', { 
+					text: 'Failed to Load Agents'
 				});
+				errorTitle.style.cssText = 'margin-bottom: 16px; color: var(--text-error);';
 				
-				errorDiv.createEl('p', { 
-					text: 'Please check your connection and try again.',
-					style: 'margin-bottom: 16px;'
+				const errorText = errorDiv.createEl('p', { 
+					text: 'Please check your connection and try again.'
 				});
+				errorText.style.cssText = 'margin-bottom: 16px;';
 				
 				const retryButton = errorDiv.createEl('button', { 
 					text: 'Retry',
@@ -2630,7 +2703,7 @@ class LettaMemoryView extends ItemView {
 	blockEditors: Map<string, HTMLTextAreaElement> = new Map();
 	blockSaveButtons: Map<string, HTMLButtonElement> = new Map();
 	blockDirtyStates: Map<string, boolean> = new Map();
-	refreshButton: HTMLButtonElement;
+	refreshButton: HTMLSpanElement;
 	lastRefreshTime: Date = new Date();
 
 	constructor(leaf: WorkspaceLeaf, plugin: LettaPlugin) {
@@ -2705,7 +2778,7 @@ class LettaMemoryView extends ItemView {
 			this.refreshButton.textContent = 'Loading...';
 
 			// Fetch blocks from API
-			this.blocks = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks`);
+			this.blocks = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}/core-memory/blocks`);
 			this.lastRefreshTime = new Date();
 			
 			this.renderBlocks();
@@ -2847,7 +2920,7 @@ class LettaMemoryView extends ItemView {
 			saveButton.textContent = 'Checking...';
 
 			// Step 1: Fetch current server state to check for conflicts
-			const serverBlock = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/${blockLabel}`);
+			const serverBlock = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}/core-memory/blocks/${blockLabel}`);
 			const localBlock = this.blocks.find(b => (b.label || b.name) === blockLabel);
 			
 			if (!localBlock) {
@@ -2896,7 +2969,7 @@ class LettaMemoryView extends ItemView {
 			// Step 3: Save our changes (no conflict or user chose to overwrite)
 			saveButton.textContent = 'Saving...';
 			
-			await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/${blockLabel}`, {
+			await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}/core-memory/blocks/${blockLabel}`, {
 				method: 'PATCH',
 				body: { value: newValue }
 			});
@@ -3039,9 +3112,9 @@ class LettaMemoryView extends ItemView {
 			console.log('[Letta Plugin] Block created successfully:', createResponse);
 			
 			// Step 2: Attach the block to the agent
-			console.log(`[Letta Plugin] Attaching block ${createResponse.id} to agent ${this.plugin.agent.id}`);
+			console.log(`[Letta Plugin] Attaching block ${createResponse.id} to agent ${this.plugin.agent?.id}`);
 			
-			const attachResponse = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/attach/${createResponse.id}`, {
+			const attachResponse = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}/core-memory/blocks/attach/${createResponse.id}`, {
 				method: 'PATCH'
 			});
 
@@ -3059,7 +3132,7 @@ class LettaMemoryView extends ItemView {
 			try {
 				console.log('[Letta Plugin] Trying message approach as fallback');
 				
-				const messageResponse = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/messages`, {
+				const messageResponse = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}/messages`, {
 					method: 'POST',
 					body: {
 						messages: [{
@@ -3123,12 +3196,12 @@ class LettaMemoryView extends ItemView {
 			// Limit input
 			contentEl.createEl('div', { text: 'Character Limit:', cls: 'config-label' });
 			const limitInput = contentEl.createEl('input', {
-				type: 'number',
-				value: '2000',
-				min: '100',
-				max: '8000',
 				cls: 'config-input'
-			});
+			}) as HTMLInputElement;
+			limitInput.type = 'number';
+			limitInput.value = '2000';
+			limitInput.min = '100';
+			limitInput.max = '8000';
 			limitInput.style.marginBottom = '16px';
 			
 			const buttonContainer = contentEl.createEl('div');
@@ -3202,7 +3275,7 @@ class LettaMemoryView extends ItemView {
 
 			console.log('[Letta Plugin] Detaching block:', block.label || block.name);
 			
-			await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/detach/${block.id}`, {
+			await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}/core-memory/blocks/detach/${block.id}`, {
 				method: 'PATCH'
 			});
 
@@ -3306,7 +3379,7 @@ class LettaMemoryView extends ItemView {
 
 		try {
 			// Get current agent's attached blocks to filter them out
-			const attachedBlocks = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks`);
+			const attachedBlocks = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}/core-memory/blocks`);
 			const attachedBlockIds = new Set(attachedBlocks.map((block: any) => block.id));
 
 			// Build query parameters for block search
@@ -3464,10 +3537,10 @@ class LettaMemoryView extends ItemView {
 		}
 
 		try {
-			console.log('[Letta Plugin] Attaching block:', block.label || 'Unnamed', 'to agent:', this.plugin.agent.id);
+			console.log('[Letta Plugin] Attaching block:', block.label || 'Unnamed', 'to agent:', this.plugin.agent?.id);
 			
 			// First, get current agent state to ensure we have the latest block list
-			const currentAgent = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`);
+			const currentAgent = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}`);
 			const currentBlocks = currentAgent.memory?.blocks || [];
 			
 			console.log('[Letta Plugin] Current blocks before attach:', currentBlocks.map((b: any) => b.label || b.id));
@@ -3481,7 +3554,7 @@ class LettaMemoryView extends ItemView {
 			
 			// Try the standard attach endpoint first
 			try {
-				await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/core-memory/blocks/attach/${block.id}`, {
+				await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}/core-memory/blocks/attach/${block.id}`, {
 					method: 'PATCH'
 				});
 				
@@ -3494,7 +3567,7 @@ class LettaMemoryView extends ItemView {
 				// Alternative approach: Update agent with complete block list
 				const updatedBlockIds = [...currentBlocks.map((b: any) => b.id), block.id];
 				
-				await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`, {
+				await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}`, {
 					method: 'PATCH',
 					body: {
 						memory: {
@@ -3658,10 +3731,10 @@ class AgentConfigModal extends Modal {
 		// Include Base Tools
 		const baseToolsGroup = toolsSection.createEl('div', { cls: 'config-checkbox-group' });
 		const baseToolsCheckbox = baseToolsGroup.createEl('input', { 
-			type: 'checkbox', 
-			checked: this.config.include_base_tools,
 			cls: 'config-checkbox'
-		});
+		}) as HTMLInputElement;
+		baseToolsCheckbox.type = 'checkbox';
+		baseToolsCheckbox.checked = this.config.include_base_tools ?? true;
 		baseToolsGroup.createEl('label', { text: 'Include Base Tools (Core memory functions)', cls: 'config-checkbox-label' });
 		baseToolsCheckbox.addEventListener('change', () => {
 			this.config.include_base_tools = baseToolsCheckbox.checked;
@@ -3670,10 +3743,10 @@ class AgentConfigModal extends Modal {
 		// Include Multi-Agent Tools
 		const multiAgentToolsGroup = toolsSection.createEl('div', { cls: 'config-checkbox-group' });
 		const multiAgentToolsCheckbox = multiAgentToolsGroup.createEl('input', { 
-			type: 'checkbox', 
-			checked: this.config.include_multi_agent_tools,
 			cls: 'config-checkbox'
-		});
+		}) as HTMLInputElement;
+		multiAgentToolsCheckbox.type = 'checkbox';
+		multiAgentToolsCheckbox.checked = this.config.include_multi_agent_tools ?? false;
 		multiAgentToolsGroup.createEl('label', { text: 'Include Multi-Agent Tools', cls: 'config-checkbox-label' });
 		multiAgentToolsCheckbox.addEventListener('change', () => {
 			this.config.include_multi_agent_tools = multiAgentToolsCheckbox.checked;
@@ -4353,6 +4426,14 @@ class LettaSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+		// Embedding Model Setting
+		const embeddingModelSetting = new Setting(containerEl)
+			.setName('Embedding Model')
+			.setDesc('Model used for embedding vault files. Changing this requires re-embedding all files.');
+
+		// Add dropdown for embedding models
+		this.addEmbeddingModelDropdown(embeddingModelSetting);
+
 		// Sync Configuration
 		containerEl.createEl('h3', { text: 'Sync Configuration' });
 
@@ -4397,5 +4478,238 @@ class LettaSettingTab extends PluginSettingTab {
 				.onClick(async () => {
 					await this.plugin.syncVaultToLetta();
 				}));
+	}
+
+	async addEmbeddingModelDropdown(setting: Setting) {
+		try {
+			// Fetch available embedding models
+			const embeddingModels = await this.plugin.makeRequest('/v1/models/embedding');
+			
+			setting.addDropdown(dropdown => {
+				// Add options for each embedding model
+				embeddingModels.forEach((model: any) => {
+					if (model.handle) {
+						dropdown.addOption(model.handle, model.handle);
+					}
+				});
+				
+				// Set current value
+				dropdown.setValue(this.plugin.settings.embeddingModel);
+				
+				// Handle changes
+				dropdown.onChange(async (value) => {
+					// Check if the embedding model has actually changed
+					if (value !== this.plugin.settings.embeddingModel) {
+						// Show confirmation dialog about re-embedding
+						const shouldProceed = await this.showEmbeddingChangeConfirmation(value);
+						
+						if (shouldProceed) {
+							// Update the setting
+							this.plugin.settings.embeddingModel = value;
+							await this.plugin.saveSettings();
+							
+							// Delete existing source and folder to force re-embedding
+							await this.deleteSourceForReembedding();
+						} else {
+							// Revert the dropdown to the original value
+							dropdown.setValue(this.plugin.settings.embeddingModel);
+						}
+					}
+				});
+			});
+		} catch (error) {
+			console.error('Failed to fetch embedding models:', error);
+			
+			// Fallback to text input if API call fails
+			setting.addText(text => text
+				.setPlaceholder('letta/letta-free')
+				.setValue(this.plugin.settings.embeddingModel)
+				.onChange(async (value) => {
+					this.plugin.settings.embeddingModel = value;
+					await this.plugin.saveSettings();
+				}));
+		}
+
+		// Advanced Actions
+		this.containerEl.createEl('h3', { text: 'Advanced Actions' });
+
+		new Setting(this.containerEl)
+			.setName('Delete and Recreate Source')
+			.setDesc('Delete the current source and recreate it. This will remove all synced files and require a fresh sync.')
+			.addButton(button => button
+				.setButtonText('Delete & Recreate Source')
+				.setClass('mod-warning')
+				.onClick(async () => {
+					const confirmed = await this.showDeleteSourceConfirmation();
+					if (confirmed) {
+						await this.deleteAndRecreateSource();
+					}
+				}));
+	}
+
+	async showEmbeddingChangeConfirmation(newModel: string): Promise<boolean> {
+		return new Promise((resolve) => {
+			const modal = new Modal(this.app);
+			modal.setTitle('Change Embedding Model');
+			
+			const { contentEl } = modal;
+			
+			contentEl.createEl('p', { 
+				text: `Changing the embedding model from "${this.plugin.settings.embeddingModel}" to "${newModel}" requires re-embedding all vault files.` 
+			});
+			
+			contentEl.createEl('p', { 
+				text: 'This will:',
+				cls: 'setting-item-description'
+			});
+			
+			const warningList = contentEl.createEl('ul');
+			warningList.createEl('li', { text: 'Delete the existing source and all embedded content' });
+			warningList.createEl('li', { text: 'Re-upload and re-embed all vault files' });
+			warningList.createEl('li', { text: 'Take some time depending on vault size' });
+			
+			contentEl.createEl('p', { 
+				text: 'Do you want to proceed?',
+				cls: 'mod-warning'
+			});
+			
+			const buttonContainer = contentEl.createEl('div', { cls: 'modal-button-container' });
+			
+			const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
+			cancelButton.addEventListener('click', () => {
+				modal.close();
+				resolve(false);
+			});
+			
+			const proceedButton = buttonContainer.createEl('button', { 
+				text: 'Proceed with Re-embedding',
+				cls: 'mod-cta mod-warning'
+			});
+			proceedButton.addEventListener('click', () => {
+				modal.close();
+				resolve(true);
+			});
+			
+			modal.open();
+		});
+	}
+
+	async deleteSourceForReembedding() {
+		try {
+			if (this.plugin.source) {
+				// Delete the existing source
+				await this.plugin.makeRequest(`/v1/sources/${this.plugin.source.id}`, {
+					method: 'DELETE'
+				});
+				
+				// Clear the source reference
+				this.plugin.source = null;
+				
+				new Notice('Existing source deleted. Re-syncing vault with new embedding model...');
+				
+				// Trigger a fresh sync with the new embedding model
+				if (this.plugin.settings.autoSync) {
+					setTimeout(() => {
+						this.plugin.syncVaultToLetta();
+					}, 1000);
+				}
+			}
+		} catch (error) {
+			console.error('Failed to delete source for re-embedding:', error);
+			new Notice('Failed to delete existing source. You may need to manually delete it.');
+		}
+	}
+
+	async showDeleteSourceConfirmation(): Promise<boolean> {
+		return new Promise((resolve) => {
+			const modal = new Modal(this.app);
+			modal.setTitle('Delete and Recreate Source');
+			
+			const { contentEl } = modal;
+			
+			contentEl.createEl('p', { 
+				text: 'This will permanently delete the current source and all synced files from Letta.' 
+			});
+			
+			contentEl.createEl('p', { 
+				text: 'This action will:',
+				cls: 'setting-item-description'
+			});
+			
+			const warningList = contentEl.createEl('ul');
+			warningList.createEl('li', { text: 'Delete the existing source and all embedded content' });
+			warningList.createEl('li', { text: 'Create a new empty source' });
+			warningList.createEl('li', { text: 'Require a fresh sync of all vault files' });
+			warningList.createEl('li', { text: 'Remove all existing file associations' });
+			
+			contentEl.createEl('p', { 
+				text: 'This action cannot be undone. Are you sure you want to proceed?',
+				cls: 'mod-warning'
+			});
+			
+			const buttonContainer = contentEl.createEl('div', { cls: 'modal-button-container' });
+			
+			const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
+			cancelButton.addEventListener('click', () => {
+				modal.close();
+				resolve(false);
+			});
+			
+			const deleteButton = buttonContainer.createEl('button', { 
+				text: 'Delete & Recreate',
+				cls: 'mod-cta mod-warning'
+			});
+			deleteButton.addEventListener('click', () => {
+				modal.close();
+				resolve(true);
+			});
+			
+			modal.open();
+		});
+	}
+
+	async deleteAndRecreateSource() {
+		try {
+			new Notice('Deleting existing source...');
+			
+			if (this.plugin.source) {
+				// Delete the existing source
+				await this.plugin.makeRequest(`/v1/sources/${this.plugin.source.id}`, {
+					method: 'DELETE'
+				});
+			}
+			
+			// Clear the source reference
+			this.plugin.source = null;
+			
+			new Notice('Creating new source...');
+			
+			// Create a new source using the same logic from setupSource()
+			const embeddingModels = await this.plugin.makeRequest('/v1/models/embedding');
+			const embeddingConfig = embeddingModels.find((model: any) => 
+				model.handle === this.plugin.settings.embeddingModel
+			);
+			
+			if (!embeddingConfig) {
+				throw new Error(`Embedding model ${this.plugin.settings.embeddingModel} not found`);
+			}
+			
+			const newSource = await this.plugin.makeRequest('/v1/sources', {
+				method: 'POST',
+				body: {
+					name: this.plugin.settings.sourceName,
+					embedding_config: embeddingConfig,
+					instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved in filenames using '__' as path separators."
+				}
+			});
+
+			this.plugin.source = { id: newSource.id, name: newSource.name };
+			
+			new Notice('Source recreated successfully. You can now sync your vault files.');
+			
+		} catch (error) {
+			console.error('Failed to delete and recreate source:', error);
+			new Notice('Failed to delete and recreate source. Please check your connection and try again.');
+		}
 	}
 }
