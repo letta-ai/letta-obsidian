@@ -1204,7 +1204,7 @@ class LettaChatView extends ItemView {
 		const rightButtons = buttonContainer.createEl('div', { cls: 'letta-button-group-right' });
 		
 		this.sendButton = rightButtons.createEl('button', {
-			cls: 'letta-send-button mod-cta',
+			cls: 'letta-send-button',
 			attr: { 'aria-label': 'Send message' }
 		});
 		this.sendButton.createEl('span', { text: 'Send' });
@@ -1817,7 +1817,7 @@ class LettaChatView extends ItemView {
 		});
 		
 		disconnectedMessage.createEl('p', { 
-			text: 'Connect to start chatting with your AI agent about your vault contents.', 
+			text: 'A server connection is required to use your stateful agent', 
 			cls: 'letta-disconnected-subtitle' 
 		});
 		
