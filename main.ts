@@ -5510,7 +5510,21 @@ class LettaSettingTab extends PluginSettingTab {
 						this.plugin.settings.agentName = agent.name;
 						await this.plugin.saveSettings();
 						
-						new Notice(`Selected agent: ${agent.name}`);
+						// Attempt to connect to the selected agent
+						try {
+							await this.plugin.setupAgent();
+							new Notice(`Selected and connected to agent: ${agent.name}`);
+							
+							// Update the chat interface to reflect the agent connection
+							const chatLeaf = this.app.workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE)[0];
+							if (chatLeaf && chatLeaf.view instanceof LettaChatView) {
+								await (chatLeaf.view as LettaChatView).updateChatStatus();
+							}
+						} catch (error) {
+							console.error('[Letta Plugin] Failed to connect to selected agent:', error);
+							new Notice(`Selected agent ${agent.name}, but failed to connect: ${error.message}`);
+						}
+						
 						modal.close();
 						
 						// Refresh the settings display
