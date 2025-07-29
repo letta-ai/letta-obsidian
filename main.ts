@@ -427,6 +427,26 @@ export default class LettaPlugin extends Plugin {
 		console.log(`[Letta Plugin] Is cloud instance: ${isCloudInstance}`);
 		console.log(`[Letta Plugin] Has API key: ${!!this.settings.lettaApiKey}`);
 		
+		// Validate URL format on first attempt
+		if (attempt === 1) {
+			try {
+				new URL(this.settings.lettaBaseUrl);
+			} catch (e) {
+				console.log(`[Letta Plugin] Invalid URL format: ${this.settings.lettaBaseUrl}`);
+				new Notice(`Invalid Base URL format: ${this.settings.lettaBaseUrl}. Please check your settings.`);
+				this.updateStatusBar('Invalid URL');
+				return false;
+			}
+			
+			// Check for common typos
+			if (this.settings.lettaBaseUrl.includes('locahost')) {
+				console.log(`[Letta Plugin] Potential typo detected in URL: ${this.settings.lettaBaseUrl}`);
+				new Notice(`Potential typo in Base URL: Did you mean "localhost"? Current: ${this.settings.lettaBaseUrl}`);
+				this.updateStatusBar('URL typo detected');
+				return false;
+			}
+		}
+		
 		if (isCloudInstance && !this.settings.lettaApiKey) {
 			console.log(`[Letta Plugin] Cloud instance detected but no API key provided`);
 			new Notice('API key required for Letta Cloud. Please configure it in settings.');
@@ -471,6 +491,24 @@ export default class LettaPlugin extends Plugin {
 				stack: error.stack,
 				name: error.name
 			});
+
+			// Provide specific error messages based on error type
+			if (error.message.includes('ERR_NAME_NOT_RESOLVED')) {
+				console.log(`[Letta Plugin] DNS resolution failed - check if URL is correct: ${this.settings.lettaBaseUrl}`);
+				if (attempt === 1) {
+					new Notice(`Cannot resolve hostname. Please check your Base URL: ${this.settings.lettaBaseUrl}`);
+				}
+			} else if (error.message.includes('ECONNREFUSED') || error.message.includes('ERR_CONNECTION_REFUSED')) {
+				console.log(`[Letta Plugin] Connection refused - check if Letta server is running`);
+				if (attempt === 1) {
+					new Notice(`Connection refused. Is your Letta server running on ${this.settings.lettaBaseUrl}?`);
+				}
+			} else if (error.message.includes('ENOTFOUND')) {
+				console.log(`[Letta Plugin] Host not found - check URL spelling`);
+				if (attempt === 1) {
+					new Notice(`Host not found. Please verify the URL spelling: ${this.settings.lettaBaseUrl}`);
+				}
+			}
 
 			// If we haven't reached max attempts, try again with backoff
 			if (attempt < maxAttempts) {
