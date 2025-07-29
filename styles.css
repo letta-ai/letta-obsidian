@@ -391,6 +391,38 @@
     display: block;
 }
 
+/* Tool interaction messages */
+.letta-message-tool-interaction {
+    justify-content: flex-start;
+    margin-bottom: 12px;
+}
+
+.letta-message-tool-interaction .letta-message-bubble {
+    background: var(--background-secondary-alt);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    max-width: 85%;
+}
+
+.letta-tool-reasoning {
+    padding: 8px 0;
+    color: var(--text-normal);
+    line-height: 1.4;
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: 8px;
+}
+
+.letta-tool-section {
+    margin: 4px 0;
+    font-size: 0.9em;
+}
+
+.letta-tool-section .letta-expandable-title {
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
 .letta-message-bubble {
     padding: 8px 12px;
     position: relative;

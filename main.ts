@@ -1178,38 +1178,9 @@ class LettaChatView extends ItemView {
 		// Add timestamp
 		const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 		
-		// For tool messages, make them expandable (but not reasoning - that goes in assistant messages)
+		// Skip tool messages - they're now handled by addToolInteractionMessage
 		if (type === 'tool-call' || type === 'tool-result') {
-			const headerEl = bubbleEl.createEl('div', { cls: 'letta-expandable-header' });
-			
-			// Remove emojis from titles
-			let cleanTitle = title || type;
-			if (cleanTitle.includes('🔧')) cleanTitle = 'Tool Call';
-			if (cleanTitle.includes('📊')) cleanTitle = 'Tool Result';
-			
-			headerEl.createEl('span', { cls: 'letta-expandable-title', text: cleanTitle });
-			headerEl.createEl('span', { cls: 'letta-message-timestamp', text: timestamp });
-			const chevronEl = headerEl.createEl('span', { cls: 'letta-expandable-chevron', text: '▼' });
-			
-			const contentEl = bubbleEl.createEl('div', { 
-				cls: 'letta-expandable-content letta-expandable-collapsed'
-			});
-			
-			// Handle content formatting for tool calls/results
-			const pre = contentEl.createEl('pre', { cls: 'letta-code-block' });
-			pre.createEl('code', { text: content });
-			
-			// Add click handler for expand/collapse
-			headerEl.addEventListener('click', () => {
-				const isCollapsed = contentEl.classList.contains('letta-expandable-collapsed');
-				if (isCollapsed) {
-					contentEl.removeClass('letta-expandable-collapsed');
-					chevronEl.textContent = '▲';
-				} else {
-					contentEl.addClass('letta-expandable-collapsed');
-					chevronEl.textContent = '▼';
-				}
-			});
+			return;
 			
 		} else if (type === 'reasoning') {
 			// Skip standalone reasoning messages - they should be part of assistant messages
@@ -1392,20 +1363,30 @@ class LettaChatView extends ItemView {
 			
 			case 'reasoning_message':
 				if (message.reasoning) {
-					// Store reasoning to be attached to the next assistant message
+					// Store reasoning to be used for next tool call or assistant message
 					this.pendingReasoning += message.reasoning;
 				}
 				break;
 			
 			case 'tool_call_message':
 				if (message.tool_call) {
-					this.addMessage('tool-call', JSON.stringify(message.tool_call, null, 2), 'Tool Call');
+					// Create tool interaction with reasoning and wait for tool result
+					this.currentToolCallMessage = this.addToolInteractionMessage(
+						this.pendingReasoning, 
+						JSON.stringify(message.tool_call, null, 2)
+					);
+					// Clear reasoning after using it
+					this.pendingReasoning = '';
 				}
 				break;
 			
 			case 'tool_return_message':
-				if (message.tool_return) {
-					this.addMessage('tool-result', JSON.stringify(message.tool_return, null, 2), 'Tool Result');
+				if (message.tool_return && this.currentToolCallMessage) {
+					// Add tool result to the existing tool interaction message
+					this.addToolResultToMessage(this.currentToolCallMessage, 
+						JSON.stringify(message.tool_return, null, 2));
+					// Clear the current tool call message reference
+					this.currentToolCallMessage = null;
 				}
 				break;
 			
@@ -1839,23 +1820,28 @@ class LettaChatView extends ItemView {
 		switch (chunk.message_type) {
 			case 'reasoning_message':
 				if (chunk.reasoning) {
-					// Accumulate reasoning for the next assistant message
+					// For tool-related reasoning, check if we're expecting a tool call
 					this.pendingReasoning += chunk.reasoning;
 				}
 				break;
 
 			case 'tool_call_message':
 				if (chunk.tool_call) {
-					// Create new tool call message
-					this.currentToolCallMessage = this.addStreamingMessage('tool-call', 
-						JSON.stringify(chunk.tool_call, null, 2), 'Tool Call');
+					// Create tool interaction message with reasoning and expandable sections
+					this.currentToolCallMessage = this.addToolInteractionMessage(
+						this.pendingReasoning, 
+						JSON.stringify(chunk.tool_call, null, 2)
+					);
+					// Clear reasoning after using it
+					this.pendingReasoning = '';
 				}
 				break;
 
 			case 'tool_return_message':
-				if (chunk.tool_return) {
-					// Create tool result message
-					this.addMessage('tool-result', JSON.stringify(chunk.tool_return, null, 2), 'Tool Result');
+				if (chunk.tool_return && this.currentToolCallMessage) {
+					// Add tool result to the existing tool interaction message
+					this.addToolResultToMessage(this.currentToolCallMessage, 
+						JSON.stringify(chunk.tool_return, null, 2));
 				}
 				break;
 
@@ -1894,35 +1880,9 @@ class LettaChatView extends ItemView {
 		// Add timestamp
 		const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 		
-		// For tool messages, make them expandable (but not reasoning - that goes in assistant messages)
+		// Skip tool messages - they're now handled by addToolInteractionMessage
 		if (type === 'tool-call' || type === 'tool-result') {
-			const headerEl = bubbleEl.createEl('div', { cls: 'letta-expandable-header' });
-			
-			// Remove emojis from titles
-			let cleanTitle = title || type;
-			if (cleanTitle.includes('🔧')) cleanTitle = 'Tool Call';
-			if (cleanTitle.includes('📊')) cleanTitle = 'Tool Result';
-			
-			headerEl.createEl('span', { cls: 'letta-expandable-title', text: cleanTitle });
-			headerEl.createEl('span', { cls: 'letta-message-timestamp', text: timestamp });
-			const chevronEl = headerEl.createEl('span', { cls: 'letta-expandable-chevron', text: '▼' });
-			
-			const contentEl = bubbleEl.createEl('div', { 
-				cls: 'letta-expandable-content letta-expandable-collapsed',
-				text: content
-			});
-			
-			// Add click handler for expand/collapse
-			headerEl.addEventListener('click', () => {
-				const isCollapsed = contentEl.classList.contains('letta-expandable-collapsed');
-				if (isCollapsed) {
-					contentEl.removeClass('letta-expandable-collapsed');
-					chevronEl.textContent = '▲';
-				} else {
-					contentEl.addClass('letta-expandable-collapsed');
-					chevronEl.textContent = '▼';
-				}
-			});
+			return messageEl; // Return empty element
 			
 		} else if (type === 'reasoning') {
 			// Skip standalone reasoning messages - they should be part of assistant messages
@@ -1992,6 +1952,139 @@ class LettaChatView extends ItemView {
 		return messageEl;
 	}
 
+	addToolInteractionMessage(reasoning: string, toolCall: string): HTMLElement {
+		const messageEl = this.chatContainer.createEl('div', { 
+			cls: 'letta-message letta-message-tool-interaction' 
+		});
+
+		// Create bubble wrapper
+		const bubbleEl = messageEl.createEl('div', { cls: 'letta-message-bubble' });
+
+		// Add timestamp
+		const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+		// Header with timestamp
+		const headerEl = bubbleEl.createEl('div', { cls: 'letta-message-header' });
+		const leftSide = headerEl.createEl('div', { cls: 'letta-message-header-left' });
+		leftSide.createEl('span', { cls: 'letta-message-title', text: 'Tool Usage' });
+		leftSide.createEl('span', { cls: 'letta-message-timestamp', text: timestamp });
+
+		// Reasoning content (always visible)
+		if (reasoning) {
+			const reasoningEl = bubbleEl.createEl('div', { cls: 'letta-tool-reasoning' });
+			
+			// Enhanced markdown-like formatting for reasoning
+			let formattedReasoning = reasoning
+				.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+				.replace(/\*(.*?)\*/g, '<em>$1</em>')
+				.replace(/`([^`]+)`/g, '<code>$1</code>')
+				.replace(/^- (.+)$/gm, '<li>$1</li>')
+				.replace(/^• (.+)$/gm, '<li>$1</li>')
+				.replace(/\n\n/g, '</p><p>')
+				.replace(/^\n/g, '')
+				.replace(/\n$/g, '');
+			
+			// Wrap consecutive list items in <ul> tags
+			formattedReasoning = formattedReasoning.replace(/(<li>.*?<\/li>)(\s*<li>.*?<\/li>)*/g, (match) => {
+				return '<ul>' + match + '</ul>';
+			});
+			
+			// Wrap in paragraphs if needed
+			if (formattedReasoning.includes('</p><p>') && !formattedReasoning.startsWith('<')) {
+				formattedReasoning = '<p>' + formattedReasoning + '</p>';
+			}
+			
+			reasoningEl.innerHTML = formattedReasoning;
+		}
+
+		// Tool call expandable section
+		const toolCallHeader = bubbleEl.createEl('div', { cls: 'letta-expandable-header letta-tool-section' });
+		toolCallHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Call' });
+		const toolCallChevron = toolCallHeader.createEl('span', { cls: 'letta-expandable-chevron', text: '▼' });
+		
+		const toolCallContent = bubbleEl.createEl('div', { 
+			cls: 'letta-expandable-content letta-expandable-collapsed'
+		});
+		const toolCallPre = toolCallContent.createEl('pre', { cls: 'letta-code-block' });
+		toolCallPre.createEl('code', { text: toolCall });
+		
+		// Add click handler for tool call expand/collapse
+		toolCallHeader.addEventListener('click', () => {
+			const isCollapsed = toolCallContent.classList.contains('letta-expandable-collapsed');
+			if (isCollapsed) {
+				toolCallContent.removeClass('letta-expandable-collapsed');
+				toolCallChevron.textContent = '▲';
+			} else {
+				toolCallContent.addClass('letta-expandable-collapsed');
+				toolCallChevron.textContent = '▼';
+			}
+		});
+
+		// Tool result placeholder (will be filled later)
+		const toolResultHeader = bubbleEl.createEl('div', { 
+			cls: 'letta-expandable-header letta-tool-section letta-tool-result-pending',
+			style: 'display: none;' 
+		});
+		toolResultHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Result' });
+		const toolResultChevron = toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron', text: '▼' });
+		
+		const toolResultContent = bubbleEl.createEl('div', { 
+			cls: 'letta-expandable-content letta-expandable-collapsed',
+			style: 'display: none;'
+		});
+
+		// Auto-scroll to bottom
+		setTimeout(() => {
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: 'smooth'
+			});
+		}, 10);
+
+		return messageEl;
+	}
+
+	addToolResultToMessage(messageEl: HTMLElement, toolResult: string) {
+		const bubbleEl = messageEl.querySelector('.letta-message-bubble');
+		if (!bubbleEl) return;
+
+		// Show the tool result section
+		const toolResultHeader = bubbleEl.querySelector('.letta-tool-result-pending') as HTMLElement;
+		const toolResultContent = bubbleEl.querySelector('.letta-expandable-content:last-child') as HTMLElement;
+		
+		if (toolResultHeader && toolResultContent) {
+			// Make visible
+			toolResultHeader.style.display = 'flex';
+			toolResultContent.style.display = 'block';
+			toolResultHeader.removeClass('letta-tool-result-pending');
+
+			// Add content
+			const toolResultPre = toolResultContent.createEl('pre', { cls: 'letta-code-block' });
+			toolResultPre.createEl('code', { text: toolResult });
+
+			// Add click handler for tool result expand/collapse
+			const toolResultChevron = toolResultHeader.querySelector('.letta-expandable-chevron');
+			toolResultHeader.addEventListener('click', () => {
+				const isCollapsed = toolResultContent.classList.contains('letta-expandable-collapsed');
+				if (isCollapsed) {
+					toolResultContent.removeClass('letta-expandable-collapsed');
+					if (toolResultChevron) toolResultChevron.textContent = '▲';
+				} else {
+					toolResultContent.addClass('letta-expandable-collapsed');
+					if (toolResultChevron) toolResultChevron.textContent = '▼';
+				}
+			});
+		}
+
+		// Auto-scroll to bottom
+		setTimeout(() => {
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: 'smooth'
+			});
+		}, 10);
+	}
+
 	appendToStreamingMessage(messageEl: HTMLElement, newContent: string) {
 		// Look for content in both regular and expandable structures
 		const contentEl = messageEl.querySelector('.letta-message-content') || 
@@ -2012,6 +2105,7 @@ class LettaChatView extends ItemView {
 	processNonStreamingMessages(messages: any[]) {
 		// Process response messages (fallback for when streaming fails)
 		let tempReasoning = '';
+		let tempToolMessage: HTMLElement | null = null;
 		
 		for (const responseMessage of messages) {
 			// Skip heartbeat messages - these are automated system messages
@@ -2022,18 +2116,28 @@ class LettaChatView extends ItemView {
 			switch (responseMessage.message_type) {
 				case 'reasoning_message':
 					if (responseMessage.reasoning) {
-						// Accumulate reasoning for the next assistant message
+						// Accumulate reasoning for the next tool call or assistant message
 						tempReasoning += responseMessage.reasoning;
 					}
 					break;
 				case 'tool_call_message':
 					if (responseMessage.tool_call) {
-						this.addMessage('tool-call', JSON.stringify(responseMessage.tool_call, null, 2), 'Tool Call');
+						// Create tool interaction with reasoning
+						tempToolMessage = this.addToolInteractionMessage(
+							tempReasoning, 
+							JSON.stringify(responseMessage.tool_call, null, 2)
+						);
+						// Clear reasoning after using it
+						tempReasoning = '';
 					}
 					break;
 				case 'tool_return_message':
-					if (responseMessage.tool_return) {
-						this.addMessage('tool-result', JSON.stringify(responseMessage.tool_return, null, 2), 'Tool Result');
+					if (responseMessage.tool_return && tempToolMessage) {
+						// Add tool result to the existing tool interaction message
+						this.addToolResultToMessage(tempToolMessage, 
+							JSON.stringify(responseMessage.tool_return, null, 2));
+						// Clear the temp tool message reference
+						tempToolMessage = null;
 					}
 					break;
 				case 'assistant_message':
