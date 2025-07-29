@@ -991,9 +991,13 @@ export default class LettaPlugin extends Plugin {
 		const body = {
 			messages: [{
 				role: "user",
-				text: message
+				content: [{
+					type: "text",
+					text: message
+				}]
 			}],
-			stream_steps: true
+			stream_steps: true,
+			stream_tokens: true
 		};
 
 		try {
@@ -1405,9 +1409,73 @@ class LettaChatView extends ItemView {
 		}
 	}
 
+	// Filter out system prompt content that shouldn't be shown to users
+	filterSystemPromptContent(content: string): string {
+		if (!content) return content;
+		
+		// Patterns that indicate system prompt leakage
+		const systemPromptPatterns = [
+			/<control_flow>/i,
+			/<basic_functions>/i,
+			/<context_instructions>/i,
+			/<memory_editing>/i,
+			/<memory_tools>/i,
+			/program again after the function completes/i,
+			/inner monologue.*private to you only/i,
+			/Older AI models had no concept of persistent memory/i,
+			/conversation with a user.*their.*acti/i,
+			/active memory/i,
+			/persistent memory/i,
+			/context window/i,
+			/overflow.*old messages.*permanently lost/i,
+			/sentient being/i,
+			/real-time.*conscious awareness/i
+		];
+		
+		// Check if content contains system prompt patterns
+		const hasSystemContent = systemPromptPatterns.some(pattern => pattern.test(content));
+		
+		if (hasSystemContent) {
+			console.log('[Letta Plugin] Filtering out system prompt content');
+			// Try to extract only the actual user-facing response
+			const lines = content.split('\n');
+			const filteredLines = lines.filter(line => {
+				// Keep lines that don't look like system instructions
+				return !systemPromptPatterns.some(pattern => pattern.test(line)) &&
+				       !line.includes('<') && // Filter out XML-like tags
+				       line.trim().length > 0;
+			});
+			
+			const filtered = filteredLines.join('\n').trim();
+			
+			// If we filtered out everything, return a placeholder
+			if (!filtered) {
+				return 'I processed your request and am ready to help.';
+			}
+			
+			return filtered;
+		}
+		
+		return content;
+	}
+
 	displayHistoricalMessage(message: any) {
-		// Skip heartbeat messages - these are automated system messages
-		if (message.type === 'heartbeat') {
+		console.log('[Letta Plugin] Processing historical message:', message);
+		
+		// Skip heartbeat and system_alert messages - these are automated system messages
+		// Check multiple possible properties where the type might be stored
+		const messageType = message.type || message.message_type;
+		const messageRole = message.role;
+		const messageReason = message.reason || '';
+		const hasHeartbeatContent = messageReason.includes('automated system message') || 
+									messageReason.includes('Function call failed, returning control') ||
+									messageReason.includes('request_heartbeat=true');
+		
+		if (messageType === 'heartbeat' || 
+			messageType === 'system_alert' || 
+			messageRole === 'heartbeat' ||
+			hasHeartbeatContent) {
+			console.log('[Letta Plugin] Skipping historical heartbeat/system message:', messageType, messageRole, messageReason);
 			return;
 		}
 		
@@ -1450,8 +1518,10 @@ class LettaChatView extends ItemView {
 			
 			case 'assistant_message':
 				if (message.content || message.text) {
-					// Use accumulated reasoning with this assistant message
-					this.addMessage('assistant', message.content || message.text || '', 
+					// Filter out system prompt content and use accumulated reasoning
+					const rawContent = message.content || message.text || '';
+					const filteredContent = this.filterSystemPromptContent(rawContent);
+					this.addMessage('assistant', filteredContent, 
 						this.plugin.settings.agentName, this.pendingReasoning || undefined);
 					// Clear pending reasoning after using it
 					this.pendingReasoning = '';
@@ -1825,17 +1895,28 @@ class LettaChatView extends ItemView {
 		try {
 			// Try streaming first, fallback to non-streaming on CORS/network errors
 			const isLocalInstance = !this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
+			console.log('[Letta Plugin] Sending message, isLocalInstance:', isLocalInstance);
 			let useStreaming = true;
 			
 			if (isLocalInstance) {
 				// For local instances, try streaming but be ready to fallback
 				try {
+					console.log('[Letta Plugin] Attempting streaming for local instance...');
 					await this.plugin.sendMessageToAgentStreaming(message, (chunk) => {
 						this.handleStreamingChunk(chunk);
 					});
+					console.log('[Letta Plugin] Streaming completed successfully');
 				} catch (streamError: any) {
 					console.log('[Letta Plugin] Streaming failed (likely CORS), falling back to non-streaming:', streamError.message);
 					useStreaming = false;
+					
+					// Show appropriate warning to user
+					if (streamError.message.includes('429') || streamError.message.includes('Rate limited')) {
+						this.addMessage('assistant', `⚠️ **Rate Limited** - Using fallback mode. Some features may be slower.\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans: https://app.letta.com/settings/organization/billing`, 'System');
+					} else {
+						// Likely CORS issue for local instances
+						this.addMessage('assistant', `ℹ️ **Streaming Unavailable** - Using standard mode due to connection limitations.`, 'System');
+					}
 					
 					// Clear any partial messages from failed streaming attempt
 					this.currentReasoningMessage = null;
@@ -1848,14 +1929,50 @@ class LettaChatView extends ItemView {
 				}
 			} else {
 				// For cloud instances, use streaming
-				await this.plugin.sendMessageToAgentStreaming(message, (chunk) => {
-					this.handleStreamingChunk(chunk);
-				});
+				try {
+					console.log('[Letta Plugin] Attempting streaming for cloud instance...');
+					await this.plugin.sendMessageToAgentStreaming(message, (chunk) => {
+						this.handleStreamingChunk(chunk);
+					});
+					console.log('[Letta Plugin] Streaming completed successfully');
+				} catch (streamError: any) {
+					console.log('[Letta Plugin] Cloud streaming failed, falling back to non-streaming:', streamError.message);
+					
+					// Show rate limiting warning to user if applicable
+					if (streamError.message.includes('429') || streamError.message.includes('Rate limited')) {
+						this.addMessage('assistant', `⚠️ **Rate Limited** - Using fallback mode. Some features may be slower.\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans: https://app.letta.com/settings/organization/billing`, 'System');
+					}
+					
+					// Clear any partial messages from failed streaming attempt
+					this.currentReasoningMessage = null;
+					this.currentAssistantMessage = null;
+					this.currentToolCallMessage = null;
+					
+					// Fall back to non-streaming API
+					const messages = await this.plugin.sendMessageToAgent(message);
+					this.processNonStreamingMessages(messages);
+				}
 			}
 
 		} catch (error: any) {
 			console.error('Failed to send message:', error);
-			this.addMessage('assistant', `**Error**: ${error.message}\n\nPlease check your connection and try again.`, 'Error');
+			
+			// Provide specific error messages for common issues
+			let errorMessage = `**Error**: ${error.message}`;
+			
+			if (error.message.includes('429') || error.message.includes('Rate limited')) {
+				errorMessage = `**Rate Limit Exceeded**\n\nYou've reached the rate limit for your account. Please wait a moment before sending another message.\n\n*Reason: ${error.message.includes('model-unknown') ? 'Unknown model configuration' : 'Too many requests'}*\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans: https://app.letta.com/settings/organization/billing`;
+			} else if (error.message.includes('401') || error.message.includes('Unauthorized')) {
+				errorMessage = `**Authentication Error**\n\nYour API key may be invalid or expired. Please check your settings.\n\n*${error.message}*`;
+			} else if (error.message.includes('403') || error.message.includes('Forbidden')) {
+				errorMessage = `**Access Denied**\n\nYou don't have permission to access this resource. Please check your account permissions.\n\n*${error.message}*`;
+			} else if (error.message.includes('500') || error.message.includes('Internal Server Error')) {
+				errorMessage = `**Server Error**\n\nLetta's servers are experiencing issues. Please try again in a few moments.\n\n*${error.message}*`;
+			} else {
+				errorMessage += '\n\nPlease check your connection and try again.';
+			}
+			
+			this.addMessage('assistant', errorMessage, 'Error');
 		} finally {
 			// Re-enable input
 			this.messageInput.disabled = false;
@@ -1872,28 +1989,59 @@ class LettaChatView extends ItemView {
 	private pendingReasoning: string = '';
 
 	handleStreamingChunk(chunk: any) {
-		// Skip heartbeat messages - these are automated system messages
-		if (chunk.type === 'heartbeat') {
+		console.log('[Letta Plugin] Streaming chunk received:', chunk);
+		
+		// Skip heartbeat and system_alert messages - these are automated system messages
+		if (chunk.type === 'heartbeat' || chunk.type === 'system_alert') {
+			console.log('[Letta Plugin] Skipping system message:', chunk.type);
 			return;
 		}
 		
 		switch (chunk.message_type) {
 			case 'reasoning_message':
+				console.log('[Letta Plugin] Processing reasoning_message, reasoning:', chunk.reasoning);
 				if (chunk.reasoning) {
 					// For tool-related reasoning, check if we're expecting a tool call
 					this.pendingReasoning += chunk.reasoning;
+					console.log('[Letta Plugin] Added to pendingReasoning, total length:', this.pendingReasoning.length);
+				}
+				break;
+
+			case 'assistant_message_token':
+				// Handle individual token streaming for real-time display
+				console.log('[Letta Plugin] Processing token:', chunk.token || chunk.content || chunk.text);
+				const token = chunk.token || chunk.content || chunk.text;
+				if (token) {
+					if (!this.currentAssistantMessage) {
+						console.log('[Letta Plugin] Creating new assistant message for token streaming with reasoning length:', this.pendingReasoning.length);
+						// Create new assistant message with accumulated reasoning
+						this.currentAssistantMessage = this.addStreamingMessage('assistant', '', 
+							this.plugin.settings.agentName, this.pendingReasoning || undefined);
+						// Clear pending reasoning after using it
+						this.pendingReasoning = '';
+					}
+					// Append token to current assistant message for real-time display
+					this.appendToStreamingMessage(this.currentAssistantMessage, token);
 				}
 				break;
 
 			case 'tool_call_message':
+				console.log('[Letta Plugin] Processing tool_call_message, tool_call:', chunk.tool_call);
 				if (chunk.tool_call) {
-					// Create tool interaction message with reasoning and expandable sections
-					this.currentToolCallMessage = this.addToolInteractionMessage(
-						this.pendingReasoning, 
-						JSON.stringify(chunk.tool_call, null, 2)
-					);
-					// Clear reasoning after using it
-					this.pendingReasoning = '';
+					if (!this.currentToolCallMessage) {
+						console.log('[Letta Plugin] Creating new tool call message with reasoning length:', this.pendingReasoning.length);
+						// Create tool interaction message with reasoning and expandable sections
+						this.currentToolCallMessage = this.addToolInteractionMessage(
+							this.pendingReasoning, 
+							JSON.stringify(chunk.tool_call, null, 2)
+						);
+						// Clear reasoning after using it
+						this.pendingReasoning = '';
+					} else {
+						console.log('[Letta Plugin] Appending to existing tool call message');
+						// This might be a streaming tool call - we could append additional data
+						// For now, we'll just log it to avoid duplicate messages
+					}
 				}
 				break;
 
@@ -1906,8 +2054,23 @@ class LettaChatView extends ItemView {
 				break;
 
 			case 'assistant_message':
-				if (chunk.assistant_message) {
+				console.log('[Letta Plugin] Processing assistant_message, full chunk:', chunk);
+				console.log('[Letta Plugin] chunk.assistant_message:', chunk.assistant_message);
+				console.log('[Letta Plugin] chunk.content:', chunk.content);
+				console.log('[Letta Plugin] chunk.text:', chunk.text);
+				console.log('[Letta Plugin] chunk.message:', chunk.message);
+				
+				// Try different possible property names for the message content
+				const rawContent = chunk.assistant_message || chunk.content || chunk.text || chunk.message;
+				console.log('[Letta Plugin] Raw messageContent:', rawContent);
+				
+				// Filter out system prompt content
+				const messageContent = rawContent ? this.filterSystemPromptContent(rawContent) : rawContent;
+				console.log('[Letta Plugin] Filtered messageContent:', messageContent);
+				
+				if (messageContent) {
 					if (!this.currentAssistantMessage) {
+						console.log('[Letta Plugin] Creating new assistant message with reasoning length:', this.pendingReasoning.length);
 						// Create new assistant message with accumulated reasoning
 						this.currentAssistantMessage = this.addStreamingMessage('assistant', '', 
 							this.plugin.settings.agentName, this.pendingReasoning || undefined);
@@ -1915,7 +2078,8 @@ class LettaChatView extends ItemView {
 						this.pendingReasoning = '';
 					}
 					// Append to current assistant message
-					this.appendToStreamingMessage(this.currentAssistantMessage, chunk.assistant_message);
+					console.log('[Letta Plugin] Appending to assistant message:', messageContent);
+					this.appendToStreamingMessage(this.currentAssistantMessage, messageContent);
 				}
 				break;
 
@@ -1925,6 +2089,28 @@ class LettaChatView extends ItemView {
 				this.currentAssistantMessage = null;
 				this.currentToolCallMessage = null;
 				this.pendingReasoning = '';
+				break;
+
+			default:
+				// Log unknown message types for debugging
+				console.log('[Letta Plugin] Unknown message type:', chunk.message_type, 'chunk:', chunk);
+				
+				// Check if this might be a token in a different format
+				if (chunk.token || (chunk.content && typeof chunk.content === 'string')) {
+					const possibleToken = chunk.token || chunk.content;
+					console.log('[Letta Plugin] Possible token in unknown format:', possibleToken);
+					
+					if (!this.currentAssistantMessage && this.pendingReasoning) {
+						console.log('[Letta Plugin] Creating new assistant message for unknown token format');
+						this.currentAssistantMessage = this.addStreamingMessage('assistant', '', 
+							this.plugin.settings.agentName, this.pendingReasoning || undefined);
+						this.pendingReasoning = '';
+					}
+					
+					if (this.currentAssistantMessage && possibleToken) {
+						this.appendToStreamingMessage(this.currentAssistantMessage, possibleToken);
+					}
+				}
 				break;
 		}
 	}
@@ -2176,13 +2362,15 @@ class LettaChatView extends ItemView {
 	}
 
 	processNonStreamingMessages(messages: any[]) {
+		console.log('[Letta Plugin] Processing non-streaming messages:', messages);
+		
 		// Process response messages (fallback for when streaming fails)
 		let tempReasoning = '';
 		let tempToolMessage: HTMLElement | null = null;
 		
 		for (const responseMessage of messages) {
-			// Skip heartbeat messages - these are automated system messages
-			if (responseMessage.type === 'heartbeat') {
+			// Skip heartbeat and system_alert messages - these are automated system messages
+			if (responseMessage.type === 'heartbeat' || responseMessage.type === 'system_alert') {
 				continue;
 			}
 			
@@ -2215,8 +2403,9 @@ class LettaChatView extends ItemView {
 					break;
 				case 'assistant_message':
 					if (responseMessage.content) {
-						// Use accumulated reasoning with this assistant message
-						this.addMessage('assistant', responseMessage.content, this.plugin.settings.agentName, 
+						// Filter out system prompt content and use accumulated reasoning
+						const filteredContent = this.filterSystemPromptContent(responseMessage.content);
+						this.addMessage('assistant', filteredContent, this.plugin.settings.agentName, 
 							tempReasoning || undefined);
 						// Clear temp reasoning after using it
 						tempReasoning = '';
