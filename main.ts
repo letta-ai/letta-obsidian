@@ -423,8 +423,9 @@ export default class LettaPlugin extends Plugin {
 
 	async getAgentCount(): Promise<number> {
 		try {
-			const response = await this.makeRequest('/v1/agents/count');
-			return response.count || 0;
+			// Get all agents across all projects (not filtered by current project)
+			const agents = await this.makeRequest('/v1/agents');
+			return agents ? agents.length : 0;
 		} catch (error) {
 			console.error('[Letta Plugin] Failed to get agent count:', error);
 			return 0;
@@ -1989,11 +1990,81 @@ class LettaChatView extends ItemView {
 			cls: 'letta-create-agent-button'
 		});
 		
-		createAgentButton.addEventListener('click', () => {
+		createAgentButton.addEventListener('click', async () => {
 			// Open agent creation modal
 			const configModal = new AgentConfigModal(this.app, this.plugin);
-			configModal.showModal();
+			const agentConfig = await configModal.showModal();
+			
+			if (agentConfig) {
+				try {
+					// Create the agent using the configuration
+					await this.createAgentFromConfig(agentConfig);
+					new Notice('Agent created successfully!');
+					// Refresh the no-agent message to update button state
+					await this.showNoAgentMessage();
+				} catch (error) {
+					console.error('[Letta Plugin] Failed to create agent:', error);
+					new Notice(`Failed to create agent: ${error.message}`);
+				}
+			}
 		});
+	}
+
+	async createAgentFromConfig(agentConfig: AgentConfig): Promise<void> {
+		if (!this.plugin.source) {
+			throw new Error('Source not set up');
+		}
+
+		console.log(`[Letta Plugin] Creating new agent with config:`, agentConfig);
+
+		// Get embedding config for agent creation
+		const embeddingConfigs = await this.plugin.makeRequest('/v1/models/embedding');
+		const embeddingConfig = embeddingConfigs.find((config: any) => 
+			config.handle === 'letta/letta-free' || (config.handle && config.handle.includes('letta'))
+		) || embeddingConfigs[0];
+
+		// Create new agent with user configuration and corrected defaults
+		const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
+		const agentBody: any = {
+			name: agentConfig.name,
+			agent_type: 'memgpt_v2_agent', // Use MemGPT v2 architecture
+			description: agentConfig.description,
+			model: agentConfig.model,
+			embedding_config: embeddingConfig,
+			include_base_tools: false, // Don't include base tools, use custom memory tools
+			include_multi_agent_tools: agentConfig.include_multi_agent_tools,
+			include_default_source: agentConfig.include_default_source,
+			tags: agentConfig.tags,
+			memory_blocks: agentConfig.memory_blocks,
+			source_ids: [this.plugin.source!.id], // Attach source during creation
+			// Specify the correct memory tools
+			tools: ['memory_replace', 'memory_insert', 'memory_rethink']
+		};
+
+		// Only include project for cloud instances
+		if (isCloudInstance) {
+			agentBody.project = this.plugin.settings.lettaProjectSlug;
+		}
+
+		// Remove undefined values to keep the request clean
+		Object.keys(agentBody).forEach(key => {
+			if (agentBody[key] === undefined) {
+				delete agentBody[key];
+			}
+		});
+
+		const newAgent = await this.plugin.makeRequest('/v1/agents', {
+			method: 'POST',
+			body: agentBody
+		});
+
+		// Update plugin state with the new agent
+		this.plugin.agent = { id: newAgent.id, name: newAgent.name };
+		
+		// Update settings with the new agent
+		this.plugin.settings.agentId = newAgent.id;
+		this.plugin.settings.agentName = agentConfig.name;
+		await this.plugin.saveSettings();
 	}
 
 	removeNoAgentMessage() {
@@ -4284,9 +4355,9 @@ class AgentConfigModal extends Modal {
 		this.plugin = plugin;
 		this.config = {
 			name: plugin.settings.agentName,
-			agent_type: 'memgpt_agent',
+			agent_type: 'memgpt_v2_agent', // Default to MemGPT v2 architecture
 			description: 'An AI assistant for your Obsidian vault',
-			include_base_tools: true,
+			include_base_tools: false, // Don't include core_memory* tools
 			include_multi_agent_tools: false,
 			include_default_source: false,
 			tags: ['obsidian', 'assistant'],
@@ -4348,8 +4419,8 @@ class AgentConfigModal extends Modal {
 		const typeSelect = typeGroup.createEl('select', { cls: 'config-select' });
 		
 		const agentTypes = [
-			{ value: 'memgpt_agent', label: 'MemGPT Agent (Recommended)' },
-			{ value: 'memgpt_v2_agent', label: 'MemGPT v2 Agent' },
+			{ value: 'memgpt_v2_agent', label: 'MemGPT v2 Agent (Recommended)' },
+			{ value: 'memgpt_agent', label: 'MemGPT v1 Agent' },
 			{ value: 'react_agent', label: 'ReAct Agent' },
 			{ value: 'workflow_agent', label: 'Workflow Agent' },
 			{ value: 'sleeptime_agent', label: 'Sleeptime Agent' }
@@ -5082,28 +5153,21 @@ class LettaSettingTab extends PluginSettingTab {
 		// Agent Configuration
 		containerEl.createEl('h3', { text: 'Agent Configuration' });
 
-		// Agent Selection
-		const agentSetting = new Setting(containerEl)
-			.setName('Selected Agent')
-			.setDesc('Choose an agent from your Letta instance');
-
-		const agentContainer = agentSetting.settingEl.createDiv('letta-agent-selection');
-		
-		if (this.plugin.settings.agentId && this.plugin.settings.agentName) {
-			// Show current agent if selected
-			const currentAgentDiv = agentContainer.createDiv('letta-current-agent');
-			currentAgentDiv.createSpan({ text: `Current: ${this.plugin.settings.agentName}`, cls: 'letta-agent-name' });
-			currentAgentDiv.createSpan({ text: ` (${this.plugin.settings.agentId})`, cls: 'letta-agent-id' });
-		} else {
-			agentContainer.createSpan({ text: 'No agent selected', cls: 'letta-no-agent' });
-		}
-		
-		agentSetting.addButton(button => button
-			.setButtonText('Select Agent')
-			.setTooltip('Choose an agent from your Letta instance')
-			.onClick(async () => {
-				await this.showAgentSelector();
-			}));
+		// Agent ID Setting
+		new Setting(containerEl)
+			.setName('Agent ID')
+			.setDesc('ID of the agent to use with this vault. Leave empty to select an agent when starting chat.')
+			.addText(text => text
+				.setPlaceholder('Enter agent ID...')
+				.setValue(this.plugin.settings.agentId)
+				.onChange(async (value) => {
+					this.plugin.settings.agentId = value.trim();
+					// Clear agent name when ID changes
+					if (value.trim() !== this.plugin.settings.agentId) {
+						this.plugin.settings.agentName = '';
+					}
+					await this.plugin.saveSettings();
+				}));
 
 		new Setting(containerEl)
 			.setName('Source Name')

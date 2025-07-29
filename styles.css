@@ -1902,33 +1902,7 @@
     text-decoration: underline;
 }
 
-/* Agent Selection Styles */
-.letta-agent-selection {
-    margin: 8px 0;
-}
 
-.letta-current-agent {
-    padding: 8px 12px;
-    background: var(--background-secondary);
-    border-radius: 6px;
-    margin-bottom: 8px;
-}
-
-.letta-agent-name {
-    font-weight: 500;
-    color: var(--text-normal);
-}
-
-.letta-agent-id {
-    color: var(--text-muted);
-    font-family: var(--font-monospace);
-    font-size: 0.9em;
-}
-
-.letta-no-agent {
-    color: var(--text-muted);
-    font-style: italic;
-}
 
 /* Agent Modal Styles */
 .letta-agent-modal .modal-content {
