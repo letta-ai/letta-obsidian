@@ -1523,6 +1523,76 @@ class LettaChatView extends ItemView {
 		return content;
 	}
 
+	// Format tool results with JSON pretty-printing when possible
+	formatToolResult(toolResult: string): string {
+		if (!toolResult) return toolResult;
+
+		try {
+			// Try to parse as JSON
+			const parsed = JSON.parse(toolResult);
+			// If successful, return pretty-printed JSON
+			return JSON.stringify(parsed, null, 2);
+		} catch (e) {
+			// If not valid JSON, return original string
+			return toolResult;
+		}
+	}
+
+	// Add a clean, centered rate limiting notification
+	addRateLimitMessage(content: string) {
+		const messageEl = this.chatContainer.createEl('div', { 
+			cls: 'letta-rate-limit-message' 
+		});
+
+		// Add timestamp
+		const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		const timeEl = messageEl.createEl('div', { 
+			cls: 'letta-rate-limit-timestamp',
+			text: timestamp
+		});
+
+		// Add content without markdown processing for clean display
+		const contentEl = messageEl.createEl('div', { 
+			cls: 'letta-rate-limit-content'
+		});
+		
+		// Process the content to extract the main message and billing link
+		const lines = content.split('\n');
+		let mainMessage = '';
+		let billingLink = '';
+		
+		for (const line of lines) {
+			if (line.includes('https://app.letta.com/settings/organization/billing')) {
+				billingLink = line.trim();
+			} else if (line.trim() && !line.includes('Need more?')) {
+				if (mainMessage) mainMessage += ' ';
+				mainMessage += line.replace(/[⚠️*]/g, '').trim();
+			}
+		}
+		
+		// Add main message
+		if (mainMessage) {
+			const msgEl = contentEl.createEl('div', { 
+				cls: 'letta-rate-limit-main',
+				text: mainMessage
+			});
+		}
+		
+		// Add billing link if present
+		if (billingLink) {
+			const linkEl = contentEl.createEl('div', { cls: 'letta-rate-limit-link' });
+			const link = linkEl.createEl('a', { 
+				href: billingLink,
+				text: 'Upgrade to Pro, Scale, or Enterprise',
+				cls: 'letta-rate-limit-upgrade-link'
+			});
+			link.setAttribute('target', '_blank');
+		}
+
+		// Scroll to bottom
+		this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+	}
+
 	displayHistoricalMessage(message: any) {
 		console.log('[Letta Plugin] Processing historical message:', message);
 		
@@ -2055,7 +2125,7 @@ class LettaChatView extends ItemView {
 					
 					// Show appropriate warning to user
 					if (streamError.message.includes('429') || streamError.message.includes('Rate limited')) {
-						this.addMessage('assistant', `⚠️ **Rate Limited** - Using fallback mode. Some features may be slower.\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans: https://app.letta.com/settings/organization/billing`, 'System');
+						this.addRateLimitMessage(`Rate Limited - You've reached the rate limit for your account. Please wait a moment before sending another message.\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans:\nhttps://app.letta.com/settings/organization/billing`);
 					} else {
 						// Likely CORS issue for local instances
 						this.addMessage('assistant', `ℹ️ **Streaming Unavailable** - Using standard mode due to connection limitations.`, 'System');
@@ -2083,7 +2153,7 @@ class LettaChatView extends ItemView {
 					
 					// Show rate limiting warning to user if applicable
 					if (streamError.message.includes('429') || streamError.message.includes('Rate limited')) {
-						this.addMessage('assistant', `⚠️ **Rate Limited** - Using fallback mode. Some features may be slower.\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans: https://app.letta.com/settings/organization/billing`, 'System');
+						this.addRateLimitMessage(`Rate Limited - You've reached the rate limit for your account. Please wait a moment before sending another message.\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans:\nhttps://app.letta.com/settings/organization/billing`);
 					}
 					
 					// Clear any partial messages from failed streaming attempt
@@ -2104,7 +2174,9 @@ class LettaChatView extends ItemView {
 			let errorMessage = `**Error**: ${error.message}`;
 			
 			if (error.message.includes('429') || error.message.includes('Rate limited')) {
-				errorMessage = `**Rate Limit Exceeded**\n\nYou've reached the rate limit for your account. Please wait a moment before sending another message.\n\n*Reason: ${error.message.includes('model-unknown') ? 'Unknown model configuration' : 'Too many requests'}*\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans: https://app.letta.com/settings/organization/billing`;
+				// Use the special rate limit message display instead of regular error message
+				this.addRateLimitMessage(`Rate Limit Exceeded - You've reached the rate limit for your account. Please wait a moment before sending another message.\n\nReason: ${error.message.includes('model-unknown') ? 'Unknown model configuration' : 'Too many requests'}\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans:\nhttps://app.letta.com/settings/organization/billing`);
+				return; // Return early to avoid showing regular error message
 			} else if (error.message.includes('401') || error.message.includes('Unauthorized')) {
 				errorMessage = `**Authentication Error**\n\nYour API key may be invalid or expired. Please check your settings.\n\n*${error.message}*`;
 			} else if (error.message.includes('403') || error.message.includes('Forbidden')) {
@@ -2360,6 +2432,18 @@ class LettaChatView extends ItemView {
 	}
 
 	addToolInteractionMessage(reasoning: string, toolCall: string): HTMLElement {
+		// Parse tool call to extract tool name
+		let toolName = 'Tool Call';
+		try {
+			const toolCallObj = JSON.parse(toolCall);
+			if (toolCallObj.name) {
+				toolName = toolCallObj.name;
+			} else if (toolCallObj.function && toolCallObj.function.name) {
+				toolName = toolCallObj.function.name;
+			}
+		} catch (e) {
+			// Keep default if parsing fails
+		}
 		const messageEl = this.chatContainer.createEl('div', { 
 			cls: 'letta-message letta-message-tool-interaction' 
 		});
@@ -2417,10 +2501,34 @@ class LettaChatView extends ItemView {
 			reasoningEl.innerHTML = formattedReasoning;
 		}
 
-		// Tool call expandable section
-		const toolCallHeader = bubbleEl.createEl('div', { cls: 'letta-expandable-header letta-tool-section' });
-		toolCallHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Call' });
-		const toolCallChevron = toolCallHeader.createEl('span', { cls: 'letta-expandable-chevron', text: '▼' });
+		// Tool call expandable section with enhanced design
+		const toolCallHeader = bubbleEl.createEl('div', { cls: 'letta-expandable-header letta-tool-section letta-tool-prominent' });
+		
+		// Left side with tool name and loading
+		const toolLeftSide = toolCallHeader.createEl('div', { cls: 'letta-tool-left' });
+		const toolTitle = toolLeftSide.createEl('span', { cls: 'letta-expandable-title letta-tool-name', text: toolName });
+		
+		// Add loading indicator that will be replaced when result comes in
+		const loadingIndicator = toolLeftSide.createEl('span', { 
+			cls: 'letta-tool-loading',
+			text: ' •••'
+		});
+		
+		// Curvy connecting line (SVG) - continuous flowing wave
+		const connectionLine = toolCallHeader.createEl('div', { cls: 'letta-tool-connection' });
+		connectionLine.innerHTML = `
+			<svg viewBox="0 0 400 12" class="letta-tool-curve" preserveAspectRatio="none">
+				<path d="M -50,6 Q -25,2 0,6 T 50,6 T 100,6 T 150,6 T 200,6 T 250,6 T 300,6 T 350,6 T 400,6 T 450,6" 
+					  stroke="var(--interactive-accent)" 
+					  stroke-width="1.5" 
+					  fill="none" 
+					  opacity="0.7"/>
+			</svg>
+		`;
+		
+		// Right side with circle indicator
+		const toolRightSide = toolCallHeader.createEl('div', { cls: 'letta-tool-right' });
+		const toolCallChevron = toolRightSide.createEl('span', { cls: 'letta-expandable-chevron letta-tool-circle', text: '○' });
 		
 		const toolCallContent = bubbleEl.createEl('div', { 
 			cls: 'letta-expandable-content letta-expandable-collapsed'
@@ -2433,10 +2541,10 @@ class LettaChatView extends ItemView {
 			const isCollapsed = toolCallContent.classList.contains('letta-expandable-collapsed');
 			if (isCollapsed) {
 				toolCallContent.removeClass('letta-expandable-collapsed');
-				toolCallChevron.textContent = '▲';
+				toolCallChevron.textContent = '●';
 			} else {
 				toolCallContent.addClass('letta-expandable-collapsed');
-				toolCallChevron.textContent = '▼';
+				toolCallChevron.textContent = '○';
 			}
 		});
 
@@ -2446,7 +2554,7 @@ class LettaChatView extends ItemView {
 		});
 		toolResultHeader.style.display = 'none';
 		toolResultHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Result' });
-		const toolResultChevron = toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron', text: '▼' });
+		const toolResultChevron = toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron', text: '○' });
 		
 		const toolResultContent = bubbleEl.createEl('div', { 
 			cls: 'letta-expandable-content letta-expandable-collapsed'
@@ -2468,6 +2576,12 @@ class LettaChatView extends ItemView {
 		const bubbleEl = messageEl.querySelector('.letta-message-bubble');
 		if (!bubbleEl) return;
 
+		// Remove loading indicator from tool call header
+		const loadingIndicator = bubbleEl.querySelector('.letta-tool-loading');
+		if (loadingIndicator) {
+			loadingIndicator.remove();
+		}
+
 		// Show the tool result section
 		const toolResultHeader = bubbleEl.querySelector('.letta-tool-result-pending') as HTMLElement;
 		const toolResultContent = bubbleEl.querySelector('.letta-expandable-content:last-child') as HTMLElement;
@@ -2478,9 +2592,10 @@ class LettaChatView extends ItemView {
 			toolResultContent.style.display = 'block';
 			toolResultHeader.removeClass('letta-tool-result-pending');
 
-			// Add content
+			// Add content with JSON pretty-printing
 			const toolResultPre = toolResultContent.createEl('pre', { cls: 'letta-code-block' });
-			toolResultPre.createEl('code', { text: toolResult });
+			const formattedResult = this.formatToolResult(toolResult);
+			toolResultPre.createEl('code', { text: formattedResult });
 
 			// Add click handler for tool result expand/collapse
 			const toolResultChevron = toolResultHeader.querySelector('.letta-expandable-chevron');
@@ -2488,10 +2603,10 @@ class LettaChatView extends ItemView {
 				const isCollapsed = toolResultContent.classList.contains('letta-expandable-collapsed');
 				if (isCollapsed) {
 					toolResultContent.removeClass('letta-expandable-collapsed');
-					if (toolResultChevron) toolResultChevron.textContent = '▲';
+					if (toolResultChevron) toolResultChevron.textContent = '●';
 				} else {
 					toolResultContent.addClass('letta-expandable-collapsed');
-					if (toolResultChevron) toolResultChevron.textContent = '▼';
+					if (toolResultChevron) toolResultChevron.textContent = '○';
 				}
 			});
 		}

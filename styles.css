@@ -1685,3 +1685,184 @@
         opacity: 1;
     }
 }
+
+/* Tool loading indicator */
+.letta-tool-loading {
+    color: var(--text-muted);
+    font-size: 0.8em;
+    opacity: 0.6;
+    animation: letta-tool-loading-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes letta-tool-loading-pulse {
+    0%, 100% {
+        opacity: 0.3;
+    }
+    50% {
+        opacity: 0.8;
+    }
+}
+
+/* Prominent tool call design */
+.letta-tool-prominent {
+    background: linear-gradient(135deg, var(--background-secondary), var(--background-primary));
+    border: 1px solid var(--interactive-accent);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 8px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: relative;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(var(--interactive-accent-rgb), 0.1);
+}
+
+.letta-tool-prominent:hover {
+    border-color: var(--interactive-accent-hover);
+    box-shadow: 0 4px 12px rgba(var(--interactive-accent-rgb), 0.2);
+    transform: translateY(-1px);
+}
+
+.letta-tool-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.letta-tool-name {
+    font-weight: 600;
+    color: var(--interactive-accent);
+    font-size: 0.9em;
+    letter-spacing: 0.5px;
+}
+
+.letta-tool-connection {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 12px;
+    height: 12px;
+}
+
+.letta-tool-curve {
+    width: 100%;
+    height: 12px;
+    opacity: 0.8;
+    transition: opacity 0.2s ease;
+    overflow: hidden;
+}
+
+.letta-tool-prominent:hover .letta-tool-curve {
+    opacity: 1;
+}
+
+.letta-tool-curve path {
+    stroke: var(--interactive-accent);
+    stroke-width: 1.5;
+    fill: none;
+    opacity: 0.7;
+    animation: letta-wave-slide 3s linear infinite;
+}
+
+@keyframes letta-wave-slide {
+    0% {
+        transform: translateX(0);
+    }
+    100% {
+        transform: translateX(-100px);
+    }
+}
+
+.letta-tool-right {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+}
+
+.letta-tool-circle {
+    color: var(--interactive-accent);
+    font-size: 1em;
+    font-weight: normal;
+    transition: transform 0.2s ease, color 0.2s ease;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+}
+
+.letta-tool-prominent:hover .letta-tool-circle {
+    color: var(--interactive-accent-hover);
+    transform: scale(1.2);
+    background: rgba(var(--interactive-accent-rgb), 0.1);
+}
+
+/* Loading indicator in prominent design */
+.letta-tool-prominent .letta-tool-loading {
+    color: var(--interactive-accent);
+    font-weight: 500;
+    animation: letta-tool-loading-prominent 1.5s ease-in-out infinite;
+}
+
+@keyframes letta-tool-loading-prominent {
+    0%, 100% {
+        opacity: 0.4;
+        transform: scale(0.95);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.05);
+    }
+}
+
+/* Rate Limiting Message - Clean, centered layout */
+.letta-rate-limit-message {
+    width: 100%;
+    padding: 16px 0;
+    margin: 8px 0;
+    text-align: center;
+    background: none;
+    border: none;
+}
+
+.letta-rate-limit-timestamp {
+    font-size: 0.75em;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    opacity: 0.7;
+}
+
+.letta-rate-limit-content {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 0 16px;
+}
+
+.letta-rate-limit-main {
+    font-size: 1em;
+    color: var(--text-normal);
+    margin-bottom: 12px;
+    line-height: 1.4;
+}
+
+.letta-rate-limit-link {
+    margin-top: 8px;
+}
+
+.letta-rate-limit-upgrade-link {
+    color: var(--interactive-accent);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.9em;
+    transition: opacity 0.2s ease;
+}
+
+.letta-rate-limit-upgrade-link:hover {
+    opacity: 0.8;
+    text-decoration: underline;
+}
