@@ -23,6 +23,11 @@ This is a Letta AI Agent plugin for Obsidian that allows users to chat with a st
 - **Build for production**: `npm run build` - Type checks and builds production bundle
 - **Install dependencies**: `npm install` - Installs letta-client and dev dependencies
 
+## Local Letta Setup Notes
+- **Streaming Support**: The plugin attempts to use streaming API for real-time responses but gracefully falls back to non-streaming for local instances with CORS issues
+- **CORS Configuration**: Local Letta servers may need CORS headers configured to support streaming from Obsidian (`app://obsidian.md` origin)
+- **Fallback Behavior**: When streaming fails (typically due to CORS), the plugin automatically falls back to the standard messages API
+
 ## Code Architecture
 
 ### Main Plugin Classes

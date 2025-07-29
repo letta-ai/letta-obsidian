@@ -159,21 +159,7 @@ export default class LettaPlugin extends Plugin {
 			}
 		});
 
-		this.addCommand({
-			id: 'open-block-files',
-			name: 'Open Memory Block Files',
-			callback: async () => {
-				await this.createBlockFiles();
-			}
-		});
 
-		this.addCommand({
-			id: 'sync-block-files',
-			name: 'Sync Block Files to Letta',
-			callback: async () => {
-				await this.syncBlockFiles();
-			}
-		});
 
 		this.addCommand({
 			id: 'open-block-folder',
@@ -789,293 +775,9 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-	async createBlockFiles() {
-		// Check connection first
-		if (!this.agent) {
-			const connected = await this.connectToLetta();
-			if (!connected) {
-				new Notice('❌ Connection failed. Please check your settings.');
-				return;
-			}
-		}
 
-		try {
-			// Get agent's memory blocks
-			const blocks = await this.makeRequest(`/v1/agents/${this.agent.id}/core-memory/blocks`);
-			
-			if (!blocks || blocks.length === 0) {
-				new Notice('No memory blocks found for this agent');
-				return;
-			}
 
-			// Create a folder for block files (visible to user)
-			const blockFolderPath = 'Letta Memory Blocks';
-			
-			// Ensure the blocks folder exists
-			if (!await this.app.vault.adapter.exists(blockFolderPath)) {
-				await this.app.vault.createFolder(blockFolderPath);
-			}
 
-			// Create files for each block
-			for (const block of blocks) {
-				const blockFileName = `${blockFolderPath}/${block.label || block.name || 'unnamed'}.md`;
-				
-				// Create block file content with metadata and instructions
-				const blockContent = `---
-letta_block: true
-block_label: ${block.label || block.name}
-character_limit: ${block.limit || 5000}
-read_only: ${block.read_only || false}
-description: ${block.description || 'No description'}
-last_updated: ${new Date().toISOString()}
-agent_id: ${this.agent.id}
----
-
-# ${block.label || block.name} Memory Block
-
-> **⚠️ This is a Letta memory block file**
-> 
-> Edit the content below, then use **"Sync Block Files to Letta"** command to save your changes to the agent's memory.
-> 
-> - **Character Limit**: ${block.limit || 5000} characters
-> - **Current Length**: ${(block.value || '').length} characters
-> - **Block Type**: ${block.label || block.name}
-
----
-
-${block.value || ''}`;
-
-				// Create or update the file
-				if (await this.app.vault.adapter.exists(blockFileName)) {
-					const existingFile = this.app.vault.getAbstractFileByPath(blockFileName) as TFile;
-					if (existingFile) {
-						await this.app.vault.modify(existingFile, blockContent);
-					}
-				} else {
-					await this.app.vault.create(blockFileName, blockContent);
-				}
-			}
-
-			new Notice(`✅ Created ${blocks.length} memory block files in "${blockFolderPath}/" folder. Edit them and use "Sync Block Files to Letta" to save changes.`);
-
-			// Open the first block file
-			if (blocks.length > 0) {
-				const firstBlockFile = `${blockFolderPath}/${blocks[0].label || blocks[0].name || 'unnamed'}.md`;
-				const file = this.app.vault.getAbstractFileByPath(firstBlockFile) as TFile;
-				if (file) {
-					await this.app.workspace.openLinkText(file.path, '', true);
-				}
-			}
-
-		} catch (error) {
-			console.error('Failed to create block files:', error);
-			new Notice('❌ Failed to create block files. Please try again.');
-		}
-	}
-
-	async onBlockFileChange(file: TFile): Promise<void> {
-		// Auto-connect if not connected (silently for auto-sync)
-		if (!this.agent) {
-			try {
-				await this.connectToLetta();
-			} catch (error) {
-				console.log('[Letta Plugin] Block file sync failed: not connected');
-				return;
-			}
-		}
-
-		try {
-			const content = await this.app.vault.read(file);
-			
-			// Parse frontmatter to extract block metadata
-			const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-			if (!frontmatterMatch) {
-				console.error('Invalid block file format:', file.path);
-				return;
-			}
-
-			const frontmatter = frontmatterMatch[1];
-			const blockContent = frontmatterMatch[2];
-			
-			// Check if this is a Letta block file
-			const isLettaBlock = frontmatter.includes('letta_block: true');
-			if (!isLettaBlock) {
-				return; // Not a Letta block file
-			}
-
-			// Extract block label from frontmatter
-			const labelMatch = frontmatter.match(/^block_label: (.+)$/m);
-			if (!labelMatch) {
-				console.error('No block label found in file:', file.path);
-				return;
-			}
-			
-			const blockLabel = labelMatch[1];
-			
-			// Update the block via API
-			await this.makeRequest(`/v1/agents/${this.agent.id}/core-memory/blocks/${blockLabel}`, {
-				method: 'PATCH',
-				body: { value: blockContent.trim() }
-			});
-
-			console.log(`[Letta Plugin] Block '${blockLabel}' synced from file: ${file.path}`);
-		} catch (error) {
-			console.error('Failed to sync block file:', error);
-		}
-	}
-
-	async syncBlockFiles() {
-		// Check connection first
-		if (!this.agent) {
-			const connected = await this.connectToLetta();
-			if (!connected) {
-				new Notice('❌ Connection failed. Please check your settings.');
-				return;
-			}
-		}
-
-		try {
-			const blockFolderPath = 'Letta Memory Blocks';
-			
-			// Check if folder exists
-			if (!await this.app.vault.adapter.exists(blockFolderPath)) {
-				new Notice('No block files found. Use "Open Memory Block Files" first.');
-				return;
-			}
-
-			// Get all .lettablock files
-			const folder = this.app.vault.getAbstractFileByPath(blockFolderPath);
-			if (!folder || !(folder instanceof TFolder)) {
-				new Notice('Block folder not found.');
-				return;
-			}
-
-			const blockFiles = folder.children.filter(file => 
-				file instanceof TFile && file.path.includes('Letta Memory Blocks/') && file.path.endsWith('.md')
-			) as TFile[];
-
-			if (blockFiles.length === 0) {
-				new Notice('No block files found in the folder.');
-				return;
-			}
-
-			// Show confirmation modal
-			const confirmed = await this.confirmBlockSync(blockFiles.length);
-			if (!confirmed) {
-				return;
-			}
-
-			new Notice(`🔄 Syncing ${blockFiles.length} block files...`);
-
-			let successCount = 0;
-			let errorCount = 0;
-
-			// Process each block file
-			for (const file of blockFiles) {
-				try {
-					const content = await this.app.vault.read(file);
-					
-					// Parse frontmatter to extract block metadata
-					const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-					if (!frontmatterMatch) {
-						console.error('Invalid block file format:', file.path);
-						errorCount++;
-						continue;
-					}
-
-					const frontmatter = frontmatterMatch[1];
-					const fullContent = frontmatterMatch[2];
-					
-					// Extract actual block content (skip the instruction section)
-					const contentMatch = fullContent.match(/^[\s\S]*?---\n\n([\s\S]*)$/);
-					const blockContent = contentMatch ? contentMatch[1] : fullContent;
-					
-					// Check if this is a Letta block file
-					const isLettaBlock = frontmatter.includes('letta_block: true');
-					if (!isLettaBlock) {
-						// Skip non-Letta block files
-						continue;
-					}
-
-					// Extract block label from frontmatter
-					const labelMatch = frontmatter.match(/^block_label: (.+)$/m);
-					if (!labelMatch) {
-						console.error('No block label found in file:', file.path);
-						errorCount++;
-						continue;
-					}
-					
-					const blockLabel = labelMatch[1];
-					
-					// Update the block via API
-					await this.makeRequest(`/v1/agents/${this.agent.id}/core-memory/blocks/${blockLabel}`, {
-						method: 'PATCH',
-						body: { value: blockContent.trim() }
-					});
-
-					successCount++;
-					console.log(`[Letta Plugin] Block '${blockLabel}' synced from file: ${file.path}`);
-				} catch (error) {
-					console.error(`Failed to sync block file ${file.path}:`, error);
-					errorCount++;
-				}
-			}
-
-			// Show result
-			if (errorCount === 0) {
-				new Notice(`✅ Successfully synced ${successCount} block files`);
-			} else {
-				new Notice(`⚠️ Synced ${successCount} files, ${errorCount} errors. Check console for details.`);
-			}
-
-		} catch (error) {
-			console.error('Failed to sync block files:', error);
-			new Notice('❌ Failed to sync block files. Please try again.');
-		}
-	}
-
-	private confirmBlockSync(fileCount: number): Promise<boolean> {
-		return new Promise((resolve) => {
-			const modal = new Modal(this.app);
-			modal.setTitle('Confirm Block Sync');
-			
-			const { contentEl } = modal;
-			contentEl.createEl('p', { 
-				text: `You are about to sync ${fileCount} memory block file(s) to Letta. This will overwrite the current block contents in your agent's memory.`
-			});
-			contentEl.createEl('p', { 
-				text: 'Are you sure you want to continue?',
-				cls: 'mod-warning'
-			});
-			
-			const buttonContainer = contentEl.createEl('div');
-			buttonContainer.style.display = 'flex';
-			buttonContainer.style.gap = '8px';
-			buttonContainer.style.justifyContent = 'flex-end';
-			buttonContainer.style.marginTop = '16px';
-			
-			const syncButton = buttonContainer.createEl('button', {
-				text: 'Sync to Letta',
-				cls: 'mod-cta'
-			});
-			
-			const cancelButton = buttonContainer.createEl('button', {
-				text: 'Cancel'
-			});
-			
-			syncButton.addEventListener('click', () => {
-				resolve(true);
-				modal.close();
-			});
-			
-			cancelButton.addEventListener('click', () => {
-				resolve(false);
-				modal.close();
-			});
-			
-			modal.open();
-		});
-	}
 
 	async onFileChange(file: TFile): Promise<void> {
 		// Skip block files - they should not auto-sync
@@ -1248,6 +950,79 @@ ${block.value || ''}`;
 		});
 
 		return response.messages || [];
+	}
+
+	async sendMessageToAgentStreaming(message: string, onChunk: (chunk: any) => void): Promise<void> {
+		if (!this.agent) throw new Error('Agent not connected');
+
+		const url = `${this.settings.lettaBaseUrl}/v1/agents/${this.agent.id}/messages/stream`;
+		const headers: Record<string, string> = {
+			'Content-Type': 'application/json'
+		};
+
+		if (this.settings.lettaApiKey) {
+			headers['Authorization'] = `Bearer ${this.settings.lettaApiKey}`;
+		}
+
+		const body = {
+			messages: [{
+				role: "user",
+				text: message
+			}],
+			stream_steps: true
+		};
+
+		try {
+			const response = await fetch(url, {
+				method: 'POST',
+				headers: headers,
+				body: JSON.stringify(body)
+			});
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(`HTTP ${response.status}: ${errorText}`);
+			}
+
+			if (!response.body) {
+				throw new Error('Response body is null');
+			}
+
+			const reader = response.body.getReader();
+			const decoder = new TextDecoder();
+			let buffer = '';
+
+			try {
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+
+					buffer += decoder.decode(value, { stream: true });
+					const lines = buffer.split('\n');
+					buffer = lines.pop() || '';
+
+					for (const line of lines) {
+						if (line.trim() === '') continue;
+						if (line.trim() === 'data: [DONE]') return;
+						
+						if (line.startsWith('data: ')) {
+							const jsonStr = line.slice(6);
+							try {
+								const chunk = JSON.parse(jsonStr);
+								onChunk(chunk);
+							} catch (parseError) {
+								console.warn('[Letta Plugin] Failed to parse SSE chunk:', jsonStr);
+							}
+						}
+					}
+				}
+			} finally {
+				reader.releaseLock();
+			}
+		} catch (error) {
+			console.error('[Letta Plugin] Streaming request failed:', error);
+			throw error;
+		}
 	}
 }
 
@@ -1461,6 +1236,82 @@ class LettaChatView extends ItemView {
 		this.updateChatStatus();
 	}
 
+	async loadHistoricalMessages() {
+		// Only load if we're connected and chat container is empty (excluding disconnected message)
+		if (!this.plugin.agent || !this.chatContainer) {
+			return;
+		}
+
+		// Check if we already have messages (don't reload on every status update)
+		const existingMessages = this.chatContainer.querySelectorAll('.letta-message');
+		if (existingMessages.length > 0) {
+			return;
+		}
+
+		try {
+			// Load last 50 messages by default
+			const messages = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}/messages?limit=50`);
+			
+			if (!messages || messages.length === 0) {
+				return;
+			}
+
+			// Sort messages by timestamp (oldest first)
+			const sortedMessages = messages.sort((a: any, b: any) => 
+				new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+			);
+
+			// Display messages in order
+			for (const message of sortedMessages) {
+				this.displayHistoricalMessage(message);
+			}
+
+			// Add a separator to distinguish historical messages from new ones
+			this.addMessageSeparator('Previous conversation history');
+
+		} catch (error) {
+			console.error('[Letta Plugin] Failed to load historical messages:', error);
+			// Don't show error to user - historical messages are optional
+		}
+	}
+
+	displayHistoricalMessage(message: any) {
+		// Parse different message types based on Letta's message structure
+		if (message.role === 'user') {
+			this.addMessage('user', message.text || message.content || '');
+		} else if (message.role === 'assistant') {
+			// Check if this is a reasoning message (internal thoughts)
+			if (message.text && message.text.includes('<thinking>')) {
+				const thinkingMatch = message.text.match(/<thinking>([\s\S]*?)<\/thinking>/);
+				if (thinkingMatch) {
+					this.addMessage('reasoning', thinkingMatch[1].trim());
+				}
+			}
+			
+			// Check for tool calls
+			if (message.tool_calls && message.tool_calls.length > 0) {
+				for (const toolCall of message.tool_calls) {
+					this.addMessage('tool-call', JSON.stringify(toolCall.function, null, 2), toolCall.function.name);
+				}
+			}
+			
+			// Regular assistant response
+			if (message.text && !message.text.includes('<thinking>')) {
+				this.addMessage('assistant', message.text);
+			}
+		} else if (message.role === 'tool') {
+			// Tool result message
+			this.addMessage('tool-result', message.content || message.text || '');
+		}
+	}
+
+	addMessageSeparator(text: string) {
+		const separatorEl = this.chatContainer.createEl('div', { 
+			cls: 'letta-message-separator' 
+		});
+		separatorEl.createEl('span', { text, cls: 'letta-separator-text' });
+	}
+
 	updateChatStatus() {
 		// Determine connection status based on plugin state
 		const isConnected = this.plugin.agent && this.plugin.source;
@@ -1468,8 +1319,9 @@ class LettaChatView extends ItemView {
 		if (isConnected) {
 			this.statusDot.className = 'letta-status-dot letta-status-connected';
 			
-			// Show project info if available
-			const projectInfo = this.plugin.settings.lettaProjectSlug 
+			// Show project info only for cloud instances
+			const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
+			const projectInfo = (isCloudInstance && this.plugin.settings.lettaProjectSlug)
 				? ` • Project: ${this.plugin.settings.lettaProjectSlug}`
 				: '';
 			
@@ -1482,6 +1334,9 @@ class LettaChatView extends ItemView {
 			
 			// Remove disconnected message if it exists
 			this.removeDisconnectedMessage();
+			
+			// Load historical messages on first connection
+			this.loadHistoricalMessages();
 		} else {
 			this.statusDot.className = 'letta-status-dot';
 			this.statusDot.style.backgroundColor = 'var(--text-muted)';
@@ -1807,32 +1662,34 @@ class LettaChatView extends ItemView {
 		this.messageInput.style.height = 'auto';
 
 		try {
-			const messages = await this.plugin.sendMessageToAgent(message);
-
-			// Process response messages
-			for (const responseMessage of messages) {
-				switch (responseMessage.message_type) {
-					case 'reasoning_message':
-						if (responseMessage.reasoning) {
-							this.addMessage('reasoning', responseMessage.reasoning, '🧠 Reasoning');
-						}
-						break;
-					case 'tool_call_message':
-						if (responseMessage.tool_call) {
-							this.addMessage('tool-call', JSON.stringify(responseMessage.tool_call, null, 2), '🔧 Tool Call');
-						}
-						break;
-					case 'tool_return_message':
-						if (responseMessage.tool_return) {
-							this.addMessage('tool-result', JSON.stringify(responseMessage.tool_return, null, 2), '📊 Tool Result');
-						}
-						break;
-					case 'assistant_message':
-						if (responseMessage.content) {
-							this.addMessage('assistant', responseMessage.content, `🤖 ${this.plugin.settings.agentName}`);
-						}
-						break;
+			// Try streaming first, fallback to non-streaming on CORS/network errors
+			const isLocalInstance = !this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
+			let useStreaming = true;
+			
+			if (isLocalInstance) {
+				// For local instances, try streaming but be ready to fallback
+				try {
+					await this.plugin.sendMessageToAgentStreaming(message, (chunk) => {
+						this.handleStreamingChunk(chunk);
+					});
+				} catch (streamError: any) {
+					console.log('[Letta Plugin] Streaming failed (likely CORS), falling back to non-streaming:', streamError.message);
+					useStreaming = false;
+					
+					// Clear any partial messages from failed streaming attempt
+					this.currentReasoningMessage = null;
+					this.currentAssistantMessage = null;
+					this.currentToolCallMessage = null;
+					
+					// Fall back to non-streaming API
+					const messages = await this.plugin.sendMessageToAgent(message);
+					this.processNonStreamingMessages(messages);
 				}
+			} else {
+				// For cloud instances, use streaming
+				await this.plugin.sendMessageToAgentStreaming(message, (chunk) => {
+					this.handleStreamingChunk(chunk);
+				});
 			}
 
 		} catch (error: any) {
@@ -1845,6 +1702,131 @@ class LettaChatView extends ItemView {
 			this.sendButton.innerHTML = '<span>Send</span>';
 			this.sendButton.removeClass('letta-button-loading');
 			this.messageInput.focus();
+		}
+	}
+
+	private currentReasoningMessage: HTMLElement | null = null;
+	private currentAssistantMessage: HTMLElement | null = null;
+	private currentToolCallMessage: HTMLElement | null = null;
+
+	handleStreamingChunk(chunk: any) {
+		switch (chunk.message_type) {
+			case 'reasoning_message':
+				if (chunk.reasoning) {
+					if (!this.currentReasoningMessage) {
+						// Create new reasoning message
+						this.currentReasoningMessage = this.addStreamingMessage('reasoning', '', '🧠 Reasoning');
+					}
+					// Append to current reasoning message
+					this.appendToStreamingMessage(this.currentReasoningMessage, chunk.reasoning);
+				}
+				break;
+
+			case 'tool_call_message':
+				if (chunk.tool_call) {
+					// Create new tool call message
+					this.currentToolCallMessage = this.addStreamingMessage('tool-call', 
+						JSON.stringify(chunk.tool_call, null, 2), '🔧 Tool Call');
+				}
+				break;
+
+			case 'tool_return_message':
+				if (chunk.tool_return) {
+					// Create tool result message
+					this.addMessage('tool-result', JSON.stringify(chunk.tool_return, null, 2), '📊 Tool Result');
+				}
+				break;
+
+			case 'assistant_message':
+				if (chunk.assistant_message) {
+					if (!this.currentAssistantMessage) {
+						// Create new assistant message
+						this.currentAssistantMessage = this.addStreamingMessage('assistant', '', 
+							`🤖 ${this.plugin.settings.agentName}`);
+					}
+					// Append to current assistant message
+					this.appendToStreamingMessage(this.currentAssistantMessage, chunk.assistant_message);
+				}
+				break;
+
+			case 'usage_statistics':
+				// Stream finished, reset current messages
+				this.currentReasoningMessage = null;
+				this.currentAssistantMessage = null;
+				this.currentToolCallMessage = null;
+				break;
+		}
+	}
+
+	addStreamingMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: string, title?: string): HTMLElement {
+		const messageEl = this.chatContainer.createEl('div', { 
+			cls: `letta-message letta-message-${type}` 
+		});
+
+		if (title) {
+			const headerEl = messageEl.createEl('div', { cls: 'letta-message-header' });
+			headerEl.createEl('span', { text: title, cls: 'letta-message-title' });
+			
+			const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+			headerEl.createEl('span', { text: timestamp, cls: 'letta-message-timestamp' });
+		}
+
+		const contentEl = messageEl.createEl('div', { 
+			cls: 'letta-message-content',
+			text: content
+		});
+
+		// Auto-scroll to bottom
+		setTimeout(() => {
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: 'smooth'
+			});
+		}, 10);
+
+		return messageEl;
+	}
+
+	appendToStreamingMessage(messageEl: HTMLElement, newContent: string) {
+		const contentEl = messageEl.querySelector('.letta-message-content');
+		if (contentEl) {
+			contentEl.textContent = (contentEl.textContent || '') + newContent;
+			
+			// Auto-scroll to bottom
+			setTimeout(() => {
+				this.chatContainer.scrollTo({
+					top: this.chatContainer.scrollHeight,
+					behavior: 'smooth'
+				});
+			}, 10);
+		}
+	}
+
+	processNonStreamingMessages(messages: any[]) {
+		// Process response messages (fallback for when streaming fails)
+		for (const responseMessage of messages) {
+			switch (responseMessage.message_type) {
+				case 'reasoning_message':
+					if (responseMessage.reasoning) {
+						this.addMessage('reasoning', responseMessage.reasoning, '🧠 Reasoning');
+					}
+					break;
+				case 'tool_call_message':
+					if (responseMessage.tool_call) {
+						this.addMessage('tool-call', JSON.stringify(responseMessage.tool_call, null, 2), '🔧 Tool Call');
+					}
+					break;
+				case 'tool_return_message':
+					if (responseMessage.tool_return) {
+						this.addMessage('tool-result', JSON.stringify(responseMessage.tool_return, null, 2), '📊 Tool Result');
+					}
+					break;
+				case 'assistant_message':
+					if (responseMessage.content) {
+						this.addMessage('assistant', responseMessage.content, `🤖 ${this.plugin.settings.agentName}`);
+					}
+					break;
+			}
 		}
 	}
 
@@ -2036,14 +2018,17 @@ class LettaChatView extends ItemView {
 		contentEl.style.width = '700px';
 		contentEl.style.height = '600px';
 		
-		// Add navigation buttons for cloud instances
-		if (project && this.plugin.settings.lettaBaseUrl.includes('api.letta.com')) {
+		// Add navigation buttons
+		const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
+		
+		// Always show change project button for cloud instances, and when there's an API key
+		if (isCloudInstance && this.plugin.settings.lettaApiKey) {
 			const buttonContainer = contentEl.createEl('div');
 			buttonContainer.style.display = 'flex';
 			buttonContainer.style.gap = '8px';
 			buttonContainer.style.marginBottom = '16px';
 			
-			if (isCurrentProject) {
+			if (project && isCurrentProject) {
 				const changeProjectButton = buttonContainer.createEl('button', { 
 					text: 'Change Project',
 					cls: 'letta-clear-button'
@@ -2052,12 +2037,22 @@ class LettaChatView extends ItemView {
 					modal.close();
 					this.openProjectSelector();
 				});
-			} else {
+			} else if (project && !isCurrentProject) {
 				const backButton = buttonContainer.createEl('button', { 
 					text: '← Back to Projects',
 					cls: 'letta-clear-button'
 				});
 				backButton.addEventListener('click', () => {
+					modal.close();
+					this.openProjectSelector();
+				});
+			} else {
+				// No specific project - show generic change project button
+				const changeProjectButton = buttonContainer.createEl('button', { 
+					text: 'Select Project',
+					cls: 'letta-clear-button'
+				});
+				changeProjectButton.addEventListener('click', () => {
 					modal.close();
 					this.openProjectSelector();
 				});
@@ -3883,10 +3878,6 @@ class AgentPropertyModal extends Modal {
 		// Buttons
 		const buttonContainer = contentEl.createEl('div', { cls: 'agent-config-buttons' });
 		
-		const blockFilesButton = buttonContainer.createEl('button', {
-			text: 'Open Block Files',
-			cls: 'agent-config-secondary-btn'
-		});
 		
 		const saveButton = buttonContainer.createEl('button', {
 			text: 'Save Changes',
@@ -3899,13 +3890,6 @@ class AgentPropertyModal extends Modal {
 		});
 
 		// Event handlers
-		blockFilesButton.addEventListener('click', async () => {
-			// Get the plugin instance from the app
-			const plugin = (this.app as any).plugins.plugins['letta-ai-agent'] as LettaPlugin;
-			if (plugin) {
-				await plugin.createBlockFiles();
-			}
-		});
 
 		saveButton.addEventListener('click', async () => {
 			const config: any = {};

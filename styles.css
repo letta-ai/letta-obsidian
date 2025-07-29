@@ -356,6 +356,30 @@
     color: var(--text-muted);
 }
 
+/* Message separator for historical messages */
+.letta-message-separator {
+    display: flex;
+    align-items: center;
+    margin: 12px 0;
+    text-align: center;
+}
+
+.letta-message-separator::before,
+.letta-message-separator::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--background-modifier-border);
+}
+
+.letta-separator-text {
+    padding: 0 12px;
+    font-size: 0.75em;
+    color: var(--text-muted);
+    font-weight: 500;
+    background: var(--background-primary);
+}
+
 /* Scrollbar styling */
 .letta-chat-container {
     scrollbar-width: thin;
