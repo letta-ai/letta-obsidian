@@ -21,7 +21,8 @@ interface LettaPluginSettings {
 	lettaApiKey: string;
 	lettaBaseUrl: string;
 	lettaProjectSlug: string;
-	agentName: string;
+	agentId: string;
+	agentName: string; // Keep for display purposes, but use agentId for API calls
 	sourceName: string;
 	autoSync: boolean;
 	syncOnStartup: boolean;
@@ -32,6 +33,7 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	lettaApiKey: '',
 	lettaBaseUrl: 'https://api.letta.com',
 	lettaProjectSlug: 'obsidian-vault',
+	agentId: '',
 	agentName: 'Obsidian Assistant',
 	sourceName: 'obsidian-vault-files',
 	autoSync: true,
@@ -290,6 +292,7 @@ export default class LettaPlugin extends Plugin {
 		// Also update chat status if chat view is open
 		const chatLeaf = this.app.workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE)[0];
 		if (chatLeaf && chatLeaf.view instanceof LettaChatView) {
+			// Don't await since updateStatusBar should be non-blocking
 			(chatLeaf.view as LettaChatView).updateChatStatus();
 		}
 	}
@@ -418,6 +421,16 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
+	async getAgentCount(): Promise<number> {
+		try {
+			const response = await this.makeRequest('/v1/agents/count');
+			return response.count || 0;
+		} catch (error) {
+			console.error('[Letta Plugin] Failed to get agent count:', error);
+			return 0;
+		}
+	}
+
 	async connectToLetta(attempt: number = 1): Promise<boolean> {
 		const maxAttempts = 5;
 		const isCloudInstance = this.settings.lettaBaseUrl.includes('api.letta.com');
@@ -465,9 +478,22 @@ export default class LettaPlugin extends Plugin {
 			await this.setupSource();
 			
 			console.log(`[Letta Plugin] Source setup successful, setting up agent...`);
-			await this.setupAgent();
+			// Try to setup agent if one is configured
+			if (this.settings.agentId) {
+				try {
+					await this.setupAgent();
+					console.log(`[Letta Plugin] Agent setup successful, connection complete!`);
+				} catch (agentError) {
+					console.error('[Letta Plugin] Agent setup failed, but server connection successful:', agentError);
+					// Clear invalid agent ID
+					this.settings.agentId = '';
+					this.settings.agentName = '';
+					await this.saveSettings();
+				}
+			} else {
+				console.log(`[Letta Plugin] No agent configured, server connection successful`);
+			}
 
-			console.log(`[Letta Plugin] Agent setup successful, connection complete!`);
 			this.updateStatusBar('Connected');
 			
 			// Only show success notice on first attempt or after retries
@@ -579,14 +605,17 @@ export default class LettaPlugin extends Plugin {
 
 	async setupAgent(): Promise<void> {
 		if (!this.source) throw new Error('Source not set up');
+		if (!this.settings.agentId) throw new Error('No agent ID configured');
 
 		try {
-			// Try to get existing agent
-			const agents = await this.makeRequest('/v1/agents');
-			const existingAgent = agents.find((a: any) => a.name === this.settings.agentName);
+			// Try to get the specific agent by ID
+			const existingAgent = await this.makeRequest(`/v1/agents/${this.settings.agentId}`);
 			
 			if (existingAgent) {
 				this.agent = { id: existingAgent.id, name: existingAgent.name };
+				// Update agent name in settings in case it changed
+				this.settings.agentName = existingAgent.name;
+				await this.saveSettings();
 				
 				// Check if source is already attached to existing agent
 				console.log(`[Letta Plugin] Checking if source is attached to existing agent...`);
@@ -609,61 +638,7 @@ export default class LettaPlugin extends Plugin {
 					console.log(`[Letta Plugin] Source already attached to agent`);
 				}
 			} else {
-				// Show agent configuration modal
-				console.log(`[Letta Plugin] No existing agent found, showing configuration modal...`);
-				const configModal = new AgentConfigModal(this.app, this);
-				const agentConfig = await configModal.showModal();
-				
-				if (!agentConfig) {
-					throw new Error('Agent configuration cancelled by user');
-				}
-
-				console.log(`[Letta Plugin] Creating new agent with config:`, agentConfig);
-
-				// Get embedding config for agent creation
-				const embeddingConfigs = await this.makeRequest('/v1/models/embedding');
-				const embeddingConfig = embeddingConfigs.find((config: any) => 
-					config.handle === 'letta/letta-free' || (config.handle && config.handle.includes('letta'))
-				) || embeddingConfigs[0];
-
-				// Create new agent with user configuration
-				const isCloudInstance = this.settings.lettaBaseUrl.includes('api.letta.com');
-				const agentBody: any = {
-					name: agentConfig.name,
-					agent_type: agentConfig.agent_type,
-					description: agentConfig.description,
-					model: agentConfig.model,
-					embedding_config: embeddingConfig,
-					include_base_tools: agentConfig.include_base_tools,
-					include_multi_agent_tools: agentConfig.include_multi_agent_tools,
-					include_default_source: agentConfig.include_default_source,
-					tags: agentConfig.tags,
-					memory_blocks: agentConfig.memory_blocks,
-					source_ids: [this.source!.id] // Attach source during creation
-				};
-
-				// Only include project for cloud instances
-				if (isCloudInstance) {
-					agentBody.project = this.settings.lettaProjectSlug;
-				}
-
-				// Remove undefined values to keep the request clean
-				Object.keys(agentBody).forEach(key => {
-					if (agentBody[key] === undefined) {
-						delete agentBody[key];
-					}
-				});
-
-				const newAgent = await this.makeRequest('/v1/agents', {
-					method: 'POST',
-					body: agentBody
-				});
-
-				this.agent = { id: newAgent.id, name: newAgent.name };
-				
-				// Update settings with the configured agent name
-				this.settings.agentName = agentConfig.name;
-				await this.saveSettings();
+				throw new Error(`Agent with ID ${this.settings.agentId} not found`);
 			}
 
 		} catch (error) {
@@ -681,8 +656,8 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async syncVaultToLetta(): Promise<void> {
-		// Auto-connect if not connected
-		if (!this.source || !this.agent) {
+		// Auto-connect if not connected to server
+		if (!this.source) {
 			new Notice('Connecting to Letta...');
 			const connected = await this.connectToLetta();
 			if (!connected) {
@@ -785,8 +760,8 @@ export default class LettaPlugin extends Plugin {
 			return;
 		}
 
-		// Auto-connect if not connected
-		if (!this.source || !this.agent) {
+		// Auto-connect if not connected to server
+		if (!this.source) {
 			new Notice('Connecting to Letta...');
 			const connected = await this.connectToLetta();
 			if (!connected) {
@@ -860,8 +835,8 @@ export default class LettaPlugin extends Plugin {
 			return;
 		}
 
-		// Auto-connect if not connected (silently for auto-sync)
-		if (!this.source || !this.agent) {
+		// Auto-connect if not connected to server (silently for auto-sync)
+		if (!this.source) {
 			try {
 				await this.connectToLetta();
 			} catch (error) {
@@ -920,8 +895,8 @@ export default class LettaPlugin extends Plugin {
 			return;
 		}
 
-		// Auto-connect if not connected (silently for auto-sync)
-		if (!this.source || !this.agent) {
+		// Auto-connect if not connected to server (silently for auto-sync)
+		if (!this.source) {
 			try {
 				await this.connectToLetta();
 			} catch (error) {
@@ -947,8 +922,8 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async openChatView(): Promise<void> {
-		// Auto-connect if not connected
-		if (!this.agent || !this.source) {
+		// Auto-connect if not connected to server
+		if (!this.source) {
 			new Notice('Connecting to Letta...');
 			const connected = await this.connectToLetta();
 			if (!connected) {
@@ -980,8 +955,8 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async openMemoryView(): Promise<void> {
-		// Auto-connect if not connected
-		if (!this.agent) {
+		// Auto-connect if not connected to server
+		if (!this.source) {
 			new Notice('Connecting to Letta...');
 			const connected = await this.connectToLetta();
 			if (!connected) {
@@ -1485,10 +1460,10 @@ class LettaChatView extends ItemView {
 		}, 100);
 	}
 
-	clearChat() {
+	async clearChat() {
 		this.chatContainer.empty();
 		// Update status to show disconnected message if not connected
-		this.updateChatStatus();
+		await this.updateChatStatus();
 	}
 
 	async loadHistoricalMessages() {
@@ -1850,11 +1825,12 @@ class LettaChatView extends ItemView {
 		}, 3000);
 	}
 
-	updateChatStatus() {
+	async updateChatStatus() {
 		// Determine connection status based on plugin state
-		const isConnected = this.plugin.agent && this.plugin.source;
+		const isServerConnected = this.plugin.source;
+		const isAgentAttached = this.plugin.agent && this.plugin.source;
 		
-		if (isConnected) {
+		if (isAgentAttached) {
 			this.statusDot.className = 'letta-status-dot letta-status-connected';
 			
 			// Use the plugin's helper method for consistent status text
@@ -1865,12 +1841,26 @@ class LettaChatView extends ItemView {
 				this.updateModelButton();
 			}
 			
-			// Remove disconnected message if it exists
+			// Remove disconnected/no agent messages if they exist
 			this.removeDisconnectedMessage();
+			this.removeNoAgentMessage();
 			
 			// Load historical messages on first connection
 			this.loadHistoricalMessages();
+		} else if (isServerConnected) {
+			// Connected to server but no agent attached
+			this.statusDot.className = 'letta-status-dot letta-status-connected';
+			this.statusText.textContent = this.plugin.getConnectionStatusText();
+			
+			if (this.modelButton) {
+				this.modelButton.textContent = 'No Agent';
+			}
+			
+			// Remove disconnected message but show no agent message
+			this.removeDisconnectedMessage();
+			await this.showNoAgentMessage();
 		} else {
+			// Not connected to server
 			this.statusDot.className = 'letta-status-dot';
 			this.statusDot.style.backgroundColor = 'var(--text-muted)';
 			this.statusText.textContent = 'Disconnected';
@@ -1879,6 +1869,7 @@ class LettaChatView extends ItemView {
 			}
 			
 			// Show disconnected message in chat area
+			this.removeNoAgentMessage();
 			this.showDisconnectedMessage();
 		}
 	}
@@ -1945,6 +1936,72 @@ class LettaChatView extends ItemView {
 		}
 		
 		const existingMessage = this.chatContainer.querySelector('.letta-disconnected-container');
+		if (existingMessage) {
+			existingMessage.remove();
+		}
+	}
+
+	async showNoAgentMessage() {
+		if (!this.chatContainer) {
+			return;
+		}
+		
+		// Remove existing no agent message first
+		this.removeNoAgentMessage();
+		
+		const messageContainer = this.chatContainer.createEl('div', { 
+			cls: 'letta-no-agent-container'
+		});
+		
+		const content = messageContainer.createEl('div', { cls: 'letta-no-agent-content' });
+		
+		content.createEl('h3', { text: 'No Agent Selected', cls: 'letta-no-agent-title' });
+		
+		content.createEl('p', { 
+			text: 'You are connected to Letta, but no agent is selected. Choose an agent to start chatting.',
+			cls: 'letta-no-agent-description' 
+		});
+		
+		const buttonContainer = content.createEl('div', { cls: 'letta-no-agent-buttons' });
+		
+		// Check agent count to determine if Select Agent should be enabled
+		const agentCount = await this.plugin.getAgentCount();
+		
+		const selectAgentButton = buttonContainer.createEl('button', { 
+			text: agentCount > 0 ? 'Select Agent' : 'No Agents Available',
+			cls: 'mod-cta letta-select-agent-button'
+		});
+		
+		if (agentCount > 0) {
+			selectAgentButton.addEventListener('click', async () => {
+				// Open agent selector from settings
+				const settingTab = new LettaSettingTab(this.app, this.plugin);
+				await settingTab.showAgentSelector();
+			});
+		} else {
+			selectAgentButton.disabled = true;
+			selectAgentButton.style.opacity = '0.5';
+			selectAgentButton.style.cursor = 'not-allowed';
+		}
+		
+		const createAgentButton = buttonContainer.createEl('button', { 
+			text: 'Create New Agent',
+			cls: 'letta-create-agent-button'
+		});
+		
+		createAgentButton.addEventListener('click', () => {
+			// Open agent creation modal
+			const configModal = new AgentConfigModal(this.app, this.plugin);
+			configModal.showModal();
+		});
+	}
+
+	removeNoAgentMessage() {
+		if (!this.chatContainer) {
+			return;
+		}
+		
+		const existingMessage = this.chatContainer.querySelector('.letta-no-agent-container');
 		if (existingMessage) {
 			existingMessage.remove();
 		}
@@ -2173,14 +2230,19 @@ class LettaChatView extends ItemView {
 		if (!message) return;
 
 		// Check connection and auto-connect if needed
-		if (!this.plugin.agent || !this.plugin.source) {
+		if (!this.plugin.source) {
 			this.addMessage('assistant', 'Connecting to Letta...', 'System');
 			const connected = await this.plugin.connectToLetta();
 			if (!connected) {
 				this.addMessage('assistant', '**Connection failed**. Please check your settings and try again.', 'Error');
 				return;
 			}
-			this.addMessage('assistant', '**Connected!** You can now chat with your agent.', 'System');
+		}
+		
+		// Check if agent is attached after connection
+		if (!this.plugin.agent) {
+			this.addMessage('assistant', '**No agent selected**. Please select an agent to start chatting.', 'System');
+			return;
 		}
 
 		// Disable input while processing
@@ -3383,8 +3445,8 @@ class LettaMemoryView extends ItemView {
 
 	async loadBlocks() {
 		try {
-			// Auto-connect if not connected
-			if (!this.plugin.agent) {
+			// Auto-connect if not connected to server
+			if (!this.plugin.source) {
 				new Notice('Connecting to Letta...');
 				const connected = await this.plugin.connectToLetta();
 				if (!connected) {
@@ -5020,16 +5082,28 @@ class LettaSettingTab extends PluginSettingTab {
 		// Agent Configuration
 		containerEl.createEl('h3', { text: 'Agent Configuration' });
 
-		new Setting(containerEl)
-			.setName('Agent Name')
-			.setDesc('Name for your AI agent')
-			.addText(text => text
-				.setPlaceholder('Obsidian Assistant')
-				.setValue(this.plugin.settings.agentName)
-				.onChange(async (value) => {
-					this.plugin.settings.agentName = value;
-					await this.plugin.saveSettings();
-				}));
+		// Agent Selection
+		const agentSetting = new Setting(containerEl)
+			.setName('Selected Agent')
+			.setDesc('Choose an agent from your Letta instance');
+
+		const agentContainer = agentSetting.settingEl.createDiv('letta-agent-selection');
+		
+		if (this.plugin.settings.agentId && this.plugin.settings.agentName) {
+			// Show current agent if selected
+			const currentAgentDiv = agentContainer.createDiv('letta-current-agent');
+			currentAgentDiv.createSpan({ text: `Current: ${this.plugin.settings.agentName}`, cls: 'letta-agent-name' });
+			currentAgentDiv.createSpan({ text: ` (${this.plugin.settings.agentId})`, cls: 'letta-agent-id' });
+		} else {
+			agentContainer.createSpan({ text: 'No agent selected', cls: 'letta-no-agent' });
+		}
+		
+		agentSetting.addButton(button => button
+			.setButtonText('Select Agent')
+			.setTooltip('Choose an agent from your Letta instance')
+			.onClick(async () => {
+				await this.showAgentSelector();
+			}));
 
 		new Setting(containerEl)
 			.setName('Source Name')
@@ -5326,6 +5400,74 @@ class LettaSettingTab extends PluginSettingTab {
 		} catch (error) {
 			console.error('Failed to delete and recreate source:', error);
 			new Notice('Failed to delete and recreate source. Please check your connection and try again.');
+		}
+	}
+
+	async showAgentSelector(): Promise<void> {
+		try {
+			// Fetch agents from server
+			const agents = await this.plugin.makeRequest('/v1/agents');
+			
+			if (!agents || agents.length === 0) {
+				new Notice('No agents found. Please create an agent first.');
+				return;
+			}
+
+			return new Promise((resolve) => {
+				const modal = new Modal(this.app);
+				modal.setTitle('Select Agent');
+				
+				const { contentEl } = modal;
+				
+				contentEl.createEl('p', { 
+					text: 'Choose an agent to use with this Obsidian vault:',
+					cls: 'setting-item-description'
+				});
+				
+				const agentList = contentEl.createEl('div', { cls: 'letta-agent-list' });
+				
+				agents.forEach((agent: any) => {
+					const agentItem = agentList.createEl('div', { cls: 'letta-agent-item' });
+					
+					const agentInfo = agentItem.createEl('div', { cls: 'letta-agent-info' });
+					agentInfo.createEl('div', { text: agent.name, cls: 'letta-agent-item-name' });
+					agentInfo.createEl('div', { text: `ID: ${agent.id}`, cls: 'letta-agent-item-id' });
+					if (agent.description) {
+						agentInfo.createEl('div', { text: agent.description, cls: 'letta-agent-item-desc' });
+					}
+					
+					const selectButton = agentItem.createEl('button', { 
+						text: 'Select',
+						cls: 'mod-cta'
+					});
+					
+					selectButton.addEventListener('click', async () => {
+						this.plugin.settings.agentId = agent.id;
+						this.plugin.settings.agentName = agent.name;
+						await this.plugin.saveSettings();
+						
+						new Notice(`Selected agent: ${agent.name}`);
+						modal.close();
+						
+						// Refresh the settings display
+						this.display();
+						resolve();
+					});
+				});
+				
+				const buttonContainer = contentEl.createEl('div', { cls: 'modal-button-container' });
+				const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
+				cancelButton.addEventListener('click', () => {
+					modal.close();
+					resolve();
+				});
+				
+				modal.open();
+			});
+
+		} catch (error) {
+			console.error('Failed to fetch agents:', error);
+			new Notice('Failed to fetch agents. Please check your connection and try again.');
 		}
 	}
 }
