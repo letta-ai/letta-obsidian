@@ -1058,6 +1058,8 @@ class LettaChatView extends ItemView {
 	plugin: LettaPlugin;
 	chatContainer: HTMLElement;
 	systemMessagesContainer: HTMLElement;
+	typingIndicator: HTMLElement;
+	heartbeatTimeout: NodeJS.Timeout | null = null;
 	inputContainer: HTMLElement;
 	messageInput: HTMLTextAreaElement;
 	sendButton: HTMLButtonElement;
@@ -1137,6 +1139,24 @@ class LettaChatView extends ItemView {
 		// Chat container
 		this.chatContainer = container.createEl('div', { cls: 'letta-chat-container' });
 		
+		// Typing indicator
+		this.typingIndicator = this.chatContainer.createEl('div', { 
+			cls: 'letta-typing-indicator' 
+		});
+		this.typingIndicator.style.display = 'none';
+		
+		const typingText = this.typingIndicator.createEl('span', { 
+			cls: 'letta-typing-text',
+			text: `${this.plugin.settings.agentName} is thinking`
+		});
+		
+		const typingDots = this.typingIndicator.createEl('span', { 
+			cls: 'letta-typing-dots' 
+		});
+		typingDots.createEl('span', { text: '.' });
+		typingDots.createEl('span', { text: '.' });
+		typingDots.createEl('span', { text: '.' });
+		
 		// Hidden system messages container
 		this.systemMessagesContainer = container.createEl('div', { 
 			cls: 'letta-system-messages-container'
@@ -1212,16 +1232,32 @@ class LettaChatView extends ItemView {
 	}
 
 	async onClose() {
-		// Clean up any resources if needed
+		// Clean up heartbeat timeout
+		if (this.heartbeatTimeout) {
+			clearTimeout(this.heartbeatTimeout);
+			this.heartbeatTimeout = null;
+		}
 	}
 
 	addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: string, title?: string, reasoningContent?: string) {
+		// Hide typing indicator when real content arrives
+		this.hideTypingIndicator();
 		// Debug: Check for system_alert content being added as regular message
 		if (content && content.includes('"type": "system_alert"')) {
 			console.error('[Letta Plugin] ALERT: system_alert content being added as regular message!');
 			console.error('[Letta Plugin] Content:', content);
 			console.error('[Letta Plugin] Stack trace:', new Error().stack);
 			// Don't add this message - it should have been filtered
+			return null;
+		}
+		
+		// Debug: Check for heartbeat content being added as regular message
+		if (content && (content.includes('"type": "heartbeat"') || 
+						content.includes('automated system message') ||
+						content.includes('Function call failed, returning control') ||
+						content.includes('request_heartbeat=true'))) {
+			console.log('[Letta Plugin] Blocked heartbeat content from being displayed as message');
+			// Don't add this message - it should have been filtered and handled by typing indicator
 			return null;
 		}
 		const messageEl = this.chatContainer.createEl('div', { 
@@ -1509,9 +1545,18 @@ class LettaChatView extends ItemView {
 		
 		// Skip heartbeat messages entirely  
 		if (messageType === 'heartbeat' || 
+			message.message_type === 'heartbeat' ||
 			messageRole === 'heartbeat' ||
-			hasHeartbeatContent) {
-			console.log('[Letta Plugin] Skipping historical heartbeat message:', messageType, messageRole, messageReason);
+			hasHeartbeatContent ||
+			(message.content && typeof message.content === 'string' && 
+			 (message.content.includes('automated system message') ||
+			  message.content.includes('Function call failed, returning control') ||
+			  message.content.includes('request_heartbeat=true'))) ||
+			(message.text && typeof message.text === 'string' && 
+			 (message.text.includes('automated system message') ||
+			  message.text.includes('Function call failed, returning control') ||
+			  message.text.includes('request_heartbeat=true')))) {
+			console.log('[Letta Plugin] Skipping historical heartbeat message:', messageType, message.message_type, messageRole, messageReason);
 			return;
 		}
 		
@@ -1568,6 +1613,11 @@ class LettaChatView extends ItemView {
 				// Skip system messages as they're internal
 				break;
 				
+			case 'heartbeat':
+				// Handle heartbeat messages - show typing indicator
+				this.handleHeartbeat();
+				break;
+				
 			default:
 				// Handle unrecognized message types - log and skip to prevent display
 				console.log('[Letta Plugin] Unrecognized historical message type:', message.message_type, 'with type property:', messageType);
@@ -1601,6 +1651,37 @@ class LettaChatView extends ItemView {
 		contentEl.createEl('code', { 
 			text: JSON.stringify(message, null, 2)
 		});
+	}
+
+	showTypingIndicator() {
+		if (this.typingIndicator) {
+			this.typingIndicator.style.display = 'block';
+			// Scroll to bottom to show the typing indicator
+			this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+		}
+	}
+
+	hideTypingIndicator() {
+		if (this.typingIndicator) {
+			this.typingIndicator.style.display = 'none';
+		}
+	}
+
+	handleHeartbeat() {
+		console.log('[Letta Plugin] Heartbeat received - showing typing indicator');
+		this.showTypingIndicator();
+		
+		// Clear existing timeout
+		if (this.heartbeatTimeout) {
+			clearTimeout(this.heartbeatTimeout);
+		}
+		
+		// Hide typing indicator after 3 seconds of no heartbeats
+		this.heartbeatTimeout = setTimeout(() => {
+			console.log('[Letta Plugin] No heartbeat for 3s - hiding typing indicator');
+			this.hideTypingIndicator();
+			this.heartbeatTimeout = null;
+		}, 3000);
 	}
 
 	updateChatStatus() {
@@ -2061,9 +2142,14 @@ class LettaChatView extends ItemView {
 			return;
 		}
 		
-		// Skip heartbeat messages entirely
-		if (chunk.type === 'heartbeat') {
-			console.log('[Letta Plugin] Skipping heartbeat message:', chunk.type);
+		// Handle heartbeat messages - show typing indicator
+		if (chunk.type === 'heartbeat' || 
+			chunk.message_type === 'heartbeat' ||
+			chunk.role === 'heartbeat' ||
+			(chunk.reason && (chunk.reason.includes('automated system message') ||
+							  chunk.reason.includes('Function call failed, returning control') ||
+							  chunk.reason.includes('request_heartbeat=true')))) {
+			this.handleHeartbeat();
 			return;
 		}
 		
@@ -2159,6 +2245,11 @@ class LettaChatView extends ItemView {
 				this.currentAssistantMessage = null;
 				this.currentToolCallMessage = null;
 				this.pendingReasoning = '';
+				break;
+				
+			case 'heartbeat':
+				// Handle heartbeat messages - show typing indicator
+				this.handleHeartbeat();
 				break;
 
 			default:
@@ -2447,8 +2538,14 @@ class LettaChatView extends ItemView {
 				continue;
 			}
 			
-			// Skip heartbeat messages entirely
-			if (responseMessage.type === 'heartbeat') {
+			// Handle heartbeat messages - show typing indicator
+			if (responseMessage.type === 'heartbeat' || 
+				responseMessage.message_type === 'heartbeat' ||
+				responseMessage.role === 'heartbeat' ||
+				(responseMessage.reason && (responseMessage.reason.includes('automated system message') ||
+											responseMessage.reason.includes('Function call failed, returning control') ||
+											responseMessage.reason.includes('request_heartbeat=true')))) {
+				this.handleHeartbeat();
 				continue;
 			}
 			
@@ -2488,6 +2585,11 @@ class LettaChatView extends ItemView {
 						// Clear temp reasoning after using it
 						tempReasoning = '';
 					}
+					break;
+					
+				case 'heartbeat':
+					// Skip heartbeat messages - should already be filtered above
+					console.log('[Letta Plugin] Heartbeat message reached switch statement - should have been filtered earlier');
 					break;
 			}
 		}
