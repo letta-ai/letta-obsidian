@@ -1258,7 +1258,7 @@ class LettaChatView extends ItemView {
 
 			// Sort messages by timestamp (oldest first)
 			const sortedMessages = messages.sort((a: any, b: any) => 
-				new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+				new Date(a.date).getTime() - new Date(b.date).getTime()
 			);
 
 			// Display messages in order
@@ -1277,31 +1277,40 @@ class LettaChatView extends ItemView {
 
 	displayHistoricalMessage(message: any) {
 		// Parse different message types based on Letta's message structure
-		if (message.role === 'user') {
-			this.addMessage('user', message.text || message.content || '');
-		} else if (message.role === 'assistant') {
-			// Check if this is a reasoning message (internal thoughts)
-			if (message.text && message.text.includes('<thinking>')) {
-				const thinkingMatch = message.text.match(/<thinking>([\s\S]*?)<\/thinking>/);
-				if (thinkingMatch) {
-					this.addMessage('reasoning', thinkingMatch[1].trim());
+		switch (message.message_type) {
+			case 'user_message':
+				if (message.text || message.content) {
+					this.addMessage('user', message.text || message.content || '');
 				}
-			}
+				break;
 			
-			// Check for tool calls
-			if (message.tool_calls && message.tool_calls.length > 0) {
-				for (const toolCall of message.tool_calls) {
-					this.addMessage('tool-call', JSON.stringify(toolCall.function, null, 2), toolCall.function.name);
+			case 'reasoning_message':
+				if (message.reasoning) {
+					this.addMessage('reasoning', message.reasoning, '🧠 Reasoning');
 				}
-			}
+				break;
 			
-			// Regular assistant response
-			if (message.text && !message.text.includes('<thinking>')) {
-				this.addMessage('assistant', message.text);
-			}
-		} else if (message.role === 'tool') {
-			// Tool result message
-			this.addMessage('tool-result', message.content || message.text || '');
+			case 'tool_call_message':
+				if (message.tool_call) {
+					this.addMessage('tool-call', JSON.stringify(message.tool_call, null, 2), '🔧 Tool Call');
+				}
+				break;
+			
+			case 'tool_return_message':
+				if (message.tool_return) {
+					this.addMessage('tool-result', JSON.stringify(message.tool_return, null, 2), '📊 Tool Result');
+				}
+				break;
+			
+			case 'assistant_message':
+				if (message.content || message.text) {
+					this.addMessage('assistant', message.content || message.text || '', `🤖 ${this.plugin.settings.agentName}`);
+				}
+				break;
+			
+			case 'system_message':
+				// Skip system messages as they're internal
+				break;
 		}
 	}
 
