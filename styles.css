@@ -1579,3 +1579,55 @@
         font-size: 0.9em;
     }
 }
+
+/* System messages container - hidden by default */
+.letta-system-messages-container {
+    margin-top: 20px;
+    padding: 10px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.letta-system-message {
+    margin-bottom: 10px;
+    padding: 8px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border-hover);
+    border-radius: 4px;
+    font-size: 0.8em;
+}
+
+.letta-system-message-header {
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    font-size: 0.7em;
+}
+
+.letta-system-message-content {
+    margin: 0;
+    font-family: var(--font-monospace);
+    font-size: 0.7em;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 3px;
+    padding: 6px;
+    overflow-x: auto;
+}
+
+.letta-system-message-content code {
+    color: var(--text-normal);
+    background: transparent;
+    padding: 0;
+}
+
+.letta-system-toggle {
+    transition: opacity 0.2s ease;
+}
+
+.letta-system-toggle:hover {
+    opacity: 0.8 !important;
+}

@@ -1057,6 +1057,7 @@ export default class LettaPlugin extends Plugin {
 class LettaChatView extends ItemView {
 	plugin: LettaPlugin;
 	chatContainer: HTMLElement;
+	systemMessagesContainer: HTMLElement;
 	inputContainer: HTMLElement;
 	messageInput: HTMLTextAreaElement;
 	sendButton: HTMLButtonElement;
@@ -1136,6 +1137,25 @@ class LettaChatView extends ItemView {
 		// Chat container
 		this.chatContainer = container.createEl('div', { cls: 'letta-chat-container' });
 		
+		// Hidden system messages container
+		this.systemMessagesContainer = container.createEl('div', { 
+			cls: 'letta-system-messages-container'
+		});
+		this.systemMessagesContainer.style.display = 'none';
+		
+		// System messages toggle button (unobtrusive)
+		const systemToggle = container.createEl('div', { 
+			cls: 'letta-system-toggle',
+			text: '⚙️',
+			attr: { title: 'Toggle system messages' }
+		});
+		systemToggle.style.cssText = 'position: absolute; top: 10px; right: 10px; cursor: pointer; opacity: 0.3; font-size: 12px; z-index: 100;';
+		systemToggle.addEventListener('click', () => {
+			const isVisible = this.systemMessagesContainer.style.display !== 'none';
+			this.systemMessagesContainer.style.display = isVisible ? 'none' : 'block';
+			systemToggle.style.opacity = isVisible ? '0.3' : '0.8';
+		});
+		
 		// Now that chat container exists, update status to show disconnected message if needed
 		this.updateChatStatus();
 		
@@ -1196,6 +1216,14 @@ class LettaChatView extends ItemView {
 	}
 
 	addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: string, title?: string, reasoningContent?: string) {
+		// Debug: Check for system_alert content being added as regular message
+		if (content && content.includes('"type": "system_alert"')) {
+			console.error('[Letta Plugin] ALERT: system_alert content being added as regular message!');
+			console.error('[Letta Plugin] Content:', content);
+			console.error('[Letta Plugin] Stack trace:', new Error().stack);
+			// Don't add this message - it should have been filtered
+			return null;
+		}
 		const messageEl = this.chatContainer.createEl('div', { 
 			cls: `letta-message letta-message-${type}` 
 		});
@@ -1462,7 +1490,7 @@ class LettaChatView extends ItemView {
 	displayHistoricalMessage(message: any) {
 		console.log('[Letta Plugin] Processing historical message:', message);
 		
-		// Skip heartbeat and system_alert messages - these are automated system messages
+		// Handle system messages - capture system_alert for hidden viewing, skip heartbeats entirely
 		// Check multiple possible properties where the type might be stored
 		const messageType = message.type || message.message_type;
 		const messageRole = message.role;
@@ -1471,11 +1499,19 @@ class LettaChatView extends ItemView {
 									messageReason.includes('Function call failed, returning control') ||
 									messageReason.includes('request_heartbeat=true');
 		
+		// Store system_alert messages in hidden container for debugging
+		if (messageType === 'system_alert' || 
+			(message.message && typeof message.message === 'string' && message.message.includes('prior messages have been hidden'))) {
+			console.log('[Letta Plugin] Capturing system_alert message:', message);
+			this.addSystemMessage(message);
+			return;
+		}
+		
+		// Skip heartbeat messages entirely  
 		if (messageType === 'heartbeat' || 
-			messageType === 'system_alert' || 
 			messageRole === 'heartbeat' ||
 			hasHeartbeatContent) {
-			console.log('[Letta Plugin] Skipping historical heartbeat/system message:', messageType, messageRole, messageReason);
+			console.log('[Letta Plugin] Skipping historical heartbeat message:', messageType, messageRole, messageReason);
 			return;
 		}
 		
@@ -1531,6 +1567,11 @@ class LettaChatView extends ItemView {
 			case 'system_message':
 				// Skip system messages as they're internal
 				break;
+				
+			default:
+				// Handle unrecognized message types - log and skip to prevent display
+				console.log('[Letta Plugin] Unrecognized historical message type:', message.message_type, 'with type property:', messageType);
+				break;
 		}
 	}
 
@@ -1539,6 +1580,27 @@ class LettaChatView extends ItemView {
 			cls: 'letta-message-separator' 
 		});
 		separatorEl.createEl('span', { text, cls: 'letta-separator-text' });
+	}
+
+	addSystemMessage(message: any) {
+		const messageEl = this.systemMessagesContainer.createEl('div', { 
+			cls: 'letta-system-message' 
+		});
+		
+		// Add timestamp
+		const timestamp = new Date().toLocaleTimeString();
+		const timeEl = messageEl.createEl('div', { 
+			text: `[${timestamp}] ${message.type || message.message_type || 'system'}`,
+			cls: 'letta-system-message-header'
+		});
+		
+		// Add message content as JSON for debugging
+		const contentEl = messageEl.createEl('pre', { 
+			cls: 'letta-system-message-content' 
+		});
+		contentEl.createEl('code', { 
+			text: JSON.stringify(message, null, 2)
+		});
 	}
 
 	updateChatStatus() {
@@ -1991,9 +2053,17 @@ class LettaChatView extends ItemView {
 	handleStreamingChunk(chunk: any) {
 		console.log('[Letta Plugin] Streaming chunk received:', chunk);
 		
-		// Skip heartbeat and system_alert messages - these are automated system messages
-		if (chunk.type === 'heartbeat' || chunk.type === 'system_alert') {
-			console.log('[Letta Plugin] Skipping system message:', chunk.type);
+		// Handle system messages - capture system_alert for hidden viewing, skip heartbeats
+		if (chunk.type === 'system_alert' || 
+			(chunk.message && typeof chunk.message === 'string' && chunk.message.includes('prior messages have been hidden'))) {
+			console.log('[Letta Plugin] Capturing streaming system_alert message:', chunk);
+			this.addSystemMessage(chunk);
+			return;
+		}
+		
+		// Skip heartbeat messages entirely
+		if (chunk.type === 'heartbeat') {
+			console.log('[Letta Plugin] Skipping heartbeat message:', chunk.type);
 			return;
 		}
 		
@@ -2369,8 +2439,16 @@ class LettaChatView extends ItemView {
 		let tempToolMessage: HTMLElement | null = null;
 		
 		for (const responseMessage of messages) {
-			// Skip heartbeat and system_alert messages - these are automated system messages
-			if (responseMessage.type === 'heartbeat' || responseMessage.type === 'system_alert') {
+			// Handle system messages - capture system_alert for hidden viewing, skip heartbeats
+			if (responseMessage.type === 'system_alert' || 
+				(responseMessage.message && typeof responseMessage.message === 'string' && responseMessage.message.includes('prior messages have been hidden'))) {
+				console.log('[Letta Plugin] Capturing non-streaming system_alert message:', responseMessage);
+				this.addSystemMessage(responseMessage);
+				continue;
+			}
+			
+			// Skip heartbeat messages entirely
+			if (responseMessage.type === 'heartbeat') {
 				continue;
 			}
 			
@@ -3374,9 +3452,9 @@ class LettaMemoryView extends ItemView {
 			descriptionInput.style.marginBottom = '16px';
 			
 			// Value textarea
-			contentEl.createEl('div', { text: 'Initial Content:', cls: 'config-label' });
+			contentEl.createEl('div', { text: 'Initial Content (optional):', cls: 'config-label' });
 			const valueInput = contentEl.createEl('textarea', {
-				placeholder: 'Enter the initial content for this memory block...',
+				placeholder: 'Enter initial content for this memory block (can be left empty)...',
 				cls: 'config-textarea'
 			});
 			valueInput.style.height = '120px';
@@ -3410,7 +3488,7 @@ class LettaMemoryView extends ItemView {
 			createButton.addEventListener('click', () => {
 				const label = labelInput.value.trim();
 				const description = descriptionInput.value.trim();
-				const value = valueInput.value.trim();
+				const value = valueInput.value; // Don't trim - allow empty content
 				const limit = parseInt(limitInput.value) || 2000;
 				
 				if (!label) {
@@ -3425,11 +3503,7 @@ class LettaMemoryView extends ItemView {
 					return;
 				}
 				
-				if (!value) {
-					new Notice('Please enter some initial content');
-					valueInput.focus();
-					return;
-				}
+				// Allow empty blocks - content can be added later
 				
 				resolve({ label, description, value, limit });
 				modal.close();
