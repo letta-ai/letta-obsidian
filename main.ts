@@ -2998,19 +2998,43 @@ class LettaChatView extends ItemView {
 					}
 					break;
 				case 'assistant_message':
-					if (responseMessage.content) {
+					console.log('[Letta Plugin] Processing assistant_message:', responseMessage);
+					
+					// Try multiple possible content fields
+					let content = responseMessage.content || responseMessage.text || responseMessage.message;
+					
+					if (content) {
 						// Filter out system prompt content and use accumulated reasoning
-						const filteredContent = this.filterSystemPromptContent(responseMessage.content);
+						const filteredContent = this.filterSystemPromptContent(content);
 						this.addMessage('assistant', filteredContent, this.plugin.settings.agentName, 
 							tempReasoning || undefined);
 						// Clear temp reasoning after using it
 						tempReasoning = '';
+					} else {
+						console.warn('[Letta Plugin] Assistant message has no recognizable content field:', Object.keys(responseMessage));
+						// Fallback: display the whole message structure for debugging
+						this.addMessage('assistant', `**Debug**: ${JSON.stringify(responseMessage, null, 2)}`, 'Debug');
 					}
 					break;
 					
 				case 'heartbeat':
 					// Skip heartbeat messages - should already be filtered above
 					console.log('[Letta Plugin] Heartbeat message reached switch statement - should have been filtered earlier');
+					break;
+					
+				default:
+					console.log('[Letta Plugin] Unrecognized message type:', responseMessage.message_type, 'Full message:', responseMessage);
+					
+					// Fallback handling for messages without proper message_type
+					if (responseMessage.content || responseMessage.text || responseMessage.message) {
+						const content = responseMessage.content || responseMessage.text || responseMessage.message;
+						const filteredContent = this.filterSystemPromptContent(content);
+						this.addMessage('assistant', filteredContent, this.plugin.settings.agentName);
+					} else {
+						// Last resort: show the JSON structure for debugging
+						console.warn('[Letta Plugin] Message has no recognizable content, displaying as debug info');
+						this.addMessage('assistant', `**Debug**: Unknown message structure\n\`\`\`json\n${JSON.stringify(responseMessage, null, 2)}\n\`\`\``, 'Debug');
+					}
 					break;
 			}
 		}
