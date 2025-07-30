@@ -586,13 +586,21 @@ export default class LettaPlugin extends Plugin {
 					console.warn(`[Letta Plugin] Selected embedding model "${this.settings.embeddingModel}" not found, using fallback: ${embeddingConfig?.handle}`);
 				}
 
+				// Prepare source creation body
+				const isCloudInstance = this.settings.lettaBaseUrl.includes('api.letta.com');
+				const sourceBody: any = {
+					name: this.settings.sourceName,
+					instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved in filenames using '__' as path separators."
+				};
+				
+				// Only include embedding_config for non-cloud instances
+				if (!isCloudInstance) {
+					sourceBody.embedding_config = embeddingConfig;
+				}
+
 				const newSource = await this.makeRequest('/v1/sources', {
 					method: 'POST',
-					body: {
-						name: this.settings.sourceName,
-						embedding_config: embeddingConfig,
-						instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved in filenames using '__' as path separators."
-					}
+					body: sourceBody
 				});
 
 				this.source = { id: newSource.id, name: newSource.name };
@@ -2031,7 +2039,6 @@ class LettaChatView extends ItemView {
 			agent_type: 'memgpt_v2_agent', // Use MemGPT v2 architecture
 			description: agentConfig.description,
 			model: agentConfig.model,
-			embedding_config: embeddingConfig,
 			include_base_tools: false, // Don't include base tools, use custom memory tools
 			include_multi_agent_tools: agentConfig.include_multi_agent_tools,
 			include_default_source: agentConfig.include_default_source,
@@ -2041,6 +2048,11 @@ class LettaChatView extends ItemView {
 			// Specify the correct memory tools
 			tools: ['memory_replace', 'memory_insert', 'memory_rethink']
 		};
+		
+		// Only include embedding_config for non-cloud instances
+		if (!isCloudInstance) {
+			agentBody.embedding_config = embeddingConfig;
+		}
 
 		// Only include project for cloud instances
 		if (isCloudInstance) {
@@ -5473,13 +5485,21 @@ class LettaSettingTab extends PluginSettingTab {
 				throw new Error(`Embedding model ${this.plugin.settings.embeddingModel} not found`);
 			}
 			
+			// Prepare source creation body
+			const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
+			const sourceBody: any = {
+				name: this.plugin.settings.sourceName,
+				instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved in filenames using '__' as path separators."
+			};
+			
+			// Only include embedding_config for non-cloud instances
+			if (!isCloudInstance) {
+				sourceBody.embedding_config = embeddingConfig;
+			}
+
 			const newSource = await this.plugin.makeRequest('/v1/sources', {
 				method: 'POST',
-				body: {
-					name: this.plugin.settings.sourceName,
-					embedding_config: embeddingConfig,
-					instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved in filenames using '__' as path separators."
-				}
+				body: sourceBody
 			});
 
 			this.plugin.source = { id: newSource.id, name: newSource.name };
