@@ -400,6 +400,30 @@
     display: block;
 }
 
+/* Headers in reasoning content */
+.letta-reasoning-content h1, .letta-reasoning-content h2, .letta-reasoning-content h3 {
+    color: var(--text-normal);
+    margin: 8px 0 4px 0;
+    line-height: 1.2;
+}
+
+.letta-reasoning-content h1 {
+    font-size: 1.2em;
+    font-weight: 700;
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding-bottom: 2px;
+}
+
+.letta-reasoning-content h2 {
+    font-size: 1.1em;
+    font-weight: 600;
+}
+
+.letta-reasoning-content h3 {
+    font-size: 1.05em;
+    font-weight: 600;
+}
+
 /* Tool interaction messages */
 .letta-message-tool-interaction {
     justify-content: flex-start;
@@ -420,6 +444,30 @@
     line-height: 1.4;
     border-bottom: 1px solid var(--background-modifier-border);
     margin-bottom: 8px;
+}
+
+/* Headers in tool reasoning */
+.letta-tool-reasoning h1, .letta-tool-reasoning h2, .letta-tool-reasoning h3 {
+    color: var(--text-normal);
+    margin: 6px 0 3px 0;
+    line-height: 1.2;
+}
+
+.letta-tool-reasoning h1 {
+    font-size: 1.15em;
+    font-weight: 700;
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding-bottom: 2px;
+}
+
+.letta-tool-reasoning h2 {
+    font-size: 1.05em;
+    font-weight: 600;
+}
+
+.letta-tool-reasoning h3 {
+    font-size: 1.0em;
+    font-weight: 600;
 }
 
 .letta-tool-section {
@@ -574,6 +622,33 @@
 .letta-message-content em {
     font-style: italic;
     color: var(--text-muted);
+}
+
+/* Markdown headers */
+.letta-message-content h1 {
+    font-size: 1.4em;
+    font-weight: 700;
+    color: var(--text-accent);
+    margin: 12px 0 8px 0;
+    line-height: 1.2;
+    border-bottom: 2px solid var(--background-modifier-border);
+    padding-bottom: 4px;
+}
+
+.letta-message-content h2 {
+    font-size: 1.25em;
+    font-weight: 600;
+    color: var(--text-accent);
+    margin: 10px 0 6px 0;
+    line-height: 1.3;
+}
+
+.letta-message-content h3 {
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--text-normal);
+    margin: 8px 0 4px 0;
+    line-height: 1.3;
 }
 
 /* Message separator for historical messages */

@@ -1279,7 +1279,47 @@ class LettaChatView extends ItemView {
 		}
 	}
 
-	addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: string, title?: string, reasoningContent?: string) {
+	addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: any, title?: string, reasoningContent?: string) {
+		// Debug: Log what's being passed to addMessage
+		console.log('[Letta Plugin] addMessage called with:', { type, content: typeof content, contentValue: content, title });
+		
+		// Extract text content from various possible formats
+		let textContent: string = '';
+		
+		if (typeof content === 'string') {
+			textContent = content;
+		} else if (Array.isArray(content)) {
+			// Handle array content - extract text from array elements
+			textContent = content.map(item => {
+				if (typeof item === 'string') {
+					return item;
+				} else if (item && typeof item === 'object') {
+					return item.text || item.content || item.message || item.value || JSON.stringify(item);
+				}
+				return String(item);
+			}).join('');
+		} else if (content && typeof content === 'object') {
+			// Try to extract text from object structure
+			textContent = content.text || content.content || content.message || content.value || '';
+			
+			// If still no text found, try JSON stringification as fallback
+			if (!textContent && content) {
+				console.warn('[Letta Plugin] Content object has no recognizable text field, using JSON fallback:', Object.keys(content));
+				textContent = JSON.stringify(content, null, 2);
+			}
+		} else {
+			// Last resort: convert to string
+			textContent = String(content || '');
+		}
+		
+		console.log('[Letta Plugin] Extracted text content:', textContent.substring(0, 100) + (textContent.length > 100 ? '...' : ''));
+		
+		// Ensure we have some content to display
+		if (!textContent) {
+			console.warn('[Letta Plugin] No content to display');
+			return;
+		}
+		
 		// Hide typing indicator when real content arrives
 		this.hideTypingIndicator();
 		
@@ -1288,19 +1328,19 @@ class LettaChatView extends ItemView {
 			this.cleanupPreviousToolCalls();
 		}
 		// Debug: Check for system_alert content being added as regular message
-		if (content && content.includes('"type": "system_alert"')) {
+		if (textContent && textContent.includes('"type": "system_alert"')) {
 			console.error('[Letta Plugin] ALERT: system_alert content being added as regular message!');
-			console.error('[Letta Plugin] Content:', content);
+			console.error('[Letta Plugin] Content:', textContent);
 			console.error('[Letta Plugin] Stack trace:', new Error().stack);
 			// Don't add this message - it should have been filtered
 			return null;
 		}
 		
 		// Debug: Check for heartbeat content being added as regular message
-		if (content && (content.includes('"type": "heartbeat"') || 
-						content.includes('automated system message') ||
-						content.includes('Function call failed, returning control') ||
-						content.includes('request_heartbeat=true'))) {
+		if (textContent && (textContent.includes('"type": "heartbeat"') || 
+						textContent.includes('automated system message') ||
+						textContent.includes('Function call failed, returning control') ||
+						textContent.includes('request_heartbeat=true'))) {
 			console.log('[Letta Plugin] Blocked heartbeat content from being displayed as message');
 			// Don't add this message - it should have been filtered and handled by typing indicator
 			return null;
@@ -1374,14 +1414,18 @@ class LettaChatView extends ItemView {
 					.trim()
 					// Normalize multiple consecutive newlines to double newlines
 					.replace(/\n{3,}/g, '\n\n')
+					// Handle headers (must be done before other formatting)
+					.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+					.replace(/^## (.+)$/gm, '<h2>$1</h2>')
+					.replace(/^# (.+)$/gm, '<h1>$1</h1>')
 					// Handle bold and italic
 					.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
 					.replace(/\*(.*?)\*/g, '<em>$1</em>')
 					.replace(/`([^`]+)`/g, '<code>$1</code>')
 					// Handle numbered lists (1. 2. 3. etc.)
 					.replace(/^(\d+)\.\s+(.+)$/gm, '<li class="numbered-list">$2</li>')
-					// Handle bullet lists
-					.replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>')
+					// Handle bullet lists (•, -, *)
+					.replace(/^[•*-]\s+(.+)$/gm, '<li>$1</li>')
 					// Handle double newlines as paragraph breaks first
 					.replace(/\n\n/g, '</p><p>')
 					// Convert remaining single newlines to <br> tags
@@ -1412,19 +1456,23 @@ class LettaChatView extends ItemView {
 			const contentEl = bubbleEl.createEl('div', { cls: 'letta-message-content' });
 			
 			// Enhanced markdown-like formatting
-			let formattedContent = content
+			let formattedContent = textContent
 				// Trim leading and trailing whitespace first
 				.trim()
 				// Normalize multiple consecutive newlines to double newlines
 				.replace(/\n{3,}/g, '\n\n')
+				// Handle headers (must be done before other formatting)
+				.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+				.replace(/^## (.+)$/gm, '<h2>$1</h2>')
+				.replace(/^# (.+)$/gm, '<h1>$1</h1>')
 				// Handle bold and italic
 				.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
 				.replace(/\*(.*?)\*/g, '<em>$1</em>')
 				.replace(/`([^`]+)`/g, '<code>$1</code>')
 				// Handle numbered lists (1. 2. 3. etc.)
 				.replace(/^(\d+)\.\s+(.+)$/gm, '<li class="numbered-list">$2</li>')
-				// Handle bullet lists
-				.replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>')
+				// Handle bullet lists (•, -, *)
+				.replace(/^[•*-]\s+(.+)$/gm, '<li>$1</li>')
 				// Handle double newlines as paragraph breaks first
 				.replace(/\n\n/g, '</p><p>')
 				// Convert remaining single newlines to <br> tags
@@ -2550,8 +2598,21 @@ class LettaChatView extends ItemView {
 				console.log('[Letta Plugin] chunk.message:', chunk.message);
 				
 				// Try different possible property names for the message content
-				const rawContent = chunk.assistant_message || chunk.content || chunk.text || chunk.message;
+				let rawContent = chunk.assistant_message || chunk.content || chunk.text || chunk.message;
 				console.log('[Letta Plugin] Raw messageContent:', rawContent);
+				
+				// Handle array content by extracting text from array elements
+				if (Array.isArray(rawContent)) {
+					rawContent = rawContent.map(item => {
+						if (typeof item === 'string') {
+							return item;
+						} else if (item && typeof item === 'object') {
+							return item.text || item.content || item.message || item.value || JSON.stringify(item);
+						}
+						return String(item);
+					}).join('');
+					console.log('[Letta Plugin] Converted array content to string:', rawContent);
+				}
 				
 				// Filter out system prompt content
 				const messageContent = rawContent ? this.filterSystemPromptContent(rawContent) : rawContent;
@@ -2749,14 +2810,18 @@ class LettaChatView extends ItemView {
 				.trim()
 				// Normalize multiple consecutive newlines to double newlines
 				.replace(/\n{3,}/g, '\n\n')
+				// Handle headers (must be done before other formatting)
+				.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+				.replace(/^## (.+)$/gm, '<h2>$1</h2>')
+				.replace(/^# (.+)$/gm, '<h1>$1</h1>')
 				// Handle bold and italic
 				.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
 				.replace(/\*(.*?)\*/g, '<em>$1</em>')
 				.replace(/`([^`]+)`/g, '<code>$1</code>')
 				// Handle numbered lists (1. 2. 3. etc.)
 				.replace(/^(\d+)\.\s+(.+)$/gm, '<li class="numbered-list">$2</li>')
-				// Handle bullet lists
-				.replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>')
+				// Handle bullet lists (•, -, *)
+				.replace(/^[•*-]\s+(.+)$/gm, '<li>$1</li>')
 				// Handle double newlines as paragraph breaks first
 				.replace(/\n\n/g, '</p><p>')
 				// Convert remaining single newlines to <br> tags
@@ -3003,6 +3068,19 @@ class LettaChatView extends ItemView {
 					// Try multiple possible content fields
 					let content = responseMessage.content || responseMessage.text || responseMessage.message;
 					
+					// Handle array content by extracting text from array elements
+					if (Array.isArray(content)) {
+						content = content.map(item => {
+							if (typeof item === 'string') {
+								return item;
+							} else if (item && typeof item === 'object') {
+								return item.text || item.content || item.message || item.value || JSON.stringify(item);
+							}
+							return String(item);
+						}).join('');
+						console.log('[Letta Plugin] Non-streaming: Converted array content to string:', content);
+					}
+					
 					if (content) {
 						// Filter out system prompt content and use accumulated reasoning
 						const filteredContent = this.filterSystemPromptContent(content);
@@ -3027,7 +3105,21 @@ class LettaChatView extends ItemView {
 					
 					// Fallback handling for messages without proper message_type
 					if (responseMessage.content || responseMessage.text || responseMessage.message) {
-						const content = responseMessage.content || responseMessage.text || responseMessage.message;
+						let content = responseMessage.content || responseMessage.text || responseMessage.message;
+						
+						// Handle array content by extracting text from array elements
+						if (Array.isArray(content)) {
+							content = content.map(item => {
+								if (typeof item === 'string') {
+									return item;
+								} else if (item && typeof item === 'object') {
+									return item.text || item.content || item.message || item.value || JSON.stringify(item);
+								}
+								return String(item);
+							}).join('');
+							console.log('[Letta Plugin] Fallback: Converted array content to string:', content);
+						}
+						
 						const filteredContent = this.filterSystemPromptContent(content);
 						this.addMessage('assistant', filteredContent, this.plugin.settings.agentName);
 					} else {
