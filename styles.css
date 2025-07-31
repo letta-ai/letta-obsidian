@@ -2172,3 +2172,108 @@
     background: var(--background-modifier-hover);
     border-color: var(--background-modifier-border-hover);
 }
+
+/* Archival Memory Display Styles */
+.letta-memory-list {
+    padding: 12px 0;
+}
+
+.letta-memory-item {
+    margin-bottom: 16px;
+    padding: 12px;
+    background: var(--background-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--background-modifier-border);
+}
+
+.letta-memory-item:last-child {
+    margin-bottom: 8px;
+}
+
+.letta-memory-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 0.85em;
+}
+
+.letta-memory-index {
+    font-weight: 600;
+    color: var(--text-accent);
+    min-width: 20px;
+}
+
+.letta-memory-timestamp {
+    color: var(--text-muted);
+    font-family: var(--font-monospace);
+    font-size: 0.85em;
+}
+
+.letta-memory-content {
+    color: var(--text-normal);
+    line-height: 1.5;
+    font-size: 0.9em;
+}
+
+.letta-memory-content h1,
+.letta-memory-content h2,
+.letta-memory-content h3 {
+    margin: 8px 0 4px 0;
+    color: var(--text-accent);
+}
+
+.letta-memory-content h1 {
+    font-size: 1.2em;
+    font-weight: 700;
+}
+
+.letta-memory-content h2 {
+    font-size: 1.1em;
+    font-weight: 600;
+}
+
+.letta-memory-content h3 {
+    font-size: 1.05em;
+    font-weight: 600;
+}
+
+.letta-memory-content strong {
+    font-weight: 600;
+    color: var(--text-accent);
+}
+
+.letta-memory-content em {
+    font-style: italic;
+    color: var(--text-muted);
+}
+
+.letta-memory-content code {
+    background: var(--background-primary-alt);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: var(--font-monospace);
+    font-size: 0.85em;
+    color: var(--text-accent);
+}
+
+.letta-memory-summary {
+    padding: 8px 12px;
+    background: var(--background-primary-alt);
+    border-radius: 6px;
+    text-align: center;
+    font-size: 0.85em;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-top: 8px;
+}
+
+.letta-memory-single {
+    padding: 12px;
+    background: var(--background-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--background-modifier-border);
+    color: var(--text-normal);
+    line-height: 1.5;
+    font-size: 0.9em;
+}

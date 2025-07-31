@@ -664,6 +664,65 @@ export default class LettaPlugin extends Plugin {
 		return encodedPath.replace(/__/g, '/');
 	}
 
+	// Rate limiter for file uploads (10 files per minute)
+	private uploadQueue: Array<() => Promise<void>> = [];
+	private uploadsInLastMinute: number[] = [];
+	private isProcessingQueue: boolean = false;
+
+	private async addToUploadQueue(uploadFn: () => Promise<void>): Promise<void> {
+		return new Promise((resolve, reject) => {
+			this.uploadQueue.push(async () => {
+				try {
+					await uploadFn();
+					resolve();
+				} catch (error) {
+					reject(error);
+				}
+			});
+			
+			if (!this.isProcessingQueue) {
+				this.processUploadQueue();
+			}
+		});
+	}
+
+	private async processUploadQueue(): Promise<void> {
+		if (this.isProcessingQueue || this.uploadQueue.length === 0) {
+			return;
+		}
+
+		this.isProcessingQueue = true;
+		
+		while (this.uploadQueue.length > 0) {
+			// Clean up old timestamps (older than 1 minute)
+			const oneMinuteAgo = Date.now() - 60000;
+			this.uploadsInLastMinute = this.uploadsInLastMinute.filter(timestamp => timestamp > oneMinuteAgo);
+			
+			// Check if we can upload (less than 10 uploads in the last minute)
+			if (this.uploadsInLastMinute.length >= 10) {
+				const oldestUpload = Math.min(...this.uploadsInLastMinute);
+				const waitTime = (oldestUpload + 60000) - Date.now();
+				console.log(`[Letta Plugin] Rate limit reached, waiting ${Math.ceil(waitTime / 1000)} seconds...`);
+				await new Promise(resolve => setTimeout(resolve, waitTime));
+				continue;
+			}
+
+			// Process next upload
+			const uploadFn = this.uploadQueue.shift();
+			if (uploadFn) {
+				try {
+					await uploadFn();
+					this.uploadsInLastMinute.push(Date.now());
+				} catch (error) {
+					console.error('[Letta Plugin] Upload failed:', error);
+					throw error;
+				}
+			}
+		}
+		
+		this.isProcessingQueue = false;
+	}
+
 	async syncVaultToLetta(): Promise<void> {
 		// Auto-connect if not connected to server
 		if (!this.source) {
@@ -688,7 +747,9 @@ export default class LettaPlugin extends Plugin {
 			const vaultFiles = this.app.vault.getMarkdownFiles();
 			let uploadCount = 0;
 			let skipCount = 0;
+			const filesToUpload: TFile[] = [];
 
+			// First pass: determine which files need uploading
 			for (const file of vaultFiles) {
 				const encodedPath = this.encodeFilePath(file.path);
 				const existingFile = existingFilesMap.get(encodedPath);
@@ -710,42 +771,64 @@ export default class LettaPlugin extends Plugin {
 							skipCount++;
 						}
 					}
-
-					if (shouldUpload) {
-						// Delete existing file to avoid duplicates
-						await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
-							method: 'DELETE'
-						});
-					}
 				}
 
 				if (shouldUpload) {
-					const content = await this.app.vault.read(file);
-					
-					console.log(`[Letta Plugin] Uploading file as multipart:`, encodedPath);
-					console.log(`[Letta Plugin] File content length:`, content.length);
-					
-					// Create proper multipart form data matching Python client
-					const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
-					const multipartBody = [
-						`--${boundary}`,
-						`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
-						'Content-Type: text/markdown',
-						'',
-						content,
-						`--${boundary}--`
-					].join('\r\n');
-
-					await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
-						method: 'POST',
-						headers: {
-							'Content-Type': `multipart/form-data; boundary=${boundary}`
-						},
-						body: multipartBody,
-						isFileUpload: true
-					});
-					uploadCount++;
+					filesToUpload.push(file);
 				}
+			}
+
+			// Second pass: upload files with rate limiting
+			if (filesToUpload.length > 0) {
+				new Notice(`Uploading ${filesToUpload.length} files with rate limiting...`);
+				let processedCount = 0;
+				
+				const uploadPromises = filesToUpload.map(async (file, index) => {
+					const encodedPath = this.encodeFilePath(file.path);
+					const existingFile = existingFilesMap.get(encodedPath);
+					
+					return this.addToUploadQueue(async () => {
+						// Delete existing file if it exists
+						if (existingFile) {
+							await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
+								method: 'DELETE'
+							});
+						}
+
+						// Upload new file
+						const content = await this.app.vault.read(file);
+						
+						console.log(`[Letta Plugin] Uploading file (${processedCount + 1}/${filesToUpload.length}):`, encodedPath);
+						
+						// Create proper multipart form data matching Python client
+						const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
+						const multipartBody = [
+							`--${boundary}`,
+							`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
+							'Content-Type: text/markdown',
+							'',
+							content,
+							`--${boundary}--`
+						].join('\r\n');
+
+						await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
+							method: 'POST',
+							headers: {
+								'Content-Type': `multipart/form-data; boundary=${boundary}`
+							},
+							body: multipartBody,
+							isFileUpload: true
+						});
+						
+						uploadCount++;
+						processedCount++;
+						
+						// Update status bar with progress
+						this.updateStatusBar(`Syncing (${processedCount}/${filesToUpload.length})`);
+					});
+				});
+
+				await Promise.all(uploadPromises);
 			}
 
 			this.updateStatusBar('Connected');
@@ -782,46 +865,50 @@ export default class LettaPlugin extends Plugin {
 			this.updateStatusBar('Syncing file...');
 			
 			const encodedPath = this.encodeFilePath(file.path);
-			const content = await this.app.vault.read(file);
+			
+			// Use rate-limited upload for single files too
+			await this.addToUploadQueue(async () => {
+				const content = await this.app.vault.read(file);
 
-			// Check if file exists in Letta and get metadata
-			const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
-			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
-			
-			let action = 'uploaded';
-			
-			if (existingFile) {
-				// Delete existing file first
-				await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
-					method: 'DELETE'
+				// Check if file exists in Letta and get metadata
+				const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
+				const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
+				
+				let action = 'uploaded';
+				
+				if (existingFile) {
+					// Delete existing file first
+					await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
+						method: 'DELETE'
+					});
+					action = 'updated';
+				}
+
+				// Upload the file
+				console.log(`[Letta Plugin] Syncing current file:`, encodedPath);
+				
+				const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
+				const multipartBody = [
+					`--${boundary}`,
+					`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
+					'Content-Type: text/markdown',
+					'',
+					content,
+					`--${boundary}--`
+				].join('\r\n');
+
+				await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': `multipart/form-data; boundary=${boundary}`
+					},
+					body: multipartBody,
+					isFileUpload: true
 				});
-				action = 'updated';
-			}
 
-			// Upload the file
-			console.log(`[Letta Plugin] Syncing current file:`, encodedPath);
-			
-			const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
-			const multipartBody = [
-				`--${boundary}`,
-				`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
-				'Content-Type: text/markdown',
-				'',
-				content,
-				`--${boundary}--`
-			].join('\r\n');
-
-			await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': `multipart/form-data; boundary=${boundary}`
-				},
-				body: multipartBody,
-				isFileUpload: true
+				this.updateStatusBar('Connected');
+				new Notice(`File "${file.name}" ${action} to Letta successfully`);
 			});
-
-			this.updateStatusBar('Connected');
-			new Notice(`File "${file.name}" ${action} to Letta successfully`);
 
 		} catch (error: any) {
 			console.error('Failed to sync current file:', error);
@@ -857,41 +944,45 @@ export default class LettaPlugin extends Plugin {
 
 		try {
 			const encodedPath = this.encodeFilePath(file.path);
-			const content = await this.app.vault.read(file);
-
-			// Delete existing file if it exists
-			try {
-				const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
-				const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
-				if (existingFile) {
-					await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
-						method: 'DELETE'
-					});
-				}
-			} catch (error) {
-				// File might not exist, continue with upload
-			}
-
-			console.log(`[Letta Plugin] Auto-syncing file change as multipart:`, encodedPath);
 			
-			// Create proper multipart form data matching Python client
-			const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
-			const multipartBody = [
-				`--${boundary}`,
-				`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
-				'Content-Type: text/markdown',
-				'',
-				content,
-				`--${boundary}--`
-			].join('\r\n');
+			// Use rate-limited upload for auto-sync too
+			await this.addToUploadQueue(async () => {
+				const content = await this.app.vault.read(file);
 
-			await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': `multipart/form-data; boundary=${boundary}`
-				},
-				body: multipartBody,
-				isFileUpload: true
+				// Delete existing file if it exists
+				try {
+					const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
+					const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
+					if (existingFile) {
+						await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
+							method: 'DELETE'
+						});
+					}
+				} catch (error) {
+					// File might not exist, continue with upload
+				}
+
+				console.log(`[Letta Plugin] Auto-syncing file change as multipart:`, encodedPath);
+				
+				// Create proper multipart form data matching Python client
+				const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
+				const multipartBody = [
+					`--${boundary}`,
+					`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
+					'Content-Type: text/markdown',
+					'',
+					content,
+					`--${boundary}--`
+				].join('\r\n');
+
+				await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': `multipart/form-data; boundary=${boundary}`
+					},
+					body: multipartBody,
+					isFileUpload: true
+				});
 			});
 
 		} catch (error) {
@@ -1586,8 +1677,26 @@ class LettaChatView extends ItemView {
 			/context window/i,
 			/overflow.*old messages.*permanently lost/i,
 			/sentient being/i,
-			/real-time.*conscious awareness/i
+			/real-time.*conscious awareness/i,
+			// File system information patterns
+			/\*\*Currently Open Files.*Based on my current system access/i,
+			/\*\*Available Directories:\*\*/i,
+			/obsidian-vault-files.*directory structure preserved/i,
+			/using '__' as path separa/i,
+			/\*\*File System Notes:\*\*/i,
+			/I can open up to \d+ files/i,
+			// Repeated content patterns  
+			/(.*)\1{2,}/s  // Catches content repeated 3+ times
 		];
+		
+		// Check for repeated content blocks (specific to file system info spam)
+		if (content.includes('**Currently Open Files') && content.includes('Based on my current system access')) {
+			const matches = content.match(/\*\*Currently Open Files.*?(?=\*\*Currently Open Files|\*\*Available Directories|$)/gs);
+			if (matches && matches.length > 1) {
+				console.log('[Letta Plugin] Detected repeated file system information, filtering out');
+				return 'I can see your vault files and am ready to help with your question.';
+			}
+		}
 		
 		// Check if content contains system prompt patterns
 		const hasSystemContent = systemPromptPatterns.some(pattern => pattern.test(content));
@@ -1605,7 +1714,7 @@ class LettaChatView extends ItemView {
 			
 			const filtered = filteredLines.join('\n').trim();
 			
-			// If we filtered out everything, return a placeholder
+			// If we filtered out everything, return a placeholder  
 			if (!filtered) {
 				return 'I processed your request and am ready to help.';
 			}
@@ -2828,13 +2937,17 @@ class LettaChatView extends ItemView {
 				.replace(/\n/g, '<br>');
 			
 			// Wrap consecutive numbered list items in <ol> tags
-			formattedReasoning = formattedReasoning.replace(/(<li class="numbered-list">.*?<\/li>)(\s*<li class="numbered-list">.*?<\/li>)*/g, (match) => {
-				return '<ol>' + match + '</ol>';
+			formattedReasoning = formattedReasoning.replace(/(<li class="numbered-list">.*?<\/li>)(\s*<br>\s*<li class="numbered-list">.*?<\/li>)*/g, (match) => {
+				// Remove the <br> tags between numbered list items and wrap in <ol>
+				const cleanMatch = match.replace(/<br>\s*/g, '');
+				return '<ol>' + cleanMatch + '</ol>';
 			});
 			
-			// Wrap consecutive bullet list items in <ul> tags
-			formattedReasoning = formattedReasoning.replace(/(<li>(?!.*class="numbered-list").*?<\/li>)(\s*<li>(?!.*class="numbered-list").*?<\/li>)*/g, (match) => {
-				return '<ul>' + match + '</ul>';
+			// Wrap consecutive regular list items in <ul> tags
+			formattedReasoning = formattedReasoning.replace(/(<li>(?!.*class="numbered-list").*?<\/li>)(\s*<br>\s*<li>(?!.*class="numbered-list").*?<\/li>)*/g, (match) => {
+				// Remove the <br> tags between list items and wrap in <ul>
+				const cleanMatch = match.replace(/<br>\s*/g, '');
+				return '<ul>' + cleanMatch + '</ul>';
 			});
 			
 			// Wrap in paragraphs if needed
@@ -2930,6 +3043,19 @@ class LettaChatView extends ItemView {
 			toolCallHeader.removeClass('letta-tool-prominent');
 		}
 
+		// Detect tool type by looking at the tool call data stored in the message
+		let isArchivalMemorySearch = false;
+		try {
+			const toolCallPre = bubbleEl.querySelector('.letta-code-block code');
+			if (toolCallPre) {
+				const toolCallData = JSON.parse(toolCallPre.textContent || '{}');
+				const toolName = toolCallData.name || (toolCallData.function && toolCallData.function.name);
+				isArchivalMemorySearch = toolName === 'archival_memory_search';
+			}
+		} catch (e) {
+			// Ignore parsing errors
+		}
+
 		// Show the tool result section
 		const toolResultHeader = bubbleEl.querySelector('.letta-tool-result-pending') as HTMLElement;
 		const toolResultContent = bubbleEl.querySelector('.letta-expandable-content:last-child') as HTMLElement;
@@ -2938,23 +3064,10 @@ class LettaChatView extends ItemView {
 			// Format the result and get a preview
 			const formattedResult = this.formatToolResult(toolResult);
 			
-			// Create a preview (first 100 characters, single line)
-			let preview = formattedResult
-				.replace(/\n/g, ' ') // Replace newlines with spaces
-				.substring(0, 100) // Limit to 100 characters
-				.trim();
-			
-			// Remove quotes from preview if it starts and ends with them
-			if (preview.startsWith('"') && preview.endsWith('"')) {
-				preview = preview.slice(1, -1);
-			}
-			
-			const previewText = preview + (formattedResult.length > 100 ? '...' : '');
-			
-			// Update the title to show the preview instead of "Tool Result"
+			// Always use "Tool Result" as the label (don't show content preview)
 			const toolResultTitle = toolResultHeader.querySelector('.letta-expandable-title');
 			if (toolResultTitle) {
-				toolResultTitle.textContent = previewText;
+				toolResultTitle.textContent = 'Tool Result';
 			}
 			
 			// Make visible
@@ -2962,11 +3075,16 @@ class LettaChatView extends ItemView {
 			toolResultContent.style.display = 'block';
 			toolResultHeader.removeClass('letta-tool-result-pending');
 
-			// Add full content to expandable section
-			const toolResultDiv = toolResultContent.createEl('div', { 
-				cls: 'letta-tool-result-text',
-				text: formattedResult 
-			});
+			// Handle archival memory search results specially
+			if (isArchivalMemorySearch) {
+				this.createArchivalMemoryDisplay(toolResultContent, toolResult);
+			} else {
+				// Add full content to expandable section for other tools
+				const toolResultDiv = toolResultContent.createEl('div', { 
+					cls: 'letta-tool-result-text',
+					text: formattedResult 
+				});
+			}
 
 			// Add click handler for tool result expand/collapse
 			const toolResultChevron = toolResultHeader.querySelector('.letta-expandable-chevron');
@@ -2989,6 +3107,97 @@ class LettaChatView extends ItemView {
 				behavior: 'smooth'
 			});
 		}, 10);
+	}
+
+	createArchivalMemoryDisplay(container: HTMLElement, toolResult: string) {
+		try {
+			// Parse the tool result JSON
+			const result = JSON.parse(toolResult);
+			
+			// Check if it's an array of memory items
+			if (Array.isArray(result) && result.length > 0) {
+				const memoryList = container.createEl('div', { cls: 'letta-memory-list' });
+				
+				result.forEach((item, index) => {
+					const memoryItem = memoryList.createEl('div', { cls: 'letta-memory-item' });
+					
+					// Extract content from the memory item
+					let content = '';
+					let timestamp = '';
+					
+					if (typeof item === 'object' && item !== null) {
+						// Try different possible fields for content
+						content = item.content || item.text || item.message || '';
+						timestamp = item.timestamp || '';
+						
+						// If content is still empty, try to extract from nested structure
+						if (!content && typeof item === 'object') {
+							content = JSON.stringify(item, null, 2);
+						}
+					} else {
+						content = String(item);
+					}
+					
+					// Create memory item header with index
+					const itemHeader = memoryItem.createEl('div', { cls: 'letta-memory-item-header' });
+					itemHeader.createEl('span', { cls: 'letta-memory-index', text: `${index + 1}.` });
+					
+					if (timestamp) {
+						itemHeader.createEl('span', { cls: 'letta-memory-timestamp', text: timestamp });
+					}
+					
+					// Create content area with basic markdown formatting
+					const itemContent = memoryItem.createEl('div', { cls: 'letta-memory-content' });
+					
+					// Apply basic markdown formatting to the content
+					let formattedContent = content
+						.trim()
+						.replace(/\n{3,}/g, '\n\n')
+						// Handle headers
+						.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+						.replace(/^## (.+)$/gm, '<h2>$1</h2>')
+						.replace(/^# (.+)$/gm, '<h1>$1</h1>')
+						// Handle bold and italic
+						.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+						.replace(/\*(.*?)\*/g, '<em>$1</em>')
+						.replace(/`([^`]+)`/g, '<code>$1</code>')
+						// Convert line breaks to HTML
+						.replace(/\n/g, '<br>');
+					
+					itemContent.innerHTML = formattedContent;
+				});
+				
+				// Add summary at the bottom
+				const summary = container.createEl('div', { cls: 'letta-memory-summary' });
+				summary.createEl('span', { text: `Found ${result.length} memory item${result.length === 1 ? '' : 's'}` });
+				
+			} else if (result && typeof result === 'object') {
+				// Single item or different structure
+				const singleItem = container.createEl('div', { cls: 'letta-memory-single' });
+				
+				let content = result.content || result.text || result.message || JSON.stringify(result, null, 2);
+				let formattedContent = content
+					.trim()
+					.replace(/\n{3,}/g, '\n\n')
+					.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+					.replace(/^## (.+)$/gm, '<h2>$1</h2>')
+					.replace(/^# (.+)$/gm, '<h1>$1</h1>')
+					.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+					.replace(/\*(.*?)\*/g, '<em>$1</em>')
+					.replace(/`([^`]+)`/g, '<code>$1</code>')
+					.replace(/\n/g, '<br>');
+				
+				singleItem.innerHTML = formattedContent;
+			} else {
+				// Fallback to raw display
+				const fallback = container.createEl('div', { cls: 'letta-tool-result-text' });
+				fallback.textContent = toolResult;
+			}
+		} catch (e) {
+			// If parsing fails, fall back to raw display
+			const fallback = container.createEl('div', { cls: 'letta-tool-result-text' });
+			fallback.textContent = toolResult;
+		}
 	}
 
 	appendToStreamingMessage(messageEl: HTMLElement, newContent: string) {
