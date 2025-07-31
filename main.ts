@@ -2707,12 +2707,15 @@ class LettaChatView extends ItemView {
 
 		// Detect tool type by looking at the tool call data stored in the message
 		let isArchivalMemorySearch = false;
+		let isArchivalMemoryInsert = false;
+		let toolCallData = null;
 		try {
 			const toolCallPre = bubbleEl.querySelector('.letta-code-block code');
 			if (toolCallPre) {
-				const toolCallData = JSON.parse(toolCallPre.textContent || '{}');
+				toolCallData = JSON.parse(toolCallPre.textContent || '{}');
 				const toolName = toolCallData.name || (toolCallData.function && toolCallData.function.name);
 				isArchivalMemorySearch = toolName === 'archival_memory_search';
+				isArchivalMemoryInsert = toolName === 'archival_memory_insert';
 			}
 		} catch (e) {
 			// Ignore parsing errors
@@ -2737,9 +2740,11 @@ class LettaChatView extends ItemView {
 			toolResultContent.style.display = 'block';
 			toolResultHeader.removeClass('letta-tool-result-pending');
 
-			// Handle archival memory search results specially
+			// Handle special tool types
 			if (isArchivalMemorySearch) {
 				this.createArchivalMemoryDisplay(toolResultContent, toolResult);
+			} else if (isArchivalMemoryInsert) {
+				this.createArchivalMemoryInsertDisplay(toolResultContent, toolCallData, toolResult);
 			} else {
 				// Add full content to expandable section for other tools
 				const toolResultDiv = toolResultContent.createEl('div', { 
@@ -2859,6 +2864,59 @@ class LettaChatView extends ItemView {
 			// If parsing fails, fall back to raw display
 			const fallback = container.createEl('div', { cls: 'letta-tool-result-text' });
 			fallback.textContent = toolResult;
+		}
+	}
+
+	createArchivalMemoryInsertDisplay(container: HTMLElement, toolCallData: any, toolResult: string) {
+		try {
+			// Extract the content from the tool call arguments
+			let memoryContent = '';
+			
+			if (toolCallData && toolCallData.arguments) {
+				let args;
+				if (typeof toolCallData.arguments === 'string') {
+					args = JSON.parse(toolCallData.arguments);
+				} else {
+					args = toolCallData.arguments;
+				}
+				
+				memoryContent = args.content || '';
+			}
+			
+			if (memoryContent) {
+				// Add a simple header to indicate this is the content being stored
+				const header = container.createEl('div', { cls: 'letta-memory-insert-header' });
+				header.createEl('span', { cls: 'letta-memory-insert-label', text: 'Content stored in archival memory:' });
+				
+				// Create simple content area with markdown formatting
+				const contentArea = container.createEl('div', { cls: 'letta-memory-insert-content' });
+				
+				// Apply basic markdown formatting to the content
+				let formattedContent = memoryContent
+					.trim()
+					.replace(/\n{3,}/g, '\n\n')
+					// Handle headers
+					.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+					.replace(/^## (.+)$/gm, '<h2>$1</h2>')
+					.replace(/^# (.+)$/gm, '<h1>$1</h1>')
+					// Handle bold and italic
+					.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+					.replace(/\*(.*?)\*/g, '<em>$1</em>')
+					.replace(/`([^`]+)`/g, '<code>$1</code>')
+					// Convert line breaks to HTML
+					.replace(/\n/g, '<br>');
+				
+				contentArea.innerHTML = formattedContent;
+			} else {
+				// Fallback if we can't extract the content
+				const fallback = container.createEl('div', { cls: 'letta-tool-result-text' });
+				fallback.textContent = `Memory insert completed. Result: ${toolResult}`;
+			}
+		} catch (e) {
+			console.error('[Letta Plugin] Error creating archival memory insert display:', e);
+			// If parsing fails, fall back to raw display
+			const fallback = container.createEl('div', { cls: 'letta-tool-result-text' });
+			fallback.textContent = `Memory insert completed. Result: ${toolResult}`;
 		}
 	}
 

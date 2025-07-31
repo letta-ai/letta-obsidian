@@ -340,8 +340,8 @@
 }
 
 .letta-expandable-content {
-    max-height: 500px;
-    overflow: hidden;
+    max-height: 800px;
+    overflow-y: auto;
     transition: max-height 0.3s ease, opacity 0.3s ease;
     padding: 12px;
     background: var(--background-primary);
@@ -2277,3 +2277,21 @@
     line-height: 1.5;
     font-size: 0.9em;
 }
+
+/* Archival Memory Insert Display Styles */
+.letta-memory-insert-header {
+    margin-bottom: 12px;
+}
+
+.letta-memory-insert-label {
+    font-weight: 600;
+    color: var(--text-accent);
+    font-size: 0.9em;
+}
+
+.letta-memory-insert-content {
+    color: var(--text-normal);
+    line-height: 1.5;
+    font-size: 0.9em;
+}
+
