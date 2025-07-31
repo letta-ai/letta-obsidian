@@ -2342,11 +2342,11 @@
 /* Expandable Archival Memory Items */
 .letta-memory-item-header.letta-expandable-header {
     cursor: pointer;
-    padding: 12px;
+    padding: 8px 12px;
     background: var(--background-secondary);
     border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
-    margin-bottom: 2px;
+    border-radius: 6px;
+    margin-bottom: 1px;
     transition: all 0.2s ease;
     display: flex;
     align-items: flex-start;
@@ -2373,13 +2373,14 @@
 }
 
 .letta-memory-content.letta-expandable-content {
-    padding: 0 12px 12px 12px;
-    margin-top: -2px; /* Connect with header */
+    padding: 8px 12px 10px 12px;
+    margin-top: -1px; /* Connect with header */
     background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
     border-top: none;
-    border-radius: 0 0 8px 8px;
-    line-height: 1.5;
+    border-radius: 0 0 6px 6px;
+    line-height: 1.4;
+    font-size: 0.9em;
 }
 
 .letta-memory-content.letta-expandable-content.letta-expandable-collapsed {

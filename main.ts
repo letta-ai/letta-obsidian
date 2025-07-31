@@ -714,8 +714,18 @@ export default class LettaPlugin extends Plugin {
 					await uploadFn();
 					this.uploadsInLastMinute.push(Date.now());
 				} catch (error) {
-					console.error('[Letta Plugin] Upload failed:', error);
-					throw error;
+					// Check if it's a rate limit error
+					if (error.message && error.message.includes('HTTP 429')) {
+						console.log('[Letta Plugin] Hit rate limit, will retry after waiting...');
+						// Put the upload back at the front of the queue to retry
+						this.uploadQueue.unshift(uploadFn);
+						// Add a small delay before checking rate limits again
+						await new Promise(resolve => setTimeout(resolve, 1000));
+						continue;
+					} else {
+						console.error('[Letta Plugin] Upload failed with non-rate-limit error:', error);
+						// For other errors, don't retry and continue with next upload
+					}
 				}
 			}
 		}
@@ -2821,8 +2831,56 @@ class LettaChatView extends ItemView {
 
 	createArchivalMemoryDisplay(container: HTMLElement, toolResult: string) {
 		try {
-			// Parse the tool result JSON
-			const result = JSON.parse(toolResult);
+			let result;
+			let rawContent = toolResult.trim();
+			
+			// Handle JSON-encoded string containing Python tuple format
+			if (rawContent.startsWith('"') && rawContent.endsWith('"')) {
+				const parsedString = JSON.parse(rawContent);
+				
+				if (parsedString.startsWith('(') && parsedString.endsWith(')')) {
+					// Extract array from Python tuple: ([...], count) -> [...]
+					const innerContent = parsedString.slice(1, -1);
+					const match = innerContent.match(/^(.+),\s*(\d+)$/);
+					
+					if (match) {
+						const arrayString = match[1];
+						// Extract memory items manually from Python dict format
+						const dictPattern = /\{'timestamp':\s*'([^']+)',\s*'content':\s*'((?:[^'\\]|\\.)*)'\}/g;
+						const memoryItems = [];
+						let dictMatch;
+						
+						while ((dictMatch = dictPattern.exec(arrayString)) !== null) {
+							const timestamp = dictMatch[1];
+							const content = dictMatch[2].replace(/\\'/g, "'");
+							memoryItems.push({ timestamp, content });
+						}
+						
+						result = memoryItems;
+					} else {
+						result = JSON.parse(parsedString);
+					}
+				} else {
+					result = JSON.parse(parsedString);
+				}
+			} else if (rawContent.startsWith('(') && rawContent.endsWith(')')) {
+				// Handle direct Python tuple format
+				const innerContent = rawContent.slice(1, -1);
+				const match = innerContent.match(/^(.+),\s*(\d+)$/);
+				if (match) {
+					let arrayString = match[1];
+					arrayString = arrayString
+						.replace(/None/g, 'null')
+						.replace(/True/g, 'true')
+						.replace(/False/g, 'false')
+						.replace(/'/g, '"');
+					result = JSON.parse(arrayString);
+				} else {
+					result = JSON.parse(rawContent);
+				}
+			} else {
+				result = JSON.parse(rawContent);
+			}
 			
 			// Check if it's an array (archival memory search results)
 			if (Array.isArray(result) && result.length > 0) {
@@ -2864,9 +2922,9 @@ class LettaChatView extends ItemView {
 						text: titleText
 					});
 					
-					// Add preview of content (first 100 characters)
-					const preview = content.length > 100 ? 
-						content.substring(0, 100).trim() + '...' : 
+					// Add preview of content (first 80 characters)
+					const preview = content.length > 80 ? 
+						content.substring(0, 80).trim() + '...' : 
 						content;
 					
 					itemHeader.createEl('span', { 
