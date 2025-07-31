@@ -4,7 +4,7 @@
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
 	"description": "Chat with a stateful AI agent that knows your vault contents and remembers your conversations.",
-	"author": "Cameron",
-	"authorUrl": "",
+	"author": "Cameron Pfiffer",
+	"authorUrl": "https://cameron.pfiffer.org",
 	"isDesktopOnly": false
 }

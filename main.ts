@@ -2824,42 +2824,62 @@ class LettaChatView extends ItemView {
 			// Parse the tool result JSON
 			const result = JSON.parse(toolResult);
 			
-			// Check if it's an array of memory items
+			// Check if it's an array (archival memory search results)
 			if (Array.isArray(result) && result.length > 0) {
 				const memoryList = container.createEl('div', { cls: 'letta-memory-list' });
 				
-				result.forEach((item, index) => {
+				// Filter out non-memory items (like count at the end)
+				const memoryItems = result.filter(item => 
+					typeof item === 'object' && 
+					item !== null && 
+					(item.content || item.text || item.message)
+				);
+				
+				memoryItems.forEach((item, index) => {
+					// Create expandable memory item
 					const memoryItem = memoryList.createEl('div', { cls: 'letta-memory-item' });
 					
-					// Extract content from the memory item
-					let content = '';
-					let timestamp = '';
+					// Extract content and timestamp
+					const content = item.content || item.text || item.message || '';
+					const timestamp = item.timestamp || '';
 					
-					if (typeof item === 'object' && item !== null) {
-						// Try different possible fields for content
-						content = item.content || item.text || item.message || '';
-						timestamp = item.timestamp || '';
-						
-						// If content is still empty, try to extract from nested structure
-						if (!content && typeof item === 'object') {
-							content = JSON.stringify(item, null, 2);
-						}
-					} else {
-						content = String(item);
-					}
+					// Create expandable header
+					const itemHeader = memoryItem.createEl('div', { 
+						cls: 'letta-memory-item-header letta-expandable-header' 
+					});
 					
-					// Create memory item header with index
-					const itemHeader = memoryItem.createEl('div', { cls: 'letta-memory-item-header' });
-					itemHeader.createEl('span', { cls: 'letta-memory-index', text: `${index + 1}.` });
+					// Add expand/collapse indicator
+					const chevron = itemHeader.createEl('span', { 
+						cls: 'letta-expandable-chevron',
+						text: '○'
+					});
 					
-					if (timestamp) {
-						itemHeader.createEl('span', { cls: 'letta-memory-timestamp', text: timestamp });
-					}
+					// Add memory item title with timestamp
+					const titleText = timestamp ? 
+						`Memory ${index + 1} (${timestamp})` : 
+						`Memory ${index + 1}`;
 					
-					// Create content area with basic markdown formatting
-					const itemContent = memoryItem.createEl('div', { cls: 'letta-memory-content' });
+					itemHeader.createEl('span', { 
+						cls: 'letta-memory-title',
+						text: titleText
+					});
 					
-					// Apply basic markdown formatting to the content
+					// Add preview of content (first 100 characters)
+					const preview = content.length > 100 ? 
+						content.substring(0, 100).trim() + '...' : 
+						content;
+					
+					itemHeader.createEl('span', { 
+						cls: 'letta-memory-preview',
+						text: preview
+					});
+					
+					// Create collapsible content area
+					const itemContent = memoryItem.createEl('div', { 
+						cls: 'letta-memory-content letta-expandable-content letta-expandable-collapsed'
+					});
+					
+					// Apply markdown formatting to the full content
 					let formattedContent = content
 						.trim()
 						.replace(/\n{3,}/g, '\n\n')
@@ -2871,15 +2891,38 @@ class LettaChatView extends ItemView {
 						.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
 						.replace(/\*(.*?)\*/g, '<em>$1</em>')
 						.replace(/`([^`]+)`/g, '<code>$1</code>')
+						// Handle bullet lists
+						.replace(/^[•*-]\s+(.+)$/gm, '<li>$1</li>')
 						// Convert line breaks to HTML
 						.replace(/\n/g, '<br>');
 					
+					// Wrap consecutive list items in ul tags
+					formattedContent = formattedContent.replace(/(<li>.*?<\/li>)(?:\s*<li>.*?<\/li>)*/g, (match: string) => {
+						return '<ul>' + match + '</ul>';
+					});
+					
 					itemContent.innerHTML = formattedContent;
+					
+					// Add click handler for expand/collapse
+					itemHeader.addEventListener('click', () => {
+						const isCollapsed = itemContent.classList.contains('letta-expandable-collapsed');
+						if (isCollapsed) {
+							itemContent.removeClass('letta-expandable-collapsed');
+							chevron.textContent = '●';
+						} else {
+							itemContent.addClass('letta-expandable-collapsed');
+							chevron.textContent = '○';
+						}
+					});
 				});
 				
 				// Add summary at the bottom
-				const summary = container.createEl('div', { cls: 'letta-memory-summary' });
-				summary.createEl('span', { text: `Found ${result.length} memory item${result.length === 1 ? '' : 's'}` });
+				if (memoryItems.length > 0) {
+					const summary = container.createEl('div', { cls: 'letta-memory-summary' });
+					summary.createEl('span', { 
+						text: `Found ${memoryItems.length} memory item${memoryItems.length === 1 ? '' : 's'}`
+					});
+				}
 				
 			} else if (result && typeof result === 'object') {
 				// Single item or different structure

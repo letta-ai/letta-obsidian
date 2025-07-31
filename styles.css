@@ -2339,3 +2339,59 @@
     padding-bottom: 24px; /* Make room for button */
 }
 
+/* Expandable Archival Memory Items */
+.letta-memory-item-header.letta-expandable-header {
+    cursor: pointer;
+    padding: 12px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    margin-bottom: 2px;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.letta-memory-item-header.letta-expandable-header:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--background-modifier-border-hover);
+}
+
+.letta-memory-title {
+    font-weight: 600;
+    color: var(--text-accent);
+    flex-shrink: 0;
+}
+
+.letta-memory-preview {
+    color: var(--text-muted);
+    font-size: 0.9em;
+    line-height: 1.4;
+    flex: 1;
+    min-width: 0; /* Allow text to truncate */
+}
+
+.letta-memory-content.letta-expandable-content {
+    padding: 0 12px 12px 12px;
+    margin-top: -2px; /* Connect with header */
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    line-height: 1.5;
+}
+
+.letta-memory-content.letta-expandable-content.letta-expandable-collapsed {
+    display: none;
+}
+
+.letta-memory-content ul {
+    margin: 8px 0;
+    padding-left: 20px;
+}
+
+.letta-memory-content li {
+    margin: 4px 0;
+}
+
