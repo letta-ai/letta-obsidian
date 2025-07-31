@@ -241,11 +241,13 @@
 }
 
 .letta-message-assistant .letta-message-bubble {
-    background: var(--background-secondary);
+    background: transparent;
     color: var(--text-normal);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 6px 18px 18px 18px;
-    max-width: 70%;
+    border: none;
+    border-radius: 0;
+    max-width: 100%;
+    padding: 0;
+    box-shadow: none;
 }
 
 .letta-message-reasoning {
@@ -254,19 +256,17 @@
 }
 
 .letta-message-reasoning .letta-message-bubble {
-    background: var(--background-secondary-alt);
+    background: transparent;
     color: var(--text-muted);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
-    max-width: 85%;
+    border: none;
+    border-radius: 0;
+    max-width: 100%;
     font-size: 0.9em;
     cursor: pointer;
-    transition: background-color 0.2s ease;
+    padding: 0;
+    box-shadow: none;
 }
 
-.letta-message-reasoning .letta-message-bubble:hover {
-    background: var(--background-modifier-hover);
-}
 
 .letta-message-tool-call {
     justify-content: flex-start;
@@ -274,12 +274,14 @@
 }
 
 .letta-message-tool-call .letta-message-bubble {
-    background: var(--background-primary-alt);
+    background: transparent;
     color: var(--text-normal);
-    border: 1px solid var(--color-cyan);
-    border-radius: 8px;
-    max-width: 85%;
+    border: none;
+    border-radius: 0;
+    max-width: 100%;
     font-size: 0.9em;
+    padding: 0;
+    box-shadow: none;
 }
 
 .letta-message-tool-result {
@@ -288,12 +290,14 @@
 }
 
 .letta-message-tool-result .letta-message-bubble {
-    background: var(--background-primary-alt);
+    background: transparent;
     color: var(--text-normal);
-    border: 1px solid var(--color-orange);
-    border-radius: 8px;
-    max-width: 85%;
+    border: none;
+    border-radius: 0;
+    max-width: 100%;
     font-size: 0.9em;
+    padding: 0;
+    box-shadow: none;
 }
 
 /* Expandable content for reasoning and tool calls */
@@ -431,11 +435,13 @@
 }
 
 .letta-message-tool-interaction .letta-message-bubble {
-    background: var(--background-secondary);
+    background: transparent;
     color: var(--text-normal);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
-    max-width: 85%;
+    border: none;
+    border-radius: 0;
+    max-width: 100%;
+    padding: 0;
+    box-shadow: none;
 }
 
 .letta-tool-reasoning {
@@ -516,8 +522,12 @@
 }
 
 .letta-message-bubble {
-    padding: 8px 12px;
     position: relative;
+}
+
+/* Only apply bubble styling to user messages */
+.letta-message-user .letta-message-bubble {
+    padding: 8px 12px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
@@ -2293,5 +2303,39 @@
     color: var(--text-normal);
     line-height: 1.5;
     font-size: 0.9em;
+}
+
+/* Collapsible User Message Styles */
+.letta-user-message-container {
+    position: relative;
+}
+
+.letta-user-message-full.letta-user-message-collapsed {
+    display: none;
+}
+
+.letta-user-message-toggle {
+    position: absolute;
+    bottom: 4px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.6);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: 12px;
+    padding: 4px 8px;
+    font-size: 0.75em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 1;
+}
+
+.letta-user-message-toggle:hover {
+    background: rgba(0, 0, 0, 0.8);
+    transform: scale(1.05);
+}
+
+.letta-user-message-preview {
+    position: relative;
+    padding-bottom: 24px; /* Make room for button */
 }
 

@@ -1467,8 +1467,6 @@ class LettaChatView extends ItemView {
 				reasoningEl.innerHTML = formattedReasoning;
 			}
 
-			const contentEl = bubbleEl.createEl('div', { cls: 'letta-message-content' });
-			
 			// Enhanced markdown-like formatting
 			let formattedContent = textContent
 				// Trim leading and trailing whitespace first
@@ -1510,8 +1508,53 @@ class LettaChatView extends ItemView {
 			if (formattedContent.includes('</p><p>') && !formattedContent.startsWith('<')) {
 				formattedContent = '<p>' + formattedContent + '</p>';
 			}
-			
-			contentEl.innerHTML = formattedContent;
+
+			// Handle collapsible user messages
+			if (type === 'user' && textContent.length > 200) {
+				// Create container for collapsible content
+				const contentContainer = bubbleEl.createEl('div', { cls: 'letta-user-message-container' });
+				
+				// Create preview content (first 200 characters)
+				const previewContent = textContent.substring(0, 200).trim() + '...';
+				const previewEl = contentContainer.createEl('div', { 
+					cls: 'letta-message-content letta-user-message-preview' 
+				});
+				previewEl.textContent = previewContent;
+				
+				// Create full content (initially hidden)
+				const fullContentEl = contentContainer.createEl('div', { 
+					cls: 'letta-message-content letta-user-message-full letta-user-message-collapsed' 
+				});
+				fullContentEl.innerHTML = formattedContent;
+				
+				// Create expand/collapse button
+				const expandBtn = contentContainer.createEl('button', { 
+					cls: 'letta-user-message-toggle',
+					text: 'See more'
+				});
+				
+				// Add click handler for expand/collapse
+				expandBtn.addEventListener('click', (e) => {
+					e.stopPropagation();
+					const isCollapsed = fullContentEl.classList.contains('letta-user-message-collapsed');
+					
+					if (isCollapsed) {
+						// Expand: hide preview, show full content
+						previewEl.style.display = 'none';
+						fullContentEl.removeClass('letta-user-message-collapsed');
+						expandBtn.textContent = 'See less';
+					} else {
+						// Collapse: show preview, hide full content
+						previewEl.style.display = 'block';
+						fullContentEl.addClass('letta-user-message-collapsed');
+						expandBtn.textContent = 'See more';
+					}
+				});
+			} else {
+				// Regular content for short messages or non-user messages
+				const contentEl = bubbleEl.createEl('div', { cls: 'letta-message-content' });
+				contentEl.innerHTML = formattedContent;
+			}
 		}
 
 		// Animate message appearance
