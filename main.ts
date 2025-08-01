@@ -628,6 +628,15 @@ export default class LettaPlugin extends Plugin {
 				this.settings.agentName = existingAgent.name;
 				await this.saveSettings();
 				
+				// Close all files by default to start with a clean context window
+				try {
+					await this.closeAllFiles();
+					console.log('[Letta Plugin] Closed all files on agent connection');
+				} catch (error: any) {
+					console.warn('[Letta Plugin] Failed to close all files on connection:', error.message);
+					// Don't fail the connection if closing files fails - it's not critical
+				}
+				
 				// Check if source is already attached to existing agent
 				console.log(`[Letta Plugin] Checking if source is attached to existing agent...`);
 				const agentSources = existingAgent.sources || [];
@@ -1199,6 +1208,18 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
+	async closeAllFiles(): Promise<void> {
+		if (!this.agent) throw new Error('Agent not connected');
+		await this.makeRequest(`/v1/agents/${this.agent?.id}/files/close-all`, {
+			method: 'POST'
+		});
+	}
+
+	async getContextWindow(): Promise<any> {
+		if (!this.agent) throw new Error('Agent not connected');
+		return await this.makeRequest(`/v1/agents/${this.agent?.id}/context`);
+	}
+
 }
 
 class LettaChatView extends ItemView {
@@ -1279,6 +1300,25 @@ class LettaChatView extends ItemView {
 		const statusIndicator = header.createEl('div', { cls: 'letta-status-indicator' });
 		this.statusDot = statusIndicator.createEl('span', { cls: 'letta-status-dot' });
 		this.statusText = statusIndicator.createEl('span', { cls: 'letta-status-text' });
+		
+		// Context window controls
+		const contextControls = header.createEl('div', { cls: 'letta-context-controls' });
+		
+		// Context info button
+		const contextInfoButton = contextControls.createEl('button', { 
+			cls: 'letta-context-info-button',
+			text: 'Context',
+			title: 'Show context window information'
+		});
+		contextInfoButton.addEventListener('click', () => this.showContextInfo());
+		
+		// Close all files button
+		const closeFilesButton = contextControls.createEl('button', { 
+			cls: 'letta-close-files-button',
+			text: 'Close Files',
+			title: 'Close all open files to free up context space'
+		});
+		closeFilesButton.addEventListener('click', () => this.closeAllFiles());
 		
 		// Set initial status based on current connection state
 		this.updateChatStatus();
@@ -1672,6 +1712,119 @@ class LettaChatView extends ItemView {
 		this.chatContainer.empty();
 		// Update status to show disconnected message if not connected
 		await this.updateChatStatus();
+	}
+
+	async closeAllFiles() {
+		if (!this.plugin.agent) {
+			new Notice('No agent connected');
+			return;
+		}
+
+		try {
+			await this.plugin.closeAllFiles();
+			new Notice('All files closed successfully');
+		} catch (error: any) {
+			console.error('Failed to close all files:', error);
+			new Notice(`Failed to close files: ${error.message}`);
+		}
+	}
+
+	async showContextInfo() {
+		if (!this.plugin.agent) {
+			new Notice('No agent connected');
+			return;
+		}
+
+		try {
+			const contextInfo = await this.plugin.getContextWindow();
+			this.displayContextInfo(contextInfo);
+		} catch (error: any) {
+			console.error('Failed to get context info:', error);
+			new Notice(`Failed to get context info: ${error.message}`);
+		}
+	}
+
+	displayContextInfo(contextInfo: any) {
+		// Create a modal to display context information
+		const modal = new Modal(this.app);
+		modal.setTitle('Context Window Information');
+		
+		const content = modal.contentEl;
+		content.empty();
+		
+		// Basic context stats
+		const statsContainer = content.createEl('div', { cls: 'letta-context-stats' });
+		
+		if (contextInfo.context_window && contextInfo.context_window.total) {
+			const totalTokens = contextInfo.context_window.total;
+			const usedTokens = contextInfo.context_window.used || 0;
+			const availableTokens = totalTokens - usedTokens;
+			const usagePercent = Math.round((usedTokens / totalTokens) * 100);
+			
+			statsContainer.createEl('h3', { text: 'Context Window Usage' });
+			
+			const progressContainer = statsContainer.createEl('div', { cls: 'letta-context-progress-container' });
+			const progressBar = progressContainer.createEl('div', { cls: 'letta-context-progress-bar' });
+			const progressFill = progressBar.createEl('div', { 
+				cls: 'letta-context-progress-fill',
+				attr: { style: `width: ${usagePercent}%` }
+			});
+			
+			const statsTable = statsContainer.createEl('table', { cls: 'letta-context-stats-table' });
+			
+			const addRow = (label: string, value: string | number) => {
+				const row = statsTable.createEl('tr');
+				row.createEl('td', { text: label, cls: 'letta-context-stat-label' });
+				row.createEl('td', { text: value.toString(), cls: 'letta-context-stat-value' });
+			};
+			
+			addRow('Total Tokens', totalTokens.toLocaleString());
+			addRow('Used Tokens', usedTokens.toLocaleString());
+			addRow('Available Tokens', availableTokens.toLocaleString());
+			addRow('Usage', `${usagePercent}%`);
+		}
+		
+		// Context breakdown
+		if (contextInfo.context_breakdown) {
+			const breakdownContainer = content.createEl('div', { cls: 'letta-context-breakdown' });
+			breakdownContainer.createEl('h3', { text: 'Context Breakdown' });
+			
+			const breakdownList = breakdownContainer.createEl('ul', { cls: 'letta-context-breakdown-list' });
+			
+			for (const [key, value] of Object.entries(contextInfo.context_breakdown)) {
+				const listItem = breakdownList.createEl('li');
+				listItem.createEl('span', { text: `${key}: `, cls: 'letta-context-breakdown-key' });
+				listItem.createEl('span', { text: value?.toString() || '0', cls: 'letta-context-breakdown-value' });
+			}
+		}
+		
+		// Open files info
+		if (contextInfo.open_files && contextInfo.open_files.length > 0) {
+			const filesContainer = content.createEl('div', { cls: 'letta-context-files' });
+			filesContainer.createEl('h3', { text: `Open Files (${contextInfo.open_files.length})` });
+			
+			const filesList = filesContainer.createEl('ul', { cls: 'letta-context-files-list' });
+			
+			contextInfo.open_files.forEach((file: any) => {
+				const listItem = filesList.createEl('li', { cls: 'letta-context-file-item' });
+				listItem.createEl('span', { text: file.name || 'Unknown file', cls: 'letta-context-file-name' });
+				if (file.tokens) {
+					listItem.createEl('span', { text: `(${file.tokens} tokens)`, cls: 'letta-context-file-tokens' });
+				}
+			});
+			
+			// Add close all files button in the modal
+			const closeAllButton = filesContainer.createEl('button', { 
+				text: 'Close All Files',
+				cls: 'mod-cta letta-close-all-files-modal-button'
+			});
+			closeAllButton.addEventListener('click', async () => {
+				modal.close();
+				await this.closeAllFiles();
+			});
+		}
+		
+		modal.open();
 	}
 
 	async loadHistoricalMessages() {

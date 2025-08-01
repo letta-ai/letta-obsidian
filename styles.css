@@ -2497,3 +2497,176 @@
     }
 }
 
+/* Context Window Management */
+.letta-context-controls {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+}
+
+.letta-context-info-button,
+.letta-close-files-button {
+    background: var(--background-modifier-form-field);
+    border: 1px solid var(--background-modifier-border);
+    color: var(--text-muted);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.letta-context-info-button:hover,
+.letta-close-files-button:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+    border-color: var(--interactive-accent);
+}
+
+/* Context Info Modal */
+.letta-context-stats {
+    margin-bottom: 24px;
+}
+
+.letta-context-stats h3 {
+    margin: 0 0 12px 0;
+    color: var(--text-normal);
+    font-size: 1.1em;
+    font-weight: 600;
+}
+
+.letta-context-progress-container {
+    margin: 12px 0 16px 0;
+}
+
+.letta-context-progress-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--background-modifier-border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.letta-context-progress-fill {
+    height: 100%;
+    background: var(--interactive-accent);
+    transition: width 0.3s ease;
+}
+
+.letta-context-stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+}
+
+.letta-context-stats-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.letta-context-stat-label {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.letta-context-stat-value {
+    color: var(--text-normal);
+    text-align: right;
+    font-weight: 600;
+}
+
+.letta-context-breakdown {
+    margin-bottom: 24px;
+}
+
+.letta-context-breakdown h3 {
+    margin: 0 0 12px 0;
+    color: var(--text-normal);
+    font-size: 1.1em;
+    font-weight: 600;
+}
+
+.letta-context-breakdown-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.letta-context-breakdown-list li {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+    display: flex;
+    justify-content: space-between;
+}
+
+.letta-context-breakdown-key {
+    color: var(--text-muted);
+    text-transform: capitalize;
+}
+
+.letta-context-breakdown-value {
+    color: var(--text-normal);
+    font-weight: 500;
+}
+
+.letta-context-files {
+    margin-bottom: 24px;
+}
+
+.letta-context-files h3 {
+    margin: 0 0 12px 0;
+    color: var(--text-normal);
+    font-size: 1.1em;
+    font-weight: 600;
+}
+
+.letta-context-files-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 16px 0;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.letta-context-file-item {
+    padding: 8px 12px;
+    background: var(--background-modifier-form-field);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.letta-context-file-name {
+    color: var(--text-normal);
+    font-weight: 500;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.letta-context-file-tokens {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    margin-left: 8px;
+}
+
+.letta-close-all-files-modal-button {
+    width: 100%;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+    padding: 10px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.letta-close-all-files-modal-button:hover {
+    background: var(--interactive-accent-hover);
+    transform: translateY(-1px);
+}
+
