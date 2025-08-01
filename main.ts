@@ -1768,7 +1768,7 @@ class LettaChatView extends ItemView {
 				const isSystemLine = systemPromptPatterns.some(pattern => {
 					const match = pattern.test(trimmed);
 					if (match) {
-						console.log('[Letta Plugin] Filtering system line:', trimmed);
+						// console.log('[Letta Plugin] Filtering system line:', trimmed);
 					}
 					return match;
 				});
@@ -1901,6 +1901,8 @@ class LettaChatView extends ItemView {
 	processMessagesInGroups(messages: any[]) {
 		let currentReasoning = '';
 		let currentToolCallMessage: HTMLElement | null = null;
+		let currentToolName = '';
+		let currentToolCallData: any = null;
 		
 		for (const message of messages) {
 			// Skip system messages as they're internal
@@ -1941,6 +1943,10 @@ class LettaChatView extends ItemView {
 			
 			case 'tool_call_message':
 				if (message.tool_call) {
+					// Extract and store the tool name and data for later use with tool result
+					currentToolName = message.tool_call.name || (message.tool_call.function && message.tool_call.function.name) || '';
+					currentToolCallData = message.tool_call;
+					
 					// Create tool interaction with reasoning and wait for tool result
 					currentToolCallMessage = this.addToolInteractionMessage(
 						currentReasoning, 
@@ -1953,11 +1959,13 @@ class LettaChatView extends ItemView {
 			
 			case 'tool_return_message':
 				if (message.tool_return && currentToolCallMessage) {
-					// Add tool result to the existing tool interaction message
+					// Add tool result to the existing tool interaction message with tool name and data
 					this.addToolResultToMessage(currentToolCallMessage, 
-						JSON.stringify(message.tool_return, null, 2));
-					// Clear the current tool call message reference
+						JSON.stringify(message.tool_return, null, 2), currentToolName, currentToolCallData);
+					// Clear the current tool call message reference, tool name, and data
 					currentToolCallMessage = null;
+					currentToolName = '';
+					currentToolCallData = null;
 				}
 				break;
 			
@@ -2874,7 +2882,7 @@ class LettaChatView extends ItemView {
 		return messageEl;
 	}
 
-	addToolResultToMessage(messageEl: HTMLElement, toolResult: string) {
+	addToolResultToMessage(messageEl: HTMLElement, toolResult: string, toolName?: string, toolCallData?: any) {
 		const bubbleEl = messageEl.querySelector('.letta-message-bubble');
 		if (!bubbleEl) return;
 
@@ -2892,20 +2900,28 @@ class LettaChatView extends ItemView {
 			toolCallHeader.removeClass('letta-tool-prominent');
 		}
 
-		// Detect tool type by looking at the tool call data stored in the message
+		// Detect tool type - use provided toolName and toolCallData if available, otherwise parse from DOM
 		let isArchivalMemorySearch = false;
 		let isArchivalMemoryInsert = false;
-		let toolCallData = null;
-		try {
-			const toolCallPre = bubbleEl.querySelector('.letta-code-block code');
-			if (toolCallPre) {
-				toolCallData = JSON.parse(toolCallPre.textContent || '{}');
-				const toolName = toolCallData.name || (toolCallData.function && toolCallData.function.name);
-				isArchivalMemorySearch = toolName === 'archival_memory_search';
-				isArchivalMemoryInsert = toolName === 'archival_memory_insert';
+		let effectiveToolCallData = toolCallData;
+		
+		if (toolName) {
+			// Use provided tool name (for historical messages)
+			isArchivalMemorySearch = toolName === 'archival_memory_search';
+			isArchivalMemoryInsert = toolName === 'archival_memory_insert';
+		} else {
+			// Parse from DOM (for streaming messages)
+			try {
+				const toolCallPre = bubbleEl.querySelector('.letta-code-block code');
+				if (toolCallPre) {
+					effectiveToolCallData = JSON.parse(toolCallPre.textContent || '{}');
+					const detectedToolName = effectiveToolCallData.name || (effectiveToolCallData.function && effectiveToolCallData.function.name);
+					isArchivalMemorySearch = detectedToolName === 'archival_memory_search';
+					isArchivalMemoryInsert = detectedToolName === 'archival_memory_insert';
+				}
+			} catch (e) {
+				// Ignore parsing errors
 			}
-		} catch (e) {
-			// Ignore parsing errors
 		}
 
 		// Show the tool result section
@@ -2931,7 +2947,7 @@ class LettaChatView extends ItemView {
 			if (isArchivalMemorySearch) {
 				this.createArchivalMemoryDisplay(toolResultContent, toolResult);
 			} else if (isArchivalMemoryInsert) {
-				this.createArchivalMemoryInsertDisplay(toolResultContent, toolCallData, toolResult);
+				this.createArchivalMemoryInsertDisplay(toolResultContent, effectiveToolCallData, toolResult);
 			} else {
 				// Add full content to expandable section for other tools
 				const toolResultDiv = toolResultContent.createEl('div', { 
@@ -2964,8 +2980,6 @@ class LettaChatView extends ItemView {
 	}
 
 	createArchivalMemoryDisplay(container: HTMLElement, toolResult: string) {
-		console.log('[Letta Plugin] createArchivalMemoryDisplay called - toolResult length:', toolResult.length);
-		console.log('[Letta Plugin] toolResult preview:', toolResult.substring(0, 200));
 		try {
 			let result;
 			let rawContent = toolResult.trim();
@@ -2988,7 +3002,11 @@ class LettaChatView extends ItemView {
 						
 						while ((dictMatch = dictPattern.exec(arrayString)) !== null) {
 							const timestamp = dictMatch[1];
-							const content = dictMatch[2].replace(/\\'/g, "'");
+							const content = dictMatch[2]
+								.replace(/\\'/g, "'")
+								.replace(/\\n/g, '\n')
+								.replace(/\\t/g, '\t')
+								.replace(/\\"/g, '"');
 							memoryItems.push({ timestamp, content });
 						}
 						
