@@ -1,7 +1,7 @@
 {
 	"id": "letta-ai-agent",
 	"name": "Letta AI Agent",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"minAppVersion": "0.15.0",
 	"description": "Chat with a stateful AI agent that knows your vault contents and remembers your conversations.",
 	"author": "Cameron Pfiffer",
