@@ -27,6 +27,7 @@ interface LettaPluginSettings {
 	autoSync: boolean;
 	syncOnStartup: boolean;
 	embeddingModel: string;
+	showReasoning: boolean; // Control whether reasoning messages are visible
 }
 
 const DEFAULT_SETTINGS: LettaPluginSettings = {
@@ -38,7 +39,8 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	sourceName: 'obsidian-vault-files',
 	autoSync: true,
 	syncOnStartup: true,
-	embeddingModel: 'letta/letta-free'
+	embeddingModel: 'letta/letta-free',
+	showReasoning: true // Default to showing reasoning messages in tool interactions
 }
 
 interface LettaAgent {
@@ -1116,6 +1118,87 @@ export default class LettaPlugin extends Plugin {
 		return response.messages || [];
 	}
 
+	async sendMessageToAgentStream(message: string, onMessage: (message: any) => void, onError: (error: Error) => void, onComplete: () => void): Promise<void> {
+		if (!this.agent) throw new Error('Agent not connected');
+
+		const url = `${this.settings.lettaBaseUrl}/v1/agents/${this.agent?.id}/messages/stream`;
+		const headers: any = {
+			'Content-Type': 'application/json'
+		};
+
+		// Only add Authorization header if API key is provided
+		if (this.settings.lettaApiKey) {
+			headers['Authorization'] = `Bearer ${this.settings.lettaApiKey}`;
+		}
+
+		const body = {
+			messages: [{
+				role: "user",
+				content: [{
+					type: "text",
+					text: message
+				}]
+			}],
+			stream_steps: true,
+			stream_tokens: true
+		};
+
+		try {
+			const response = await fetch(url, {
+				method: 'POST',
+				headers,
+				body: JSON.stringify(body)
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+			}
+
+			if (!response.body) {
+				throw new Error('No response body available for streaming');
+			}
+
+			const reader = response.body.getReader();
+			const decoder = new TextDecoder();
+
+			try {
+				while (true) {
+					const { done, value } = await reader.read();
+					
+					if (done) {
+						break;
+					}
+
+					const chunk = decoder.decode(value, { stream: true });
+					const lines = chunk.split('\n');
+
+					for (const line of lines) {
+						if (line.trim() === '') continue;
+						if (line.startsWith('data: ')) {
+							const data = line.slice(6); // Remove 'data: ' prefix
+							
+							if (data === '[DONE]') {
+								onComplete();
+								return;
+							}
+
+							try {
+								const message = JSON.parse(data);
+								onMessage(message);
+							} catch (parseError) {
+								console.warn('[Letta Plugin] Failed to parse streaming message:', data);
+							}
+						}
+					}
+				}
+			} finally {
+				reader.releaseLock();
+			}
+		} catch (error: any) {
+			onError(error);
+		}
+	}
+
 }
 
 class LettaChatView extends ItemView {
@@ -1849,7 +1932,9 @@ class LettaChatView extends ItemView {
 			
 			case 'reasoning_message':
 				if (message.reasoning) {
-					// Accumulate reasoning to be used for next tool call or assistant message
+					// Display reasoning as a standalone message
+					this.addMessage('reasoning', message.reasoning);
+					// Also accumulate reasoning to be used for next tool call or assistant message
 					currentReasoning += message.reasoning;
 				}
 				break;
@@ -2543,13 +2628,45 @@ class LettaChatView extends ItemView {
 		this.messageInput.style.height = 'auto';
 
 		try {
-			// Use non-streaming API for all messages
-			console.log('[Letta Plugin] Sending message via non-streaming API');
-			const messages = await this.plugin.sendMessageToAgent(message);
-			this.processNonStreamingMessages(messages);
+			// Use streaming API for real-time responses
+			console.log('[Letta Plugin] Sending message via streaming API');
+			
+			// Reset streaming state
+			this.resetStreamingState();
+			
+			await this.plugin.sendMessageToAgentStream(
+				message,
+				(message) => {
+					// Handle each streaming message
+					this.processStreamingMessage(message);
+				},
+				(error) => {
+					// Handle streaming error
+					console.error('Streaming error:', error);
+					this.addMessage('assistant', `**Streaming Error**: ${error.message}`, 'Error');
+				},
+				() => {
+					// Handle streaming completion
+					console.log('[Letta Plugin] Streaming completed');
+					this.markStreamingComplete();
+				}
+			);
 
 		} catch (error: any) {
 			console.error('Failed to send message:', error);
+			
+			// Try fallback to non-streaming API if streaming fails
+			if (error.message.includes('stream') || error.message.includes('fetch') || error.message.includes('network')) {
+				console.log('[Letta Plugin] Streaming failed, trying non-streaming fallback...');
+				try {
+					const messages = await this.plugin.sendMessageToAgent(message);
+					this.processNonStreamingMessages(messages);
+					return; // Success with fallback
+				} catch (fallbackError: any) {
+					console.error('Fallback also failed:', fallbackError);
+					error = fallbackError; // Use the fallback error for error handling
+				}
+			}
 			
 			// Provide specific error messages for common issues
 			let errorMessage = `**Error**: ${error.message}`;
@@ -2624,8 +2741,8 @@ class LettaChatView extends ItemView {
 		leftSide.createEl('span', { cls: 'letta-message-title', text: 'Tool Usage' });
 		leftSide.createEl('span', { cls: 'letta-message-timestamp', text: timestamp });
 
-		// Reasoning content (always visible)
-		if (reasoning) {
+		// Reasoning content (only visible if setting is enabled)
+		if (reasoning && this.plugin.settings.showReasoning) {
 			const reasoningEl = bubbleEl.createEl('div', { cls: 'letta-tool-reasoning' });
 			
 			// Enhanced markdown-like formatting for reasoning
@@ -2913,9 +3030,7 @@ class LettaChatView extends ItemView {
 					});
 					
 					// Add memory item title with timestamp
-					const titleText = timestamp ? 
-						`Memory ${index + 1} (${timestamp})` : 
-						`Memory ${index + 1}`;
+					const titleText = "";
 					
 					itemHeader.createEl('span', { 
 						cls: 'letta-memory-title',
@@ -3188,6 +3303,520 @@ class LettaChatView extends ItemView {
 			}
 		}
 	}
+
+	processStreamingMessage(message: any) {
+		console.log('[Letta Plugin] Processing streaming message:', message);
+		
+		// Handle system messages - capture system_alert for hidden viewing, skip heartbeats
+		if (message.type === 'system_alert' || 
+			(message.message && typeof message.message === 'string' && message.message.includes('prior messages have been hidden'))) {
+			console.log('[Letta Plugin] Capturing streaming system_alert message:', message);
+			this.addSystemMessage(message);
+			return;
+		}
+		
+		// Handle heartbeat messages - show typing indicator
+		if (message.type === 'heartbeat' || 
+			message.message_type === 'heartbeat' ||
+			message.role === 'heartbeat' ||
+			(message.reason && (message.reason.includes('automated system message') ||
+								message.reason.includes('Function call failed, returning control') ||
+								message.reason.includes('request_heartbeat=true')))) {
+			this.handleHeartbeat();
+			return;
+		}
+		
+		// Handle usage statistics
+		if (message.message_type === 'usage_statistics') {
+			console.log('[Letta Plugin] Received usage statistics:', message);
+			return;
+		}
+		
+		switch (message.message_type) {
+			case 'reasoning_message':
+				if (message.reasoning) {
+					// For streaming, we accumulate reasoning and show it in real-time
+					console.log('[Letta Plugin] Received reasoning message:', message.reasoning.substring(0, 100) + '...');
+					this.updateOrCreateReasoningMessage(message.reasoning);
+				}
+				break;
+			case 'tool_call_message':
+				if (message.tool_call) {
+					// Handle streaming tool call chunks
+					console.log('[Letta Plugin] Received tool call message:', message.tool_call);
+					this.handleStreamingToolCall(message.tool_call);
+				} else {
+					console.log('[Letta Plugin] Received tool_call_message but no tool_call field:', message);
+				}
+				break;
+			case 'tool_return_message':
+				if (message.tool_return) {
+					console.log(`[Letta Plugin] Tool return received for: ${this.currentToolCallId}`);
+					// Update the current tool interaction with the result
+					this.updateStreamingToolResult(message.tool_return);
+					// Clear the current tool call state since it's complete
+					this.currentToolCallId = null;
+					this.currentToolCallArgs = '';
+					this.currentToolCallName = '';
+				}
+				break;
+			case 'assistant_message':
+				console.log('[Letta Plugin] Processing streaming assistant_message:', message);
+				
+				// Try multiple possible content fields
+				let content = message.content || message.text || message.message || message.assistant_message;
+				
+				// Handle array content by extracting text from array elements
+				if (Array.isArray(content)) {
+					content = content.map(item => {
+						if (typeof item === 'string') {
+							return item;
+						} else if (item && typeof item === 'object') {
+							return item.text || item.content || item.message || item.value || JSON.stringify(item);
+						}
+						return String(item);
+					}).join('');
+					console.log('[Letta Plugin] Streaming: Converted array content to string:', content);
+				}
+				
+				if (content) {
+					// Filter out system prompt content
+					const filteredContent = this.filterSystemPromptContent(content);
+					this.updateOrCreateAssistantMessage(filteredContent);
+				} else {
+					console.warn('[Letta Plugin] Streaming assistant message has no recognizable content field:', Object.keys(message));
+				}
+				break;
+				
+			case 'heartbeat':
+				// Skip heartbeat messages - should already be filtered above
+				console.log('[Letta Plugin] Heartbeat message reached switch statement - should have been filtered earlier');
+				break;
+				
+			default:
+				console.log('[Letta Plugin] Unrecognized streaming message type:', message.message_type, 'Full message:', message);
+				break;
+		}
+	}
+
+	// State for streaming messages
+	private currentReasoningContent: string = '';
+	private currentAssistantContent: string = '';
+	private currentAssistantMessageEl: HTMLElement | null = null;
+	private currentReasoningMessageEl: HTMLElement | null = null;
+	private currentToolMessageEl: HTMLElement | null = null;
+	private currentToolCallId: string | null = null;
+	private currentToolCallArgs: string = '';
+	private currentToolCallName: string = '';
+
+	updateOrCreateReasoningMessage(reasoning: string) {
+		// Only accumulate reasoning content, don't create standalone messages
+		// Reasoning will be displayed as part of tool interactions instead
+		this.currentReasoningContent += reasoning;
+		console.log('[Letta Plugin] Accumulated reasoning content:', this.currentReasoningContent);
+	}
+
+	updateOrCreateAssistantMessage(content: string) {
+		this.currentAssistantContent += content;
+		
+		// Create or update assistant message
+		if (!this.currentAssistantMessageEl) {
+			this.currentAssistantMessageEl = this.chatContainer.createEl('div', { 
+				cls: 'letta-message letta-message-assistant' 
+			});
+			const bubbleEl = this.currentAssistantMessageEl.createEl('div', { cls: 'letta-message-bubble' });
+			
+			// Add header
+			const headerEl = bubbleEl.createEl('div', { cls: 'letta-message-header' });
+			const leftSide = headerEl.createEl('div', { cls: 'letta-message-header-left' });
+			leftSide.createEl('span', { cls: 'letta-message-title', text: this.plugin.settings.agentName });
+			leftSide.createEl('span', { cls: 'letta-message-timestamp', text: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+			
+			// Add reasoning content if available and setting is enabled
+			if (this.currentReasoningContent && this.plugin.settings.showReasoning) {
+				const reasoningEl = bubbleEl.createEl('div', { cls: 'letta-tool-reasoning' });
+				
+				// Apply markdown formatting to reasoning
+				let formattedReasoning = this.currentReasoningContent
+					.trim()
+					.replace(/\n{3,}/g, '\n\n')
+					.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+					.replace(/^## (.+)$/gm, '<h2>$1</h2>')
+					.replace(/^# (.+)$/gm, '<h1>$1</h1>')
+					.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+					.replace(/\*(.*?)\*/g, '<em>$1</em>')
+					.replace(/`([^`]+)`/g, '<code>$1</code>')
+					.replace(/^(\d+)\.\s+(.+)$/gm, '<li class="numbered-list">$2</li>')
+					.replace(/^[•*-]\s+(.+)$/gm, '<li>$1</li>')
+					.replace(/\n\n/g, '</p><p>')
+					.replace(/\n/g, '<br>');
+				
+				// Wrap consecutive numbered list items in <ol> tags
+				formattedReasoning = formattedReasoning.replace(/(<li class="numbered-list">.*?<\/li>)(\s*<br>\s*<li class="numbered-list">.*?<\/li>)*/g, (match) => {
+					const cleanMatch = match.replace(/<br>\s*/g, '');
+					return '<ol>' + cleanMatch + '</ol>';
+				});
+				
+				// Wrap consecutive regular list items in <ul> tags
+				formattedReasoning = formattedReasoning.replace(/(<li>(?!.*class="numbered-list").*?<\/li>)(\s*<br>\s*<li>(?!.*class="numbered-list").*?<\/li>)*/g, (match) => {
+					const cleanMatch = match.replace(/<br>\s*/g, '');
+					return '<ul>' + cleanMatch + '</ul>';
+				});
+				
+				// Wrap in paragraphs if needed
+				if (formattedReasoning.includes('</p><p>') && !formattedReasoning.startsWith('<')) {
+					formattedReasoning = '<p>' + formattedReasoning + '</p>';
+				}
+				
+				reasoningEl.innerHTML = formattedReasoning;
+				console.log('[Letta Plugin] Displayed reasoning content in assistant message');
+			}
+			
+			// Add content container
+			bubbleEl.createEl('div', { cls: 'letta-message-content' });
+		}
+		
+		// Update the assistant content with markdown formatting
+		const contentEl = this.currentAssistantMessageEl.querySelector('.letta-message-content');
+		if (contentEl) {
+			// Apply the same markdown formatting as in addMessage
+			let formattedContent = this.currentAssistantContent
+				.trim()
+				.replace(/\n{3,}/g, '\n\n')
+				.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+				.replace(/^## (.+)$/gm, '<h2>$1</h2>')
+				.replace(/^# (.+)$/gm, '<h1>$1</h1>')
+				.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+				.replace(/\*(.*?)\*/g, '<em>$1</em>')
+				.replace(/`([^`]+)`/g, '<code>$1</code>')
+				.replace(/^(\d+)\.\s+(.+)$/gm, '<li class="numbered-list">$2</li>')
+				.replace(/^[•*-]\s+(.+)$/gm, '<li>$1</li>')
+				.replace(/\n\n/g, '</p><p>')
+				.replace(/\n/g, '<br>');
+			
+			// Wrap consecutive numbered list items in <ol> tags
+			formattedContent = formattedContent.replace(/(<li class="numbered-list">.*?<\/li>)(\s*<br>\s*<li class="numbered-list">.*?<\/li>)*/g, (match) => {
+				const cleanMatch = match.replace(/<br>\s*/g, '');
+				return '<ol>' + cleanMatch + '</ol>';
+			});
+			
+			// Wrap consecutive regular list items in <ul> tags
+			formattedContent = formattedContent.replace(/(<li>(?!.*class="numbered-list").*?<\/li>)(\s*<br>\s*<li>(?!.*class="numbered-list").*?<\/li>)*/g, (match) => {
+				const cleanMatch = match.replace(/<br>\s*/g, '');
+				return '<ul>' + cleanMatch + '</ul>';
+			});
+			
+			// Wrap in paragraphs if needed
+			if (formattedContent.includes('</p><p>') && !formattedContent.startsWith('<')) {
+				formattedContent = '<p>' + formattedContent + '</p>';
+			}
+			
+			contentEl.innerHTML = formattedContent;
+		}
+		
+		// Scroll to bottom
+		setTimeout(() => {
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: 'smooth'
+			});
+		}, 10);
+	}
+
+	createStreamingToolInteraction(toolCall: any) {
+		// Clean up previous tool calls
+		this.cleanupPreviousToolCalls();
+		
+		// Parse tool call to extract tool name
+		let toolName = 'Tool Call';
+		try {
+			if (toolCall.name) {
+				toolName = toolCall.name;
+			} else if (toolCall.function && toolCall.function.name) {
+				toolName = toolCall.function.name;
+			}
+		} catch (e) {
+			// Keep default if parsing fails
+		}
+		
+		// Create tool interaction message
+		this.currentToolMessageEl = this.chatContainer.createEl('div', { 
+			cls: 'letta-message letta-message-tool-interaction' 
+		});
+
+		const bubbleEl = this.currentToolMessageEl.createEl('div', { cls: 'letta-message-bubble' });
+
+		// Add timestamp
+		const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+		// Header with timestamp
+		const headerEl = bubbleEl.createEl('div', { cls: 'letta-message-header' });
+		const leftSide = headerEl.createEl('div', { cls: 'letta-message-header-left' });
+		leftSide.createEl('span', { cls: 'letta-message-title', text: 'Tool Usage' });
+		leftSide.createEl('span', { cls: 'letta-message-timestamp', text: timestamp });
+
+		// Add reasoning content if available and setting is enabled
+		console.log('[Letta Plugin] Creating tool interaction with reasoning content:', this.currentReasoningContent);
+		console.log('[Letta Plugin] showReasoning setting:', this.plugin.settings.showReasoning);
+		if (this.currentReasoningContent && this.plugin.settings.showReasoning) {
+			const reasoningEl = bubbleEl.createEl('div', { cls: 'letta-tool-reasoning' });
+			
+			// Apply markdown formatting to reasoning
+			let formattedReasoning = this.currentReasoningContent
+				.trim()
+				.replace(/\n{3,}/g, '\n\n')
+				.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+				.replace(/^## (.+)$/gm, '<h2>$1</h2>')
+				.replace(/^# (.+)$/gm, '<h1>$1</h1>')
+				.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+				.replace(/\*(.*?)\*/g, '<em>$1</em>')
+				.replace(/`([^`]+)`/g, '<code>$1</code>')
+				.replace(/^(\d+)\.\s+(.+)$/gm, '<li class="numbered-list">$2</li>')
+				.replace(/^[•*-]\s+(.+)$/gm, '<li>$1</li>')
+				.replace(/\n\n/g, '</p><p>')
+				.replace(/\n/g, '<br>');
+			
+			// Wrap consecutive numbered list items in <ol> tags
+			formattedReasoning = formattedReasoning.replace(/(<li class="numbered-list">.*?<\/li>)(\s*<br>\s*<li class="numbered-list">.*?<\/li>)*/g, (match) => {
+				const cleanMatch = match.replace(/<br>\s*/g, '');
+				return '<ol>' + cleanMatch + '</ol>';
+			});
+			
+			// Wrap consecutive regular list items in <ul> tags
+			formattedReasoning = formattedReasoning.replace(/(<li>(?!.*class="numbered-list").*?<\/li>)(\s*<br>\s*<li>(?!.*class="numbered-list").*?<\/li>)*/g, (match) => {
+				const cleanMatch = match.replace(/<br>\s*/g, '');
+				return '<ul>' + cleanMatch + '</ul>';
+			});
+			
+			// Wrap in paragraphs if needed
+			if (formattedReasoning.includes('</p><p>') && !formattedReasoning.startsWith('<')) {
+				formattedReasoning = '<p>' + formattedReasoning + '</p>';
+			}
+			
+			reasoningEl.innerHTML = formattedReasoning;
+			console.log('[Letta Plugin] Successfully created reasoning element with content');
+		} else {
+			console.log('[Letta Plugin] Not displaying reasoning content - either empty or setting disabled');
+			console.log('[Letta Plugin] Reasoning content length:', this.currentReasoningContent.length);
+			console.log('[Letta Plugin] showReasoning setting:', this.plugin.settings.showReasoning);
+		}
+
+		// Tool call expandable section
+		const toolCallHeader = bubbleEl.createEl('div', { cls: 'letta-expandable-header letta-tool-section letta-tool-prominent' });
+		
+		const toolLeftSide = toolCallHeader.createEl('div', { cls: 'letta-tool-left' });
+		toolLeftSide.createEl('span', { cls: 'letta-expandable-title letta-tool-name', text: toolName });
+		
+		// Curvy connecting line (SVG)
+		const connectionLine = toolCallHeader.createEl('div', { cls: 'letta-tool-connection' });
+		connectionLine.innerHTML = `
+			<svg viewBox="0 0 400 12" class="letta-tool-curve" preserveAspectRatio="none">
+				<path d="M 0,6 Q 12.5,2 25,6 Q 37.5,10 50,6 Q 62.5,2 75,6 Q 87.5,10 100,6 Q 112.5,2 125,6 Q 137.5,10 150,6 Q 162.5,2 175,6 Q 187.5,10 200,6 Q 212.5,2 225,6 Q 237.5,10 250,6 Q 262.5,2 275,6 Q 287.5,10 300,6 Q 312.5,2 325,6 Q 337.5,10 350,6 Q 362.5,2 375,6 Q 387.5,10 400,6 Q 412.5,2 425,6 Q 437.5,10 450,6" 
+					  stroke="var(--interactive-accent)" 
+					  stroke-width="1.5" 
+					  fill="none" 
+					  opacity="0.7"/>
+			</svg>
+		`;
+		
+		const toolRightSide = toolCallHeader.createEl('div', { cls: 'letta-tool-right' });
+		toolRightSide.createEl('span', { cls: 'letta-expandable-chevron letta-tool-circle', text: '○' });
+		
+		const toolCallContent = bubbleEl.createEl('div', { 
+			cls: 'letta-expandable-content letta-expandable-collapsed'
+		});
+		const toolCallPre = toolCallContent.createEl('pre', { cls: 'letta-code-block' });
+		toolCallPre.createEl('code', { text: JSON.stringify(toolCall, null, 2) });
+		
+		// Add click handler for tool call expand/collapse
+		toolCallHeader.addEventListener('click', () => {
+			const isCollapsed = toolCallContent.classList.contains('letta-expandable-collapsed');
+			if (isCollapsed) {
+				toolCallContent.removeClass('letta-expandable-collapsed');
+				toolCallHeader.querySelector('.letta-expandable-chevron')!.textContent = '●';
+			} else {
+				toolCallContent.addClass('letta-expandable-collapsed');
+				toolCallHeader.querySelector('.letta-expandable-chevron')!.textContent = '○';
+			}
+		});
+
+		// Tool result placeholder (will be filled later)
+		const toolResultHeader = bubbleEl.createEl('div', { 
+			cls: 'letta-expandable-header letta-tool-section letta-tool-result-pending'
+		});
+		toolResultHeader.style.display = 'none';
+		toolResultHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Result' });
+		toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron', text: '○' });
+		
+		const toolResultContent = bubbleEl.createEl('div', { 
+			cls: 'letta-expandable-content letta-expandable-collapsed'
+		});
+		toolResultContent.style.display = 'none';
+
+		// Auto-scroll to bottom
+		setTimeout(() => {
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: 'smooth'
+			});
+		}, 10);
+
+		// Clear reasoning content after using it
+		this.currentReasoningContent = '';
+		console.log('[Letta Plugin] Cleared reasoning content after creating tool interaction');
+	}
+
+	updateStreamingToolResult(toolReturn: any) {
+		if (!this.currentToolMessageEl) return;
+
+		const bubbleEl = this.currentToolMessageEl.querySelector('.letta-message-bubble');
+		if (!bubbleEl) return;
+
+		// Remove wavy line animation now that tool call is complete
+		const wavyLine = bubbleEl.querySelector('.letta-tool-curve');
+		if (wavyLine) {
+			wavyLine.remove();
+		}
+
+		// Remove prominent styling from tool call header now that it's complete
+		const toolCallHeader = bubbleEl.querySelector('.letta-tool-prominent');
+		if (toolCallHeader) {
+			toolCallHeader.removeClass('letta-tool-prominent');
+		}
+
+		// Detect tool type by looking at the tool call data stored in the message
+		let isArchivalMemorySearch = false;
+		let isArchivalMemoryInsert = false;
+		let toolCallData = null;
+		try {
+			const toolCallPre = bubbleEl.querySelector('.letta-code-block code');
+			if (toolCallPre) {
+				toolCallData = JSON.parse(toolCallPre.textContent || '{}');
+				const toolName = toolCallData.name || (toolCallData.function && toolCallData.function.name);
+				isArchivalMemorySearch = toolName === 'archival_memory_search';
+				isArchivalMemoryInsert = toolName === 'archival_memory_insert';
+			}
+		} catch (e) {
+			// Ignore parsing errors
+		}
+
+		// Show the tool result section
+		const toolResultHeader = bubbleEl.querySelector('.letta-tool-result-pending') as HTMLElement;
+		const toolResultContent = bubbleEl.querySelector('.letta-expandable-content:last-child') as HTMLElement;
+		
+		if (toolResultHeader && toolResultContent) {
+			// Format the result
+			const formattedResult = this.formatToolResult(JSON.stringify(toolReturn, null, 2));
+			
+			// Make visible
+			toolResultHeader.style.display = 'flex';
+			toolResultContent.style.display = 'block';
+			toolResultHeader.removeClass('letta-tool-result-pending');
+
+			// Handle special tool types
+			if (isArchivalMemorySearch) {
+				this.createArchivalMemoryDisplay(toolResultContent, JSON.stringify(toolReturn, null, 2));
+			} else if (isArchivalMemoryInsert) {
+				this.createArchivalMemoryInsertDisplay(toolResultContent, toolCallData, JSON.stringify(toolReturn, null, 2));
+			} else {
+				// Add full content to expandable section for other tools
+				toolResultContent.createEl('div', { 
+					cls: 'letta-tool-result-text',
+					text: formattedResult 
+				});
+			}
+
+			// Add click handler for tool result expand/collapse
+			const toolResultChevron = toolResultHeader.querySelector('.letta-expandable-chevron');
+			toolResultHeader.addEventListener('click', () => {
+				const isCollapsed = toolResultContent.classList.contains('letta-expandable-collapsed');
+				if (isCollapsed) {
+					toolResultContent.removeClass('letta-expandable-collapsed');
+					if (toolResultChevron) toolResultChevron.textContent = '●';
+				} else {
+					toolResultContent.addClass('letta-expandable-collapsed');
+					if (toolResultChevron) toolResultChevron.textContent = '○';
+				}
+			});
+		}
+
+		// Auto-scroll to bottom
+		setTimeout(() => {
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: 'smooth'
+			});
+		}, 10);
+
+		// Clear the current tool message reference
+		this.currentToolMessageEl = null;
+	}
+
+	resetStreamingState() {
+		// Remove any existing streaming assistant message from DOM
+		if (this.currentAssistantMessageEl) {
+			this.currentAssistantMessageEl.remove();
+		}
+		
+		// Remove any existing streaming tool message from DOM
+		if (this.currentToolMessageEl) {
+			this.currentToolMessageEl.remove();
+		}
+		
+		this.currentReasoningContent = '';
+		this.currentAssistantContent = '';
+		this.currentAssistantMessageEl = null;
+		this.currentReasoningMessageEl = null;
+		this.currentToolMessageEl = null;
+		this.currentToolCallId = null;
+		this.currentToolCallArgs = '';
+		this.currentToolCallName = '';
+	}
+
+	markStreamingComplete() {
+		// Remove streaming cursor from assistant message
+		if (this.currentAssistantMessageEl) {
+			this.currentAssistantMessageEl.classList.add('streaming-complete');
+		}
+		
+		// Hide typing indicator
+		this.hideTypingIndicator();
+	}
+
+	handleStreamingToolCall(toolCall: any) {
+		const toolCallId = toolCall.tool_call_id || toolCall.id;
+		const toolName = toolCall.name || (toolCall.function && toolCall.function.name) || 'Tool Call';
+		const toolArgs = toolCall.arguments || toolCall.args || '';
+		
+		// Check if this is a new tool call or a continuation of the current one
+		if (this.currentToolCallId !== toolCallId) {
+			// New tool call - create the interaction
+			console.log('[Letta Plugin] Creating new tool interaction with reasoning content:', this.currentReasoningContent);
+			this.currentToolCallId = toolCallId;
+			this.currentToolCallName = toolName;
+			this.currentToolCallArgs = toolArgs;
+			this.createStreamingToolInteraction(toolCall);
+		} else {
+			// Continuation of current tool call - accumulate arguments
+			this.currentToolCallArgs += toolArgs;
+			
+			// Update the tool call display with accumulated arguments
+			if (this.currentToolMessageEl) {
+				const toolCallPre = this.currentToolMessageEl.querySelector('.letta-code-block code');
+				if (toolCallPre) {
+					const updatedToolCall = {
+						...toolCall,
+						arguments: this.currentToolCallArgs
+					};
+					toolCallPre.textContent = JSON.stringify(updatedToolCall, null, 2);
+				}
+			}
+		}
+		
+		console.log(`[Letta Plugin] Tool call chunk received: ${toolCallId}, args: "${toolArgs}" (accumulated: "${this.currentToolCallArgs}")`);
+	}
+
+
 
 	async openAgentSwitcher() {
 		if (!this.plugin.settings.lettaApiKey) {
@@ -5418,6 +6047,19 @@ class LettaSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.syncOnStartup)
 				.onChange(async (value) => {
 					this.plugin.settings.syncOnStartup = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// Chat Configuration
+		containerEl.createEl('h3', { text: 'Chat Configuration' });
+
+		new Setting(containerEl)
+			.setName('Show Reasoning Messages')
+			.setDesc('Display AI reasoning messages in the chat (useful for debugging)')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.showReasoning)
+				.onChange(async (value) => {
+					this.plugin.settings.showReasoning = value;
 					await this.plugin.saveSettings();
 				}));
 

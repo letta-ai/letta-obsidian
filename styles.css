@@ -257,14 +257,15 @@
 
 .letta-message-reasoning .letta-message-bubble {
     background: transparent;
-    color: var(--text-muted);
     border: none;
     border-radius: 0;
     max-width: 100%;
-    font-size: 0.9em;
+    font-size: 0.8em;
     cursor: pointer;
     padding: 0;
     box-shadow: none;
+    font-style: italic;
+    font-weight: 300;
 }
 
 
@@ -446,15 +447,23 @@
 
 .letta-tool-reasoning {
     padding: 8px 0;
-    color: var(--text-normal);
-    line-height: 1.4;
+    line-height: 1.3;
     border-bottom: 1px solid var(--background-modifier-border);
     margin-bottom: 8px;
+    font-style: italic !important;
+    font-size: 0.8em !important;
+    font-weight: 300 !important;
+    opacity: 0.5 !important;
+}
+
+/* Override any inherited text color for reasoning content */
+.letta-tool-reasoning * {
+    color: var(--text-muted) !important;
 }
 
 /* Headers in tool reasoning */
 .letta-tool-reasoning h1, .letta-tool-reasoning h2, .letta-tool-reasoning h3 {
-    color: var(--text-normal);
+    color: var(--text-muted);
     margin: 6px 0 3px 0;
     line-height: 1.2;
 }
@@ -2394,5 +2403,99 @@
 
 .letta-memory-content li {
     margin: 4px 0;
+}
+
+/* Streaming Message Styles */
+.letta-message-reasoning {
+    opacity: 0.5;
+    transition: opacity 0.3s ease;
+}
+
+.letta-message-reasoning:hover {
+    opacity: 0.8;
+}
+
+.letta-message-reasoning .letta-message-content {
+    color: var(--text-faint) !important;
+    font-style: italic;
+    font-size: 0.8em;
+    line-height: 1.2;
+    font-weight: 300;
+}
+
+/* Streaming assistant message animation */
+.letta-message-assistant {
+    animation: letta-streaming-fade-in 0.3s ease-out;
+}
+
+@keyframes letta-streaming-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Streaming cursor effect for assistant messages */
+.letta-message-assistant.streaming .letta-message-content::after {
+    content: '▋';
+    color: var(--interactive-accent);
+    animation: letta-cursor-blink 1s infinite;
+    margin-left: 2px;
+    font-weight: bold;
+}
+
+@keyframes letta-cursor-blink {
+    0%, 50% {
+        opacity: 1;
+    }
+    51%, 100% {
+        opacity: 0;
+    }
+}
+
+/* Remove cursor when streaming is complete */
+.letta-message-assistant.streaming-complete .letta-message-content::after {
+    display: none;
+}
+
+/* Hide cursor by default for all assistant messages */
+.letta-message-assistant .letta-message-content::after {
+    display: none;
+}
+
+/* Tool result pending state */
+.letta-tool-result-pending {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.letta-tool-result-pending .letta-expandable-title {
+    color: var(--text-faint);
+}
+
+/* Streaming state indicators */
+.letta-streaming-indicator {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: var(--interactive-accent);
+    border-radius: 50%;
+    margin-right: 6px;
+    animation: letta-streaming-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes letta-streaming-pulse {
+    0%, 100% {
+        opacity: 0.4;
+        transform: scale(0.8);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.2);
+    }
 }
 
