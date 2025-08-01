@@ -3168,15 +3168,38 @@ class LettaChatView extends ItemView {
 			// Extract the content from the tool call arguments
 			let memoryContent = '';
 			
-			if (toolCallData && toolCallData.arguments) {
-				let args;
-				if (typeof toolCallData.arguments === 'string') {
-					args = JSON.parse(toolCallData.arguments);
-				} else {
-					args = toolCallData.arguments;
+			if (toolCallData) {
+				let args = null;
+				
+				// Try different argument formats
+				if (toolCallData.arguments) {
+					// Standard format: { arguments: "..." } or { arguments: {...} }
+					if (typeof toolCallData.arguments === 'string') {
+						try {
+							args = JSON.parse(toolCallData.arguments);
+						} catch (e) {
+							console.warn('[Letta Plugin] Failed to parse arguments string:', toolCallData.arguments);
+						}
+					} else {
+						args = toolCallData.arguments;
+					}
+				} else if (toolCallData.function && toolCallData.function.arguments) {
+					// OpenAI format: { function: { arguments: "..." } }
+					if (typeof toolCallData.function.arguments === 'string') {
+						try {
+							args = JSON.parse(toolCallData.function.arguments);
+						} catch (e) {
+							console.warn('[Letta Plugin] Failed to parse function arguments string:', toolCallData.function.arguments);
+						}
+					} else {
+						args = toolCallData.function.arguments;
+					}
 				}
 				
-				memoryContent = args.content || '';
+				// Extract content from parsed arguments
+				if (args && args.content) {
+					memoryContent = args.content;
+				}
 			}
 			
 			if (memoryContent) {
