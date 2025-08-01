@@ -3,8 +3,9 @@
 	"name": "Letta AI Agent",
 	"version": "1.1.0",
 	"minAppVersion": "0.15.0",
-	"description": "Chat with a stateful AI agent that knows your vault contents and remembers your conversations.",
+	"description": "Chat with a stateful AI agent powered by Letta that knows your vault contents and remembers your conversations. Features persistent memory, automatic vault sync, memory block management, and project-aware agent switching.",
 	"author": "Cameron Pfiffer",
 	"authorUrl": "https://cameron.pfiffer.org",
-	"isDesktopOnly": false
+	"isDesktopOnly": false,
+	"fundingUrl": "https://github.com/cpfiffer/letta-obsidian"
 }
