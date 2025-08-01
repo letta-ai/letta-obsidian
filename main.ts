@@ -2819,7 +2819,24 @@ class LettaChatView extends ItemView {
 			cls: 'letta-expandable-content letta-expandable-collapsed'
 		});
 		const toolCallPre = toolCallContent.createEl('pre', { cls: 'letta-code-block' });
-		toolCallPre.createEl('code', { text: toolCall });
+		
+		// Extract and pretty-print just the arguments from the tool call
+		let displayContent = toolCall;
+		try {
+			const toolCallObj = JSON.parse(toolCall);
+			if (toolCallObj.arguments) {
+				// Parse the arguments if they're a string, otherwise use directly
+				let args = toolCallObj.arguments;
+				if (typeof args === 'string') {
+					args = JSON.parse(args);
+				}
+				displayContent = JSON.stringify(args, null, 2);
+			}
+		} catch (e) {
+			// If parsing fails, fall back to the original content
+		}
+		
+		toolCallPre.createEl('code', { text: displayContent });
 		
 		// Add click handler for tool call expand/collapse
 		toolCallHeader.addEventListener('click', () => {
