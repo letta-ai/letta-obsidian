@@ -635,7 +635,6 @@
 
 .letta-message-content strong {
     font-weight: 600;
-    color: var(--text-accent);
 }
 
 .letta-message-content em {
@@ -2259,7 +2258,6 @@
 
 .letta-memory-content strong {
     font-weight: 600;
-    color: var(--text-accent);
 }
 
 .letta-memory-content em {

@@ -2964,6 +2964,8 @@ class LettaChatView extends ItemView {
 	}
 
 	createArchivalMemoryDisplay(container: HTMLElement, toolResult: string) {
+		console.log('[Letta Plugin] createArchivalMemoryDisplay called - toolResult length:', toolResult.length);
+		console.log('[Letta Plugin] toolResult preview:', toolResult.substring(0, 200));
 		try {
 			let result;
 			let rawContent = toolResult.trim();
@@ -3322,7 +3324,6 @@ class LettaChatView extends ItemView {
 	}
 
 	processStreamingMessage(message: any) {
-		console.log('[Letta Plugin] Processing streaming message:', message);
 		
 		// Handle system messages - capture system_alert for hidden viewing, skip heartbeats
 		if (message.type === 'system_alert' || 
@@ -3353,7 +3354,6 @@ class LettaChatView extends ItemView {
 			case 'reasoning_message':
 				if (message.reasoning) {
 					// For streaming, we accumulate reasoning and show it in real-time
-					console.log('[Letta Plugin] Received reasoning message:', message.reasoning.substring(0, 100) + '...');
 					this.updateOrCreateReasoningMessage(message.reasoning);
 				}
 				break;
@@ -3430,7 +3430,6 @@ class LettaChatView extends ItemView {
 		// Only accumulate reasoning content, don't create standalone messages
 		// Reasoning will be displayed as part of tool interactions instead
 		this.currentReasoningContent += reasoning;
-		console.log('[Letta Plugin] Accumulated reasoning content:', this.currentReasoningContent);
 	}
 
 	updateOrCreateAssistantMessage(content: string) {
