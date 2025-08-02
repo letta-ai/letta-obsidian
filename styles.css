@@ -2497,4 +2497,15 @@
     }
 }
 
+/* Usage Statistics */
+.letta-usage-stats {
+    margin-top: 8px;
+    padding-top: 6px;
+    font-size: 0.75em;
+    color: var(--text-muted);
+    text-align: left;
+    border-top: 1px solid var(--background-modifier-border);
+    opacity: 0.7;
+}
+
 

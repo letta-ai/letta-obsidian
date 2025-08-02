@@ -3276,6 +3276,10 @@ class LettaChatView extends ItemView {
 						tempReasoning += responseMessage.reasoning;
 					}
 					break;
+				case 'usage_statistics':
+					console.log('[Letta Plugin] Received non-streaming usage statistics:', responseMessage);
+					this.addUsageStatisticsToLastMessage(responseMessage);
+					break;
 				case 'tool_call_message':
 					if (responseMessage.tool_call) {
 						// Create tool interaction with reasoning
@@ -3390,6 +3394,7 @@ class LettaChatView extends ItemView {
 		// Handle usage statistics
 		if (message.message_type === 'usage_statistics') {
 			console.log('[Letta Plugin] Received usage statistics:', message);
+			this.addUsageStatistics(message);
 			return;
 		}
 		
@@ -3727,78 +3732,10 @@ class LettaChatView extends ItemView {
 
 	updateStreamingToolResult(toolReturn: any) {
 		if (!this.currentToolMessageEl) return;
-
-		const bubbleEl = this.currentToolMessageEl.querySelector('.letta-message-bubble');
-		if (!bubbleEl) return;
-
-		// Remove wavy line animation now that tool call is complete
-		const wavyLine = bubbleEl.querySelector('.letta-tool-curve');
-		if (wavyLine) {
-			wavyLine.remove();
-		}
-
-		// Remove prominent styling from tool call header now that it's complete
-		const toolCallHeader = bubbleEl.querySelector('.letta-tool-prominent');
-		if (toolCallHeader) {
-			toolCallHeader.removeClass('letta-tool-prominent');
-		}
-
-		// Detect tool type by looking at the tool call data stored in the message
-		let isArchivalMemorySearch = false;
-		let isArchivalMemoryInsert = false;
-		let toolCallData = null;
-		try {
-			const toolCallPre = bubbleEl.querySelector('.letta-code-block code');
-			if (toolCallPre) {
-				toolCallData = JSON.parse(toolCallPre.textContent || '{}');
-				const toolName = toolCallData.name || (toolCallData.function && toolCallData.function.name);
-				isArchivalMemorySearch = toolName === 'archival_memory_search';
-				isArchivalMemoryInsert = toolName === 'archival_memory_insert';
-			}
-		} catch (e) {
-			// Ignore parsing errors
-		}
-
-		// Show the tool result section
-		const toolResultHeader = bubbleEl.querySelector('.letta-tool-result-pending') as HTMLElement;
-		const toolResultContent = bubbleEl.querySelector('.letta-expandable-content:last-child') as HTMLElement;
 		
-		if (toolResultHeader && toolResultContent) {
-			// Format the result
-			const formattedResult = this.formatToolResult(JSON.stringify(toolReturn, null, 2));
-			
-			// Make visible
-			toolResultHeader.style.display = 'flex';
-			toolResultContent.style.display = 'block';
-			toolResultHeader.removeClass('letta-tool-result-pending');
-
-			// Handle special tool types
-			if (isArchivalMemorySearch) {
-				this.createArchivalMemoryDisplay(toolResultContent, JSON.stringify(toolReturn, null, 2));
-			} else if (isArchivalMemoryInsert) {
-				this.createArchivalMemoryInsertDisplay(toolResultContent, toolCallData, JSON.stringify(toolReturn, null, 2));
-			} else {
-				// Add full content to expandable section for other tools
-				toolResultContent.createEl('div', { 
-					cls: 'letta-tool-result-text',
-					text: formattedResult 
-				});
-			}
-
-			// Add click handler for tool result expand/collapse
-			const toolResultChevron = toolResultHeader.querySelector('.letta-expandable-chevron');
-			toolResultHeader.addEventListener('click', () => {
-				const isCollapsed = toolResultContent.classList.contains('letta-expandable-collapsed');
-				if (isCollapsed) {
-					toolResultContent.removeClass('letta-expandable-collapsed');
-					if (toolResultChevron) toolResultChevron.textContent = '●';
-				} else {
-					toolResultContent.addClass('letta-expandable-collapsed');
-					if (toolResultChevron) toolResultChevron.textContent = '○';
-				}
-			});
-		}
-
+		// Use the unified addToolResultToMessage method for consistency
+		this.addToolResultToMessage(this.currentToolMessageEl, JSON.stringify(toolReturn, null, 2));
+		
 		// Auto-scroll to bottom
 		setTimeout(() => {
 			this.chatContainer.scrollTo({
@@ -3806,10 +3743,8 @@ class LettaChatView extends ItemView {
 				behavior: 'smooth'
 			});
 		}, 10);
-
-		// Clear the current tool message reference
-		this.currentToolMessageEl = null;
 	}
+
 
 	resetStreamingState() {
 		// Remove any existing streaming assistant message from DOM
@@ -3840,6 +3775,56 @@ class LettaChatView extends ItemView {
 		
 		// Hide typing indicator
 		this.hideTypingIndicator();
+	}
+
+	addUsageStatistics(usageMessage: any) {
+		// Add usage statistics to the current streaming assistant message
+		if (!this.currentAssistantMessageEl) return;
+
+		this.addUsageStatsToElement(this.currentAssistantMessageEl, usageMessage);
+	}
+
+	addUsageStatisticsToLastMessage(usageMessage: any) {
+		// Add usage statistics to the most recent assistant message in the chat
+		const assistantMessages = this.chatContainer.querySelectorAll('.letta-message-assistant');
+		if (assistantMessages.length === 0) return;
+
+		const lastAssistantMessage = assistantMessages[assistantMessages.length - 1] as HTMLElement;
+		this.addUsageStatsToElement(lastAssistantMessage, usageMessage);
+	}
+
+	addUsageStatsToElement(messageEl: HTMLElement, usageMessage: any) {
+		const bubbleEl = messageEl.querySelector('.letta-message-bubble');
+		if (!bubbleEl) return;
+
+		// Check if usage info already exists to avoid duplicates
+		const existingUsage = bubbleEl.querySelector('.letta-usage-stats');
+		if (existingUsage) return;
+
+		// Create usage statistics display
+		const usageEl = bubbleEl.createEl('div', { cls: 'letta-usage-stats' });
+		
+		const parts = [];
+		
+		if (usageMessage.total_tokens) {
+			parts.push(`${usageMessage.total_tokens.toLocaleString()} tokens`);
+		} else {
+			// Fallback to individual token counts
+			if (usageMessage.prompt_tokens || usageMessage.completion_tokens) {
+				const prompt = usageMessage.prompt_tokens || 0;
+				const completion = usageMessage.completion_tokens || 0;
+				const total = prompt + completion;
+				parts.push(`${total.toLocaleString()} tokens`);
+			}
+		}
+		
+		if (usageMessage.step_count) {
+			parts.push(`${usageMessage.step_count} step${usageMessage.step_count === 1 ? '' : 's'}`);
+		}
+		
+		if (parts.length > 0) {
+			usageEl.textContent = parts.join(' • ');
+		}
 	}
 
 	handleStreamingToolCall(toolCall: any) {
