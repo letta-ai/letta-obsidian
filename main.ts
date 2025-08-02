@@ -737,7 +737,7 @@ export default class LettaPlugin extends Plugin {
 
 	async syncVaultToLetta(): Promise<void> {
 		// Auto-connect if not connected to server
-		if (!this.source) {
+		if (!this.source || !this.source.id) {
 			new Notice('Connecting to Letta...');
 			const connected = await this.connectToLetta();
 			if (!connected) {
@@ -810,6 +810,15 @@ export default class LettaPlugin extends Plugin {
 						// Upload new file
 						const content = await this.app.vault.read(file);
 						
+						// Skip files with no content
+						if (!content || content.trim().length === 0) {
+							console.log(`[Letta Plugin] Skipping empty file (${processedCount + 1}/${filesToUpload.length}):`, encodedPath);
+							skipCount++;
+							processedCount++;
+							this.updateStatusBar(`Syncing (${processedCount}/${filesToUpload.length})`);
+							return;
+						}
+						
 						console.log(`[Letta Plugin] Uploading file (${processedCount + 1}/${filesToUpload.length}):`, encodedPath);
 						
 						// Create proper multipart form data matching Python client
@@ -865,7 +874,7 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		// Auto-connect if not connected to server
-		if (!this.source) {
+		if (!this.source || !this.source.id) {
 			new Notice('Connecting to Letta...');
 			const connected = await this.connectToLetta();
 			if (!connected) {
@@ -881,6 +890,12 @@ export default class LettaPlugin extends Plugin {
 			// Use rate-limited upload for single files too
 			await this.addToUploadQueue(async () => {
 				const content = await this.app.vault.read(file);
+
+				// Skip files with no content
+				if (!content || content.trim().length === 0) {
+					new Notice('Cannot sync empty file');
+					return;
+				}
 
 				// Check if file exists in Letta and get metadata
 				const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
@@ -944,7 +959,7 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		// Auto-connect if not connected to server (silently for auto-sync)
-		if (!this.source) {
+		if (!this.source || !this.source.id) {
 			try {
 				await this.connectToLetta();
 			} catch (error) {
@@ -960,6 +975,12 @@ export default class LettaPlugin extends Plugin {
 			// Use rate-limited upload for auto-sync too
 			await this.addToUploadQueue(async () => {
 				const content = await this.app.vault.read(file);
+
+				// Skip files with no content (silently for auto-sync)
+				if (!content || content.trim().length === 0) {
+					console.log(`[Letta Plugin] Skipping empty file in auto-sync:`, file.path);
+					return;
+				}
 
 				// Delete existing file if it exists
 				try {
@@ -1008,7 +1029,7 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		// Auto-connect if not connected to server (silently for auto-sync)
-		if (!this.source) {
+		if (!this.source || !this.source.id) {
 			try {
 				await this.connectToLetta();
 			} catch (error) {
