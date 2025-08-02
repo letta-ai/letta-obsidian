@@ -2176,7 +2176,7 @@ class LettaChatView extends ItemView {
 		}, 3000);
 	}
 
-	async updateChatStatus() {
+	async updateChatStatus(loadHistoricalMessages = true) {
 		// Determine connection status based on plugin state
 		const isServerConnected = this.plugin.source;
 		const isAgentAttached = this.plugin.agent && this.plugin.source;
@@ -2196,8 +2196,10 @@ class LettaChatView extends ItemView {
 			this.removeDisconnectedMessage();
 			this.removeNoAgentMessage();
 			
-			// Load historical messages on first connection
-			this.loadHistoricalMessages();
+			// Conditionally load historical messages
+			if (loadHistoricalMessages) {
+				this.loadHistoricalMessages();
+			}
 		} else if (isServerConnected) {
 			// Connected to server but no agent attached
 			this.statusDot.className = 'letta-status-dot letta-status-connected';
@@ -4364,31 +4366,51 @@ class LettaChatView extends ItemView {
 
 	async switchToAgent(agent: any, project?: any) {
 		try {
-			// Clear current chat
+			console.log(`[Letta Plugin] Switching to agent: ${agent.name} (ID: ${agent.id})`);
+			
+			// Clear current chat and prevent loading historical messages
 			this.clearChat();
 			
-			// Update plugin settings
+			// CRITICAL: Update both agent name AND agent ID in settings
 			this.plugin.settings.agentName = agent.name;
+			this.plugin.settings.agentId = agent.id; // This was missing!
+			
 			if (project) {
 				this.plugin.settings.lettaProjectSlug = project.slug;
 			}
 			await this.plugin.saveSettings();
 			
-			// Update plugin agent reference
-			this.plugin.agent = agent;
+			// Update plugin agent reference with consistent format (like setupAgent does)
+			this.plugin.agent = { 
+				id: agent.id, 
+				name: agent.name,
+				// Preserve other properties if they exist
+				...agent
+			};
 			
-			// Update UI
+			// Verify the agent switch by checking if we can access it
+			const verifyAgent = await this.plugin.makeRequest(`/v1/agents/${agent.id}`);
+			if (!verifyAgent) {
+				throw new Error(`Cannot access agent ${agent.id} - may not exist or lack permissions`);
+			}
+			
+			console.log(`[Letta Plugin] Successfully verified agent access: ${verifyAgent.name}`);
+			
+			// Update UI - agent name
 			this.agentNameElement.textContent = agent.name;
 			
-			// Show success message
-			this.addMessage('assistant', `Switched to agent: **${agent.name}**${project ? ` (Project: ${project.name})` : ''}`, 'System');
+			// Update chat status without loading historical messages for fresh start
+			await this.updateChatStatus(false);
+			
+			// Show success message for fresh conversation
+			this.addMessage('assistant', `Started fresh conversation with **${agent.name}**${project ? ` (Project: ${project.name})` : ''}`, 'System');
 			
 			new Notice(`Switched to agent: ${agent.name}`);
 			
 		} catch (error) {
 			console.error('Failed to switch agent:', error);
-			new Notice('Failed to switch agent. Please try again.');
-			this.addMessage('assistant', '**Error**: Failed to switch agent. Please try again.', 'Error');
+			new Notice(`Failed to switch agent: ${error.message}`);
+			this.addMessage('assistant', `**Error**: Failed to switch agent: ${error.message}`, 'Error');
 		}
 	}
 
