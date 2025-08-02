@@ -2687,7 +2687,22 @@ class LettaChatView extends ItemView {
 			// Use streaming API for real-time responses
 			console.log('[Letta Plugin] Sending message via streaming API');
 			
-			// Reset streaming state
+			// Complete any existing streaming message before starting new one
+			if (this.currentAssistantMessageEl) {
+				console.log('[Letta Plugin] Completing existing streaming message before new message');
+				this.markStreamingComplete();
+				// Clear state but preserve DOM elements
+				this.currentReasoningContent = '';
+				this.currentAssistantContent = '';
+				this.currentAssistantMessageEl = null;
+				this.currentReasoningMessageEl = null;
+				this.currentToolMessageEl = null;
+				this.currentToolCallId = null;
+				this.currentToolCallArgs = '';
+				this.currentToolCallName = '';
+			}
+			
+			// Reset streaming state (now safe since we completed above)
 			this.resetStreamingState();
 			
 			await this.plugin.sendMessageToAgentStream(
