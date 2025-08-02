@@ -746,10 +746,15 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		try {
+			// Validate source ID before proceeding
+			if (!this.source || !this.source.id) {
+				throw new Error('Source not properly initialized for vault sync');
+			}
+
 			this.updateStatusBar('Syncing...');
 			
 			// Get existing files from Letta
-			const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
+			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
 			const existingFilesMap = new Map();
 			existingFiles.forEach((file: any) => {
 				existingFilesMap.set(file.file_name, file);
@@ -800,9 +805,14 @@ export default class LettaPlugin extends Plugin {
 					const existingFile = existingFilesMap.get(encodedPath);
 					
 					return this.addToUploadQueue(async () => {
+						// Validate source ID before starting upload
+						if (!this.source || !this.source.id) {
+							throw new Error('Source not properly initialized for upload');
+						}
+
 						// Delete existing file if it exists
 						if (existingFile) {
-							await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
+							await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
 								method: 'DELETE'
 							});
 						}
@@ -832,7 +842,7 @@ export default class LettaPlugin extends Plugin {
 							`--${boundary}--`
 						].join('\r\n');
 
-						await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
+						await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
 							method: 'POST',
 							headers: {
 								'Content-Type': `multipart/form-data; boundary=${boundary}`
@@ -889,6 +899,11 @@ export default class LettaPlugin extends Plugin {
 			
 			// Use rate-limited upload for single files too
 			await this.addToUploadQueue(async () => {
+				// Validate source ID before starting upload
+				if (!this.source || !this.source.id) {
+					throw new Error('Source not properly initialized for upload');
+				}
+
 				const content = await this.app.vault.read(file);
 
 				// Skip files with no content
@@ -898,14 +913,14 @@ export default class LettaPlugin extends Plugin {
 				}
 
 				// Check if file exists in Letta and get metadata
-				const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
+				const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
 				const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 				
 				let action = 'uploaded';
 				
 				if (existingFile) {
 					// Delete existing file first
-					await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
+					await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
 						method: 'DELETE'
 					});
 					action = 'updated';
@@ -924,7 +939,7 @@ export default class LettaPlugin extends Plugin {
 					`--${boundary}--`
 				].join('\r\n');
 
-				await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
+				await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
 					method: 'POST',
 					headers: {
 						'Content-Type': `multipart/form-data; boundary=${boundary}`
@@ -974,6 +989,11 @@ export default class LettaPlugin extends Plugin {
 			
 			// Use rate-limited upload for auto-sync too
 			await this.addToUploadQueue(async () => {
+				// Validate source ID before starting upload
+				if (!this.source || !this.source.id) {
+					throw new Error('Source not properly initialized for upload');
+				}
+
 				const content = await this.app.vault.read(file);
 
 				// Skip files with no content (silently for auto-sync)
@@ -984,10 +1004,10 @@ export default class LettaPlugin extends Plugin {
 
 				// Delete existing file if it exists
 				try {
-					const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
+					const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
 					const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 					if (existingFile) {
-						await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
+						await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
 							method: 'DELETE'
 						});
 					}
@@ -1008,7 +1028,7 @@ export default class LettaPlugin extends Plugin {
 					`--${boundary}--`
 				].join('\r\n');
 
-				await this.makeRequest(`/v1/sources/${this.source?.id}/upload`, {
+				await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
 					method: 'POST',
 					headers: {
 						'Content-Type': `multipart/form-data; boundary=${boundary}`
@@ -1040,12 +1060,17 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		try {
+			// Validate source ID before proceeding
+			if (!this.source || !this.source.id) {
+				throw new Error('Source not properly initialized for file deletion');
+			}
+
 			const encodedPath = this.encodeFilePath(file.path);
-			const existingFiles = await this.makeRequest(`/v1/sources/${this.source?.id}/files`);
+			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
 			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 			
 			if (existingFile) {
-				await this.makeRequest(`/v1/sources/${this.source?.id}/${existingFile.id}`, {
+				await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
 					method: 'DELETE'
 				});
 			}
