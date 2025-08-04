@@ -317,14 +317,7 @@ export default class LettaPlugin extends Plugin {
 			headers['Content-Type'] = 'application/json';
 		}
 
-		// Debug logging
-		console.log(`[Letta Plugin] Making ${options.method || 'GET'} request to: ${url}`);
-		console.log(`[Letta Plugin] Headers:`, headers);
-		if (options.body && !options.isFileUpload) {
-			console.log(`[Letta Plugin] Request body:`, options.body);
-		} else if (options.isFileUpload) {
-			console.log(`[Letta Plugin] File upload request`);
-		}
+		// Debug logging removed for cleaner console output
 
 		try {
 			let requestBody;
@@ -348,31 +341,25 @@ export default class LettaPlugin extends Plugin {
 			});
 
 			// Debug logging for response
-			console.log(`[Letta Plugin] Response status: ${response.status}`);
-			console.log(`[Letta Plugin] Response headers:`, response.headers);
-			console.log(`[Letta Plugin] Response text:`, response.text);
+			// Response details available for debugging if needed
 			
 			// Try to parse JSON, but handle cases where response isn't JSON
 			let responseJson = null;
 			try {
 				if (response.text && (response.text.trim().startsWith('{') || response.text.trim().startsWith('['))) {
 					responseJson = JSON.parse(response.text);
-					console.log(`[Letta Plugin] Response JSON:`, responseJson);
+					// Response JSON parsed successfully
 				} else {
-					console.log(`[Letta Plugin] Response is not JSON, skipping JSON parse`);
+					// Response is not JSON, skipping parse
 				}
 			} catch (jsonError) {
-				console.log(`[Letta Plugin] Failed to parse JSON:`, jsonError.message);
+				// Failed to parse JSON - continuing with text response
 			}
 
 			if (response.status >= 400) {
 				let errorMessage = `HTTP ${response.status}: ${response.text}`;
 				
-				console.log(`[Letta Plugin] Error response for path ${path}:`, {
-					status: response.status,
-					text: response.text,
-					headers: response.headers
-				});
+				// Error details available for debugging if needed
 				
 				if (response.status === 404) {
 					if (path === '/v1/models/embedding') {
@@ -399,23 +386,18 @@ export default class LettaPlugin extends Plugin {
 					errorMessage = `Method not allowed for ${path}. This may indicate:\n• Incorrect HTTP method\n• API endpoint has changed\n• Feature not supported in this Letta version`;
 				}
 				
-				console.log(`[Letta Plugin] Enhanced error message: ${errorMessage}`);
+				// Enhanced error message created
 				throw new Error(errorMessage);
 			}
 
 			return responseJson;
 		} catch (error: any) {
-			console.log(`[Letta Plugin] Caught exception:`, error);
-			console.log(`[Letta Plugin] Exception type:`, error.constructor.name);
-			console.log(`[Letta Plugin] Exception message:`, error.message);
-			console.log(`[Letta Plugin] Exception stack:`, error.stack);
+			// Exception details available for debugging if needed
 			
 			// Check if this is a network/connection error that might indicate the same issues as a 404
 			if (error.message && (error.message.includes('fetch') || error.message.includes('network') || error.message.includes('ECONNREFUSED'))) {
-				console.log(`[Letta Plugin] Detected network error for path: ${path}`);
 				if (path === '/v1/models/embedding') {
 					const enhancedError = new Error('Cannot connect to Letta API. Please verify:\n• Base URL is correct\n• Letta service is running\n• Network connectivity is available');
-					console.error('[Letta Plugin] Enhanced network error:', enhancedError);
 					throw enhancedError;
 				}
 			}
@@ -440,17 +422,13 @@ export default class LettaPlugin extends Plugin {
 		const maxAttempts = 5;
 		const isCloudInstance = this.settings.lettaBaseUrl.includes('api.letta.com');
 		
-		console.log(`[Letta Plugin] Starting connection to Letta (attempt ${attempt}/${maxAttempts})...`);
-		console.log(`[Letta Plugin] Base URL: ${this.settings.lettaBaseUrl}`);
-		console.log(`[Letta Plugin] Is cloud instance: ${isCloudInstance}`);
-		console.log(`[Letta Plugin] Has API key: ${!!this.settings.lettaApiKey}`);
+		// Connection attempt ${attempt}/${maxAttempts} to ${this.settings.lettaBaseUrl}
 		
 		// Validate URL format on first attempt
 		if (attempt === 1) {
 			try {
 				new URL(this.settings.lettaBaseUrl);
 			} catch (e) {
-				console.log(`[Letta Plugin] Invalid URL format: ${this.settings.lettaBaseUrl}`);
 				new Notice(`Invalid Base URL format: ${this.settings.lettaBaseUrl}. Please check your settings.`);
 				this.updateStatusBar('Invalid URL');
 				return false;
@@ -458,7 +436,6 @@ export default class LettaPlugin extends Plugin {
 			
 			// Check for common typos
 			if (this.settings.lettaBaseUrl.includes('locahost')) {
-				console.log(`[Letta Plugin] Potential typo detected in URL: ${this.settings.lettaBaseUrl}`);
 				new Notice(`Potential typo in Base URL: Did you mean "localhost"? Current: ${this.settings.lettaBaseUrl}`);
 				this.updateStatusBar('URL typo detected');
 				return false;
@@ -466,7 +443,6 @@ export default class LettaPlugin extends Plugin {
 		}
 		
 		if (isCloudInstance && !this.settings.lettaApiKey) {
-			console.log(`[Letta Plugin] Cloud instance detected but no API key provided`);
 			new Notice('API key required for Letta Cloud. Please configure it in settings.');
 			return false;
 		}
@@ -474,29 +450,24 @@ export default class LettaPlugin extends Plugin {
 		try {
 			this.updateStatusBar(attempt === 1 ? 'Connecting...' : `Retrying... (${attempt}/${maxAttempts})`);
 			
-			console.log(`[Letta Plugin] Testing connection with /v1/models/embedding endpoint...`);
+			// Testing connection with embedding endpoint
 			// Test connection by trying to list embedding models (this endpoint should exist)
 			await this.makeRequest('/v1/models/embedding');
 
-			console.log(`[Letta Plugin] Connection test successful, setting up source...`);
 			// Setup source and agent
 			await this.setupSource();
 			
-			console.log(`[Letta Plugin] Source setup successful, setting up agent...`);
 			// Try to setup agent if one is configured
 			if (this.settings.agentId) {
 				try {
 					await this.setupAgent();
-					console.log(`[Letta Plugin] Agent setup successful, connection complete!`);
 				} catch (agentError) {
-					console.error('[Letta Plugin] Agent setup failed, but server connection successful:', agentError);
+					console.error('[Letta Plugin] Agent setup failed:', agentError);
 					// Clear invalid agent ID
 					this.settings.agentId = '';
 					this.settings.agentName = '';
 					await this.saveSettings();
 				}
-			} else {
-				console.log(`[Letta Plugin] No agent configured, server connection successful`);
 			}
 
 			this.updateStatusBar('Connected');
@@ -510,7 +481,6 @@ export default class LettaPlugin extends Plugin {
 
 			// Sync vault on startup if configured
 			if (this.settings.syncOnStartup) {
-				console.log(`[Letta Plugin] Starting vault sync...`);
 				await this.syncVaultToLetta();
 			}
 
@@ -525,17 +495,14 @@ export default class LettaPlugin extends Plugin {
 
 			// Provide specific error messages based on error type
 			if (error.message.includes('ERR_NAME_NOT_RESOLVED')) {
-				console.log(`[Letta Plugin] DNS resolution failed - check if URL is correct: ${this.settings.lettaBaseUrl}`);
 				if (attempt === 1) {
 					new Notice(`Cannot resolve hostname. Please check your Base URL: ${this.settings.lettaBaseUrl}`);
 				}
 			} else if (error.message.includes('ECONNREFUSED') || error.message.includes('ERR_CONNECTION_REFUSED')) {
-				console.log(`[Letta Plugin] Connection refused - check if Letta server is running`);
 				if (attempt === 1) {
 					new Notice(`Connection refused. Is your Letta server running on ${this.settings.lettaBaseUrl}?`);
 				}
 			} else if (error.message.includes('ENOTFOUND')) {
-				console.log(`[Letta Plugin] Host not found - check URL spelling`);
 				if (attempt === 1) {
 					new Notice(`Host not found. Please verify the URL spelling: ${this.settings.lettaBaseUrl}`);
 				}
@@ -544,7 +511,6 @@ export default class LettaPlugin extends Plugin {
 			// If we haven't reached max attempts, try again with backoff
 			if (attempt < maxAttempts) {
 				const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Cap at 10 seconds
-				console.log(`[Letta Plugin] Retrying in ${backoffMs}ms...`);
 				
 				// Update status to show retry countdown
 				this.updateStatusBar(`Retry in ${Math.ceil(backoffMs / 1000)}s...`);
@@ -556,7 +522,6 @@ export default class LettaPlugin extends Plugin {
 				return await this.connectToLetta(attempt + 1);
 			} else {
 				// All attempts failed
-				console.error('[Letta Plugin] All connection attempts failed');
 				this.updateStatusBar('Connection failed');
 				new Notice(`Failed to connect to Letta after ${maxAttempts} attempts: ${error.message}`);
 				return false;
@@ -608,7 +573,7 @@ export default class LettaPlugin extends Plugin {
 				});
 
 				this.source = { id: newSource.id, name: newSource.name };
-				console.log(`[Letta Plugin] Created new source with embedding model: ${embeddingConfig.handle}`);
+				// Created new source with embedding model
 			}
 		} catch (error) {
 			console.error('Failed to setup source:', error);
@@ -631,12 +596,12 @@ export default class LettaPlugin extends Plugin {
 				await this.saveSettings();
 				
 				// Check if source is already attached to existing agent
-				console.log(`[Letta Plugin] Checking if source is attached to existing agent...`);
+				// Checking if source is attached to existing agent
 				const agentSources = existingAgent.sources || [];
 				const sourceAttached = agentSources.some((s: any) => s.id === this.source!.id);
 				
 				if (!sourceAttached) {
-					console.log(`[Letta Plugin] Source not attached, updating agent...`);
+					// Source not attached, updating agent
 					// Get current source IDs and add our source
 					const currentSourceIds = agentSources.map((s: any) => s.id);
 					currentSourceIds.push(this.source!.id);
@@ -648,7 +613,7 @@ export default class LettaPlugin extends Plugin {
 						}
 					});
 				} else {
-					console.log(`[Letta Plugin] Source already attached to agent`);
+					// Source already attached to agent
 				}
 			} else {
 				throw new Error(`Agent with ID ${this.settings.agentId} not found`);
@@ -706,7 +671,7 @@ export default class LettaPlugin extends Plugin {
 			if (this.uploadsInLastMinute.length >= 10) {
 				const oldestUpload = Math.min(...this.uploadsInLastMinute);
 				const waitTime = (oldestUpload + 60000) - Date.now();
-				console.log(`[Letta Plugin] Rate limit reached, waiting ${Math.ceil(waitTime / 1000)} seconds...`);
+				// Rate limit reached, waiting
 				await new Promise(resolve => setTimeout(resolve, waitTime));
 				continue;
 			}
@@ -720,7 +685,7 @@ export default class LettaPlugin extends Plugin {
 				} catch (error) {
 					// Check if it's a rate limit error
 					if (error.message && error.message.includes('HTTP 429')) {
-						console.log('[Letta Plugin] Hit rate limit, will retry after waiting...');
+						// Hit rate limit, will retry after waiting
 						// Put the upload back at the front of the queue to retry
 						this.uploadQueue.unshift(uploadFn);
 						// Add a small delay before checking rate limits again
@@ -824,14 +789,14 @@ export default class LettaPlugin extends Plugin {
 						
 						// Skip files with no content
 						if (!content || content.trim().length === 0) {
-							console.log(`[Letta Plugin] Skipping empty file (${processedCount + 1}/${filesToUpload.length}):`, encodedPath);
+							// Skipping empty file
 							skipCount++;
 							processedCount++;
 							this.updateStatusBar(`Syncing (${processedCount}/${filesToUpload.length})`);
 							return;
 						}
 						
-						console.log(`[Letta Plugin] Uploading file (${processedCount + 1}/${filesToUpload.length}):`, encodedPath);
+						// Uploading file ${processedCount + 1}/${filesToUpload.length}
 						
 						// Create proper multipart form data matching Python client
 						const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
@@ -929,7 +894,7 @@ export default class LettaPlugin extends Plugin {
 				}
 
 				// Upload the file
-				console.log(`[Letta Plugin] Syncing current file:`, encodedPath);
+				// Syncing current file
 				
 				const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
 				const multipartBody = [
@@ -981,7 +946,7 @@ export default class LettaPlugin extends Plugin {
 				await this.connectToLetta();
 			} catch (error) {
 				// Silent fail for auto-sync - don't spam user with notices
-				console.log('[Letta Plugin] Auto-sync failed: not connected');
+				// Auto-sync failed: not connected
 				return;
 			}
 		}
@@ -1000,7 +965,7 @@ export default class LettaPlugin extends Plugin {
 
 				// Skip files with no content (silently for auto-sync)
 				if (!content || content.trim().length === 0) {
-					console.log(`[Letta Plugin] Skipping empty file in auto-sync:`, file.path);
+					// Skipping empty file in auto-sync
 					return;
 				}
 
@@ -1017,7 +982,7 @@ export default class LettaPlugin extends Plugin {
 					// File might not exist, continue with upload
 				}
 
-				console.log(`[Letta Plugin] Auto-syncing file change as multipart:`, encodedPath);
+				// Auto-syncing file change as multipart
 				
 				// Create proper multipart form data matching Python client
 				const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
@@ -1056,7 +1021,7 @@ export default class LettaPlugin extends Plugin {
 				await this.connectToLetta();
 			} catch (error) {
 				// Silent fail for auto-sync - don't spam user with notices
-				console.log('[Letta Plugin] Auto-delete failed: not connected');
+				// Auto-delete failed: not connected
 				return;
 			}
 		}
@@ -1437,7 +1402,7 @@ class LettaChatView extends ItemView {
 
 	addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: any, title?: string, reasoningContent?: string) {
 		// Debug: Log what's being passed to addMessage
-		console.log('[Letta Plugin] addMessage called with:', { type, content: typeof content, contentValue: content, title });
+		// Adding message to chat interface
 		
 		// Extract text content from various possible formats
 		let textContent: string = '';
@@ -1468,7 +1433,7 @@ class LettaChatView extends ItemView {
 			textContent = String(content || '');
 		}
 		
-		console.log('[Letta Plugin] Extracted text content:', textContent.substring(0, 100) + (textContent.length > 100 ? '...' : ''));
+		// Text content extracted for display
 		
 		// Ensure we have some content to display
 		if (!textContent) {
@@ -1497,7 +1462,7 @@ class LettaChatView extends ItemView {
 						textContent.includes('automated system message') ||
 						textContent.includes('Function call failed, returning control') ||
 						textContent.includes('request_heartbeat=true'))) {
-			console.log('[Letta Plugin] Blocked heartbeat content from being displayed as message');
+			// Blocked heartbeat content from being displayed
 			// Don't add this message - it should have been filtered and handled by typing indicator
 			return null;
 		}
@@ -1756,7 +1721,7 @@ class LettaChatView extends ItemView {
 			});
 
 			if (validMessages.length === 0) {
-				console.log('[Letta Plugin] No valid messages found in response');
+				// No valid messages found in response
 				return;
 			}
 
@@ -1816,7 +1781,7 @@ class LettaChatView extends ItemView {
 		if (content.includes('**Currently Open Files') && content.includes('Based on my current system access')) {
 			const matches = content.match(/\*\*Currently Open Files.*?(?=\*\*Currently Open Files|\*\*Available Directories|$)/gs);
 			if (matches && matches.length > 1) {
-				console.log('[Letta Plugin] Detected repeated file system information, filtering out');
+				// Detected repeated file system information, filtering out
 				return 'I can see your vault files and am ready to help with your question.';
 			}
 		}
@@ -1825,7 +1790,7 @@ class LettaChatView extends ItemView {
 		const hasSystemContent = systemPromptPatterns.some(pattern => pattern.test(content));
 		
 		if (hasSystemContent) {
-			console.log('[Letta Plugin] Content contains system patterns, attempting selective filtering');
+			// Content contains system patterns, attempting selective filtering
 			
 			// Try more selective filtering - only remove lines that are clearly system instructions
 			const lines = content.split('\n');
@@ -1850,7 +1815,7 @@ class LettaChatView extends ItemView {
 			
 			// Only use fallback if we have very little content left (less than 10 characters)
 			if (!filtered || filtered.length < 10) {
-				console.log('[Letta Plugin] Minimal content after filtering, using original response');
+				// Minimal content after filtering, using original response
 				// Return original content instead of placeholder
 				return content;
 			}
@@ -1983,7 +1948,7 @@ class LettaChatView extends ItemView {
 				// Handle system messages - capture system_alert for hidden viewing, skip heartbeats
 				if (message.type === 'system_alert' || 
 					(message.message && typeof message.message === 'string' && message.message.includes('prior messages have been hidden'))) {
-					console.log('[Letta Plugin] Capturing historical system_alert message:', message);
+					// Capturing historical system_alert message
 					this.addSystemMessage(message);
 					continue;
 				}
@@ -1993,7 +1958,7 @@ class LettaChatView extends ItemView {
 				}
 				
 				const messageType = message.message_type || message.type;
-				console.log(`[Letta Plugin] Processing historical ${messageType} message:`, message);
+				// Processing historical message
 			
 				// Validate message has required fields based on type
 				if (!this.validateMessageStructure(message, messageType)) {
@@ -2057,7 +2022,7 @@ class LettaChatView extends ItemView {
 				break;
 			
 			default:
-				console.log(`[Letta Plugin] Unknown historical message type: ${messageType}`, message);
+				// Unknown historical message type
 			}
 			} catch (error) {
 				console.error('[Letta Plugin] Error processing message:', error, message);
@@ -2094,7 +2059,7 @@ class LettaChatView extends ItemView {
 	}
 
 	displayHistoricalMessage(message: any) {
-		console.log('[Letta Plugin] Processing historical message:', message);
+		// Processing historical message
 		
 		// Handle system messages - capture system_alert for hidden viewing, skip heartbeats entirely
 		// Check multiple possible properties where the type might be stored
@@ -2108,7 +2073,7 @@ class LettaChatView extends ItemView {
 		// Store system_alert messages in hidden container for debugging
 		if (messageType === 'system_alert' || 
 			(message.message && typeof message.message === 'string' && message.message.includes('prior messages have been hidden'))) {
-			console.log('[Letta Plugin] Capturing system_alert message:', message);
+			// Capturing system_alert message
 			this.addSystemMessage(message);
 			return;
 		}
@@ -2126,7 +2091,7 @@ class LettaChatView extends ItemView {
 			 (message.text.includes('automated system message') ||
 			  message.text.includes('Function call failed, returning control') ||
 			  message.text.includes('request_heartbeat=true')))) {
-			console.log('[Letta Plugin] Skipping historical heartbeat message:', messageType, message.message_type, messageRole, messageReason);
+			// Skipping historical heartbeat message
 			return;
 		}
 		
@@ -2170,7 +2135,7 @@ class LettaChatView extends ItemView {
 				
 			default:
 				// Handle unrecognized message types - log and skip to prevent display
-				console.log('[Letta Plugin] Unrecognized historical message type:', message.message_type, 'with type property:', messageType);
+				// Unrecognized historical message type
 				break;
 		}
 	}
@@ -2218,7 +2183,7 @@ class LettaChatView extends ItemView {
 	}
 
 	handleHeartbeat() {
-		console.log('[Letta Plugin] Heartbeat received - showing typing indicator');
+		// Heartbeat received - showing typing indicator
 		this.showTypingIndicator();
 		
 		// Clear existing timeout
@@ -2228,7 +2193,7 @@ class LettaChatView extends ItemView {
 		
 		// Hide typing indicator after 3 seconds of no heartbeats
 		this.heartbeatTimeout = setTimeout(() => {
-			console.log('[Letta Plugin] No heartbeat for 3s - hiding typing indicator');
+			// No heartbeat for 3s - hiding typing indicator
 			this.hideTypingIndicator();
 			this.heartbeatTimeout = null;
 		}, 3000);
@@ -2425,7 +2390,7 @@ class LettaChatView extends ItemView {
 			throw new Error('Source not set up');
 		}
 
-		console.log(`[Letta Plugin] Creating new agent with config:`, agentConfig);
+		// Creating new agent
 
 		// Get embedding config for agent creation
 		const embeddingConfigs = await this.plugin.makeRequest('/v1/models/embedding');
@@ -2746,11 +2711,11 @@ class LettaChatView extends ItemView {
 		try {
 			if (this.plugin.settings.enableStreaming) {
 				// Use streaming API for real-time responses
-				console.log('[Letta Plugin] Sending message via streaming API');
+				// Sending message via streaming API
 				
 				// Complete any existing streaming message before starting new one
 				if (this.currentAssistantMessageEl) {
-					console.log('[Letta Plugin] Completing existing streaming message before new message');
+					// Completing existing streaming message before new message
 					this.markStreamingComplete();
 					// Clear state but preserve DOM elements
 					this.currentReasoningContent = '';
@@ -2779,13 +2744,13 @@ class LettaChatView extends ItemView {
 					},
 					() => {
 						// Handle streaming completion
-						console.log('[Letta Plugin] Streaming completed');
+						// Streaming completed
 						this.markStreamingComplete();
 					}
 				);
 			} else {
 				// Use non-streaming API for more stable responses
-				console.log('[Letta Plugin] Sending message via non-streaming API');
+				// Sending message via non-streaming API
 				const messages = await this.plugin.sendMessageToAgent(message);
 				this.processNonStreamingMessages(messages);
 			}
@@ -2796,7 +2761,7 @@ class LettaChatView extends ItemView {
 			// Try fallback to non-streaming API only if streaming was enabled and fails
 			if (this.plugin.settings.enableStreaming && 
 				(error.message.includes('stream') || error.message.includes('fetch') || error.message.includes('network'))) {
-				console.log('[Letta Plugin] Streaming failed, trying non-streaming fallback...');
+				// Streaming failed, trying non-streaming fallback
 				try {
 					const messages = await this.plugin.sendMessageToAgent(message);
 					this.processNonStreamingMessages(messages);
@@ -3372,7 +3337,7 @@ class LettaChatView extends ItemView {
 
 
 	processNonStreamingMessages(messages: any[]) {
-		console.log('[Letta Plugin] Processing non-streaming messages:', messages);
+		// Processing non-streaming messages
 		
 		// Process response messages (fallback for when streaming fails)
 		let tempReasoning = '';
@@ -3382,7 +3347,7 @@ class LettaChatView extends ItemView {
 			// Handle system messages - capture system_alert for hidden viewing, skip heartbeats
 			if (responseMessage.type === 'system_alert' || 
 				(responseMessage.message && typeof responseMessage.message === 'string' && responseMessage.message.includes('prior messages have been hidden'))) {
-				console.log('[Letta Plugin] Capturing non-streaming system_alert message:', responseMessage);
+				// Capturing non-streaming system_alert message
 				this.addSystemMessage(responseMessage);
 				continue;
 			}
@@ -3406,7 +3371,7 @@ class LettaChatView extends ItemView {
 					}
 					break;
 				case 'usage_statistics':
-					console.log('[Letta Plugin] Received non-streaming usage statistics:', responseMessage);
+					// Received non-streaming usage statistics
 					this.addUsageStatisticsToLastMessage(responseMessage);
 					break;
 				case 'tool_call_message':
@@ -3430,7 +3395,7 @@ class LettaChatView extends ItemView {
 					}
 					break;
 				case 'assistant_message':
-					console.log('[Letta Plugin] Processing assistant_message:', responseMessage);
+					// Processing assistant message
 					
 					// Try multiple possible content fields
 					let content = responseMessage.content || responseMessage.text || responseMessage.message;
@@ -3445,7 +3410,7 @@ class LettaChatView extends ItemView {
 							}
 							return String(item);
 						}).join('');
-						console.log('[Letta Plugin] Non-streaming: Converted array content to string:', content);
+						// Non-streaming: Converted array content to string
 					}
 					
 					if (content) {
@@ -3464,11 +3429,11 @@ class LettaChatView extends ItemView {
 					
 				case 'heartbeat':
 					// Skip heartbeat messages - should already be filtered above
-					console.log('[Letta Plugin] Heartbeat message reached switch statement - should have been filtered earlier');
+					// Heartbeat message reached switch statement
 					break;
 					
 				default:
-					console.log('[Letta Plugin] Unrecognized message type:', responseMessage.message_type, 'Full message:', responseMessage);
+					// Unrecognized message type
 					
 					// Fallback handling for messages without proper message_type
 					if (responseMessage.content || responseMessage.text || responseMessage.message) {
@@ -3484,7 +3449,7 @@ class LettaChatView extends ItemView {
 								}
 								return String(item);
 							}).join('');
-							console.log('[Letta Plugin] Fallback: Converted array content to string:', content);
+							// Fallback: Converted array content to string
 						}
 						
 						const filteredContent = this.filterSystemPromptContent(content);
@@ -3504,7 +3469,7 @@ class LettaChatView extends ItemView {
 		// Handle system messages - capture system_alert for hidden viewing, skip heartbeats
 		if (message.type === 'system_alert' || 
 			(message.message && typeof message.message === 'string' && message.message.includes('prior messages have been hidden'))) {
-			console.log('[Letta Plugin] Capturing streaming system_alert message:', message);
+			// Capturing streaming system_alert message
 			this.addSystemMessage(message);
 			return;
 		}
@@ -3522,7 +3487,7 @@ class LettaChatView extends ItemView {
 		
 		// Handle usage statistics
 		if (message.message_type === 'usage_statistics') {
-			console.log('[Letta Plugin] Received usage statistics:', message);
+			// Received usage statistics
 			this.addUsageStatistics(message);
 			return;
 		}
@@ -3537,15 +3502,15 @@ class LettaChatView extends ItemView {
 			case 'tool_call_message':
 				if (message.tool_call) {
 					// Handle streaming tool call chunks
-					console.log('[Letta Plugin] Received tool call message:', message.tool_call);
+					// Received tool call message
 					this.handleStreamingToolCall(message.tool_call);
 				} else {
-					console.log('[Letta Plugin] Received tool_call_message but no tool_call field:', message);
+					// Received tool_call_message but no tool_call field
 				}
 				break;
 			case 'tool_return_message':
 				if (message.tool_return) {
-					console.log(`[Letta Plugin] Tool return received for: ${this.currentToolCallId}`);
+					// Tool return received
 					// Update the current tool interaction with the result
 					this.updateStreamingToolResult(message.tool_return);
 					// Clear the current tool call state since it's complete
@@ -3555,7 +3520,7 @@ class LettaChatView extends ItemView {
 				}
 				break;
 			case 'assistant_message':
-				console.log('[Letta Plugin] Processing streaming assistant_message:', message);
+				// Processing streaming assistant message
 				
 				// Try multiple possible content fields
 				let content = message.content || message.text || message.message || message.assistant_message;
@@ -3570,7 +3535,7 @@ class LettaChatView extends ItemView {
 						}
 						return String(item);
 					}).join('');
-					console.log('[Letta Plugin] Streaming: Converted array content to string:', content);
+					// Streaming: Converted array content to string
 				}
 				
 				if (content) {
@@ -3584,11 +3549,11 @@ class LettaChatView extends ItemView {
 				
 			case 'heartbeat':
 				// Skip heartbeat messages - should already be filtered above
-				console.log('[Letta Plugin] Heartbeat message reached switch statement - should have been filtered earlier');
+				// Heartbeat message reached switch statement
 				break;
 				
 			default:
-				console.log('[Letta Plugin] Unrecognized streaming message type:', message.message_type, 'Full message:', message);
+				// Unrecognized streaming message type
 				break;
 		}
 	}
@@ -3662,7 +3627,7 @@ class LettaChatView extends ItemView {
 				}
 				
 				reasoningEl.innerHTML = formattedReasoning;
-				console.log('[Letta Plugin] Displayed reasoning content in assistant message');
+				// Displayed reasoning content in assistant message
 			}
 			
 			// Add content container
