@@ -28,6 +28,7 @@ interface LettaPluginSettings {
 	syncOnStartup: boolean;
 	embeddingModel: string;
 	showReasoning: boolean; // Control whether reasoning messages are visible
+	enableStreaming: boolean; // Control whether to use streaming API responses
 }
 
 const DEFAULT_SETTINGS: LettaPluginSettings = {
@@ -40,7 +41,8 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	autoSync: true,
 	syncOnStartup: true,
 	embeddingModel: 'letta/letta-free',
-	showReasoning: true // Default to showing reasoning messages in tool interactions
+	showReasoning: true, // Default to showing reasoning messages in tool interactions
+	enableStreaming: true // Default to enabling streaming for real-time responses
 }
 
 interface LettaAgent {
@@ -1185,8 +1187,8 @@ export default class LettaPlugin extends Plugin {
 					text: message
 				}]
 			}],
-			stream_steps: true,
-			stream_tokens: true
+			stream_steps: this.settings.enableStreaming,
+			stream_tokens: this.settings.enableStreaming
 		};
 
 		try {
@@ -1534,7 +1536,7 @@ class LettaChatView extends ItemView {
 				if (type === 'assistant' && reasoningContent) {
 					const reasoningBtn = headerEl.createEl('button', { 
 						cls: 'letta-reasoning-btn letta-reasoning-collapsed',
-						text: '···'
+						text: '⋯'
 					});
 					
 					// Add click handler for reasoning toggle
@@ -1742,8 +1744,24 @@ class LettaChatView extends ItemView {
 				return;
 			}
 
+			// Filter out any obviously malformed messages before processing
+			const validMessages = messages.filter((msg: any) => {
+				if (!msg) return false;
+				const messageType = msg.message_type || msg.type;
+				if (!messageType) {
+					console.warn('[Letta Plugin] Message missing type field:', msg);
+					return false;
+				}
+				return true;
+			});
+
+			if (validMessages.length === 0) {
+				console.log('[Letta Plugin] No valid messages found in response');
+				return;
+			}
+
 			// Sort messages by timestamp (oldest first)
-			const sortedMessages = messages.sort((a: any, b: any) => 
+			const sortedMessages = validMessages.sort((a: any, b: any) => 
 				new Date(a.date).getTime() - new Date(b.date).getTime()
 			);
 
@@ -1755,7 +1773,10 @@ class LettaChatView extends ItemView {
 
 		} catch (error) {
 			console.error('[Letta Plugin] Failed to load historical messages:', error);
-			// Don't show error to user - historical messages are optional
+			// Show a minimal error message for malformed data issues
+			if (error.message && error.message.includes('missing message argument')) {
+				this.addMessage('assistant', 'Some messages in your conversation history could not be loaded due to data issues. New messages will work normally.', 'System');
+			}
 		}
 	}
 
@@ -1953,25 +1974,33 @@ class LettaChatView extends ItemView {
 		let currentToolCallData: any = null;
 		
 		for (const message of messages) {
-			// Skip system messages as they're internal
-			if (message.message_type === 'system_message' || message.type === 'system_message') {
-				continue;
-			}
+			try {
+				// Skip system messages as they're internal
+				if (message.message_type === 'system_message' || message.type === 'system_message') {
+					continue;
+				}
+				
+				// Handle system messages - capture system_alert for hidden viewing, skip heartbeats
+				if (message.type === 'system_alert' || 
+					(message.message && typeof message.message === 'string' && message.message.includes('prior messages have been hidden'))) {
+					console.log('[Letta Plugin] Capturing historical system_alert message:', message);
+					this.addSystemMessage(message);
+					continue;
+				}
+				
+				if (message.type === 'heartbeat' || message.message_type === 'heartbeat') {
+					continue;
+				}
+				
+				const messageType = message.message_type || message.type;
+				console.log(`[Letta Plugin] Processing historical ${messageType} message:`, message);
 			
-			// Handle system messages - capture system_alert for hidden viewing, skip heartbeats
-			if (message.type === 'system_alert' || 
-				(message.message && typeof message.message === 'string' && message.message.includes('prior messages have been hidden'))) {
-				console.log('[Letta Plugin] Capturing historical system_alert message:', message);
-				this.addSystemMessage(message);
-				continue;
-			}
-			
-			if (message.type === 'heartbeat' || message.message_type === 'heartbeat') {
-				continue;
-			}
-			
-			const messageType = message.message_type || message.type;
-			console.log(`[Letta Plugin] Processing historical ${messageType} message:`, message);
+				// Validate message has required fields based on type
+				if (!this.validateMessageStructure(message, messageType)) {
+					console.warn('[Letta Plugin] Skipping malformed message:', message);
+					this.addErrorMessage(`Malformed ${messageType || 'unknown'} message`, message);
+					continue;
+				}
 			
 			switch (messageType) {
 			case 'user_message':
@@ -1982,9 +2011,7 @@ class LettaChatView extends ItemView {
 			
 			case 'reasoning_message':
 				if (message.reasoning) {
-					// Display reasoning as a standalone message
-					this.addMessage('reasoning', message.reasoning);
-					// Also accumulate reasoning to be used for next tool call or assistant message
+					// Don't display reasoning as standalone message - only accumulate for next assistant message
 					currentReasoning += message.reasoning;
 				}
 				break;
@@ -2032,7 +2059,38 @@ class LettaChatView extends ItemView {
 			default:
 				console.log(`[Letta Plugin] Unknown historical message type: ${messageType}`, message);
 			}
+			} catch (error) {
+				console.error('[Letta Plugin] Error processing message:', error, message);
+				this.addErrorMessage(`Error processing ${message?.message_type || message?.type || 'unknown'} message`, { error: error.message, message });
+			}
 		}
+	}
+
+	// Validate message structure based on type
+	validateMessageStructure(message: any, messageType: string): boolean {
+		if (!message) return false;
+		
+		switch (messageType) {
+			case 'user_message':
+				return !!(message.content || message.text);
+			case 'assistant_message':
+				return !!(message.content || message.text);
+			case 'reasoning_message':
+				return !!(message.reasoning);
+			case 'tool_call_message':
+				return !!(message.tool_call);
+			case 'tool_return_message':
+				return !!(message.tool_return);
+			default:
+				// For unknown types, just check if it's not null/undefined
+				return true;
+		}
+	}
+
+	// Add error message for malformed messages
+	addErrorMessage(title: string, data: any) {
+		const errorContent = `${title} - This message had invalid data and was skipped.`;
+		this.addMessage('assistant', errorContent, 'System');
 	}
 
 	displayHistoricalMessage(message: any) {
@@ -2686,50 +2744,58 @@ class LettaChatView extends ItemView {
 		this.messageInput.style.height = 'auto';
 
 		try {
-			// Use streaming API for real-time responses
-			console.log('[Letta Plugin] Sending message via streaming API');
-			
-			// Complete any existing streaming message before starting new one
-			if (this.currentAssistantMessageEl) {
-				console.log('[Letta Plugin] Completing existing streaming message before new message');
-				this.markStreamingComplete();
-				// Clear state but preserve DOM elements
-				this.currentReasoningContent = '';
-				this.currentAssistantContent = '';
-				this.currentAssistantMessageEl = null;
-				this.currentReasoningMessageEl = null;
-				this.currentToolMessageEl = null;
-				this.currentToolCallId = null;
-				this.currentToolCallArgs = '';
-				this.currentToolCallName = '';
-			}
-			
-			// Reset streaming state (now safe since we completed above)
-			this.resetStreamingState();
-			
-			await this.plugin.sendMessageToAgentStream(
-				message,
-				(message) => {
-					// Handle each streaming message
-					this.processStreamingMessage(message);
-				},
-				(error) => {
-					// Handle streaming error
-					console.error('Streaming error:', error);
-					this.addMessage('assistant', `**Streaming Error**: ${error.message}`, 'Error');
-				},
-				() => {
-					// Handle streaming completion
-					console.log('[Letta Plugin] Streaming completed');
+			if (this.plugin.settings.enableStreaming) {
+				// Use streaming API for real-time responses
+				console.log('[Letta Plugin] Sending message via streaming API');
+				
+				// Complete any existing streaming message before starting new one
+				if (this.currentAssistantMessageEl) {
+					console.log('[Letta Plugin] Completing existing streaming message before new message');
 					this.markStreamingComplete();
+					// Clear state but preserve DOM elements
+					this.currentReasoningContent = '';
+					this.currentAssistantContent = '';
+					this.currentAssistantMessageEl = null;
+					this.currentReasoningMessageEl = null;
+					this.currentToolMessageEl = null;
+					this.currentToolCallId = null;
+					this.currentToolCallArgs = '';
+					this.currentToolCallName = '';
 				}
-			);
+				
+				// Reset streaming state (now safe since we completed above)
+				this.resetStreamingState();
+				
+				await this.plugin.sendMessageToAgentStream(
+					message,
+					(message) => {
+						// Handle each streaming message
+						this.processStreamingMessage(message);
+					},
+					(error) => {
+						// Handle streaming error
+						console.error('Streaming error:', error);
+						this.addMessage('assistant', `**Streaming Error**: ${error.message}`, 'Error');
+					},
+					() => {
+						// Handle streaming completion
+						console.log('[Letta Plugin] Streaming completed');
+						this.markStreamingComplete();
+					}
+				);
+			} else {
+				// Use non-streaming API for more stable responses
+				console.log('[Letta Plugin] Sending message via non-streaming API');
+				const messages = await this.plugin.sendMessageToAgent(message);
+				this.processNonStreamingMessages(messages);
+			}
 
 		} catch (error: any) {
 			console.error('Failed to send message:', error);
 			
-			// Try fallback to non-streaming API if streaming fails
-			if (error.message.includes('stream') || error.message.includes('fetch') || error.message.includes('network')) {
+			// Try fallback to non-streaming API only if streaming was enabled and fails
+			if (this.plugin.settings.enableStreaming && 
+				(error.message.includes('stream') || error.message.includes('fetch') || error.message.includes('network'))) {
 				console.log('[Letta Plugin] Streaming failed, trying non-streaming fallback...');
 				try {
 					const messages = await this.plugin.sendMessageToAgent(message);
@@ -4368,8 +4434,8 @@ class LettaChatView extends ItemView {
 		try {
 			console.log(`[Letta Plugin] Switching to agent: ${agent.name} (ID: ${agent.id})`);
 			
-			// Clear current chat and prevent loading historical messages
-			this.clearChat();
+			// Clear current chat without triggering updateChatStatus
+			this.chatContainer.empty();
 			
 			// CRITICAL: Update both agent name AND agent ID in settings
 			this.plugin.settings.agentName = agent.name;
@@ -6187,6 +6253,16 @@ class LettaSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.showReasoning)
 				.onChange(async (value) => {
 					this.plugin.settings.showReasoning = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Enable Streaming')
+			.setDesc('Use streaming API for real-time responses (disable for slower but more stable responses)')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.enableStreaming)
+				.onChange(async (value) => {
+					this.plugin.settings.enableStreaming = value;
 					await this.plugin.saveSettings();
 				}));
 

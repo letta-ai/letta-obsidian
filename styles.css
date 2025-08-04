@@ -232,8 +232,9 @@
     background: var(--interactive-accent);
     color: var(--text-on-accent);
     margin-left: auto;
-    border-radius: 18px 6px 18px 18px;
+    border-radius: 16px 4px 16px 16px;
     max-width: 70%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .letta-message-assistant {
@@ -364,29 +365,45 @@
 
 /* Reasoning button and content */
 .letta-reasoning-btn {
-    background: transparent;
-    border: none;
+    background: none !important;
+    border: none !important;
     color: var(--text-faint);
-    font-size: 0.7em;
-    padding: 2px 4px;
-    border-radius: 6px;
+    font-size: 0.8em;
+    padding: 0 !important;
+    margin: 0 !important;
     cursor: pointer;
-    transition: all 0.2s ease;
-    opacity: 0.6;
+    transition: color 0.2s ease, opacity 0.2s ease;
+    opacity: 0.4;
     line-height: 1;
     flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: none !important;
+    outline: none !important;
+    border-radius: 0 !important;
 }
 
 .letta-reasoning-btn:hover {
-    background: var(--background-modifier-hover);
+    background: none !important;
     color: var(--text-muted);
-    opacity: 1;
+    opacity: 0.8;
+    box-shadow: none !important;
 }
 
 .letta-reasoning-btn.letta-reasoning-expanded {
-    background: var(--background-modifier-border);
+    background: none !important;
     color: var(--text-normal);
     opacity: 1;
+    box-shadow: none !important;
+}
+
+.letta-reasoning-btn:focus {
+    background: none !important;
+    outline: none !important;
+    box-shadow: none !important;
 }
 
 .letta-reasoning-content {
@@ -536,13 +553,12 @@
 
 /* Only apply bubble styling to user messages */
 .letta-message-user .letta-message-bubble {
-    padding: 8px 12px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    padding: 10px 14px;
 }
 
 .letta-message-header {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 8px;
     margin-bottom: 2px;
@@ -551,8 +567,9 @@
 
 .letta-message-header-left {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
+    flex: 1;
 }
 
 .letta-message-title {
