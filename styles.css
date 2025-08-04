@@ -229,12 +229,17 @@
 }
 
 .letta-message-user .letta-message-bubble {
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
     margin-left: auto;
     border-radius: 16px 4px 16px 16px;
     max-width: 70%;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    font-weight: 500;
+    /* Outline style that respects theme colors */
+    background: transparent;
+    color: var(--text-normal);
+    border: 2px solid var(--interactive-accent);
+    /* Add subtle background tint */
+    background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
 }
 
 .letta-message-assistant {
@@ -2342,19 +2347,21 @@
     position: absolute;
     bottom: 4px;
     right: 8px;
-    background: rgba(0, 0, 0, 0.6);
-    color: var(--text-on-accent);
-    border: none;
+    background: var(--background-secondary);
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border);
     border-radius: 12px;
     padding: 4px 8px;
     font-size: 0.75em;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
     z-index: 1;
 }
 
 .letta-user-message-toggle:hover {
-    background: rgba(0, 0, 0, 0.8);
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
     transform: scale(1.05);
 }
 
