@@ -246,6 +246,7 @@ export default class LettaPlugin extends Plugin {
 		// Track active file changes for focus mode
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', () => {
+				console.log('[LETTA DEBUG] active-leaf-change event triggered, focusMode:', this.settings.focusMode);
 				if (this.settings.focusMode) {
 					this.onActiveFileChange();
 				}
@@ -1058,17 +1059,28 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async openFileInAgent(file: TFile): Promise<void> {
-		if (!this.agent || !this.source) return;
+		console.log('[LETTA DEBUG] openFileInAgent called with file:', file.path);
+		
+		if (!this.agent || !this.source) {
+			console.log('[LETTA DEBUG] openFileInAgent - early return: agent =', !!this.agent, 'source =', !!this.source);
+			return;
+		}
 
 		try {
 			const encodedPath = this.encodeFilePath(file.path);
+			console.log('[LETTA DEBUG] openFileInAgent - encoded path:', encodedPath);
+			
 			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
 			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 			
 			if (existingFile) {
+				console.log('[LETTA DEBUG] openFileInAgent - opening file with ID:', existingFile.id);
 				await this.makeRequest(`/v1/agents/${this.agent.id}/files/${existingFile.id}/open`, {
 					method: 'PATCH'
 				});
+				console.log('[LETTA DEBUG] openFileInAgent - successfully opened file:', file.path);
+			} else {
+				console.log('[LETTA DEBUG] openFileInAgent - file not found in source:', encodedPath);
 			}
 		} catch (error) {
 			console.error('Failed to open file in agent:', error);
@@ -1094,29 +1106,49 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async closeAllFilesInAgent(): Promise<void> {
-		if (!this.agent) return;
+		console.log('[LETTA DEBUG] closeAllFilesInAgent called');
+		
+		if (!this.agent) {
+			console.log('[LETTA DEBUG] closeAllFilesInAgent - early return: no agent');
+			return;
+		}
 
 		try {
+			console.log('[LETTA DEBUG] closeAllFilesInAgent - making API request to close all files');
 			await this.makeRequest(`/v1/agents/${this.agent.id}/files/close-all`, {
 				method: 'PATCH'
 			});
+			console.log('[LETTA DEBUG] closeAllFilesInAgent - successfully closed all files');
 		} catch (error) {
 			console.error('Failed to close all files in agent:', error);
 		}
 	}
 
 	async onActiveFileChange(): Promise<void> {
-		if (!this.settings.focusMode || !this.agent) return;
+		console.log('[LETTA DEBUG] onActiveFileChange called');
+		console.log('[LETTA DEBUG] onActiveFileChange - focusMode:', this.settings.focusMode, 'agent:', !!this.agent);
+		
+		if (!this.settings.focusMode || !this.agent) {
+			console.log('[LETTA DEBUG] onActiveFileChange - early return');
+			return;
+		}
 
 		const activeFile = this.app.workspace.getActiveFile();
-		if (!activeFile || !activeFile.path.endsWith('.md')) return;
+		console.log('[LETTA DEBUG] onActiveFileChange - activeFile:', activeFile?.path || 'null');
+		
+		if (!activeFile || !activeFile.path.endsWith('.md')) {
+			console.log('[LETTA DEBUG] onActiveFileChange - early return: no file or not markdown');
+			return;
+		}
 
 		try {
+			console.log('[LETTA DEBUG] onActiveFileChange - applying focus mode for file:', activeFile.path);
 			// Close all files first
 			await this.closeAllFilesInAgent();
 			
 			// Open the currently active file
 			await this.openFileInAgent(activeFile);
+			console.log('[LETTA DEBUG] onActiveFileChange - focus mode applied successfully');
 		} catch (error) {
 			console.error('Failed to apply focus mode on active file change:', error);
 		}
@@ -1140,26 +1172,36 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async openChatView(): Promise<void> {
+		console.log('[LETTA DEBUG] openChatView called');
+		
 		// Auto-connect if not connected to server
 		if (!this.source) {
+			console.log('[LETTA DEBUG] openChatView - connecting to Letta');
 			new Notice('Connecting to Letta...');
 			const connected = await this.connectToLetta();
 			if (!connected) {
+				console.log('[LETTA DEBUG] openChatView - failed to connect');
 				return;
 			}
 		}
 
 		const { workspace } = this.app;
 
+		// Store the currently active file before opening chat
+		const activeFileBeforeChat = workspace.getActiveFile();
+		console.log('[LETTA DEBUG] openChatView - activeFileBeforeChat:', activeFileBeforeChat?.path || 'null');
+
 		let leaf: WorkspaceLeaf | null = null;
 		const leaves = workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE);
 
 		if (leaves.length > 0) {
 			// A leaf with our view already exists, use that
+			console.log('[LETTA DEBUG] openChatView - using existing leaf');
 			leaf = leaves[0];
 		} else {
 			// Our view could not be found in the workspace, create a new leaf
 			// in the right sidebar for it
+			console.log('[LETTA DEBUG] openChatView - creating new leaf');
 			leaf = workspace.getRightLeaf(false);
 			if (leaf) {
 				await leaf.setViewState({ type: LETTA_CHAT_VIEW_TYPE, active: true });
@@ -1168,7 +1210,22 @@ export default class LettaPlugin extends Plugin {
 
 		// "Reveal" the leaf in case it is in a collapsed sidebar
 		if (leaf) {
+			console.log('[LETTA DEBUG] openChatView - revealing leaf');
 			workspace.revealLeaf(leaf);
+		}
+
+		// If focus mode is enabled and we had an active file, ensure it's opened in the agent
+		if (this.settings.focusMode && activeFileBeforeChat && activeFileBeforeChat.path.endsWith('.md')) {
+			console.log('[LETTA DEBUG] openChatView - applying focus mode for file:', activeFileBeforeChat.path);
+			try {
+				await this.closeAllFilesInAgent();
+				await this.openFileInAgent(activeFileBeforeChat);
+				console.log('[LETTA DEBUG] openChatView - focus mode applied successfully');
+			} catch (error) {
+				console.error('Failed to apply focus mode after opening chat:', error);
+			}
+		} else {
+			console.log('[LETTA DEBUG] openChatView - not applying focus mode: focusMode =', this.settings.focusMode, 'activeFile =', !!activeFileBeforeChat);
 		}
 	}
 
@@ -3107,7 +3164,7 @@ class LettaChatView extends ItemView {
 		});
 		toolResultHeader.style.display = 'none';
 		const toolResultTitle = toolResultHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Result' });
-		const toolResultChevron = toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron', text: '○' });
+		const toolResultChevron = toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron letta-tool-circle', text: '○' });
 		
 		const toolResultContent = bubbleEl.createEl('div', { 
 			cls: 'letta-expandable-content letta-expandable-collapsed'
@@ -3968,7 +4025,7 @@ class LettaChatView extends ItemView {
 		});
 		toolResultHeader.style.display = 'none';
 		toolResultHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Result' });
-		toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron', text: '○' });
+		toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron letta-tool-circle', text: '○' });
 		
 		const toolResultContent = bubbleEl.createEl('div', { 
 			cls: 'letta-expandable-content letta-expandable-collapsed'
