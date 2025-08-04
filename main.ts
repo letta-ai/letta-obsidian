@@ -1401,7 +1401,6 @@ class LettaChatView extends ItemView {
 	}
 
 	addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: any, title?: string, reasoningContent?: string) {
-		// Debug: Log what's being passed to addMessage
 		// Adding message to chat interface
 		
 		// Extract text content from various possible formats
@@ -1957,6 +1956,23 @@ class LettaChatView extends ItemView {
 					continue;
 				}
 				
+				// Filter out login messages - check both direct type and content containing login JSON
+				if (message.type === 'login' || message.message_type === 'login') {
+					continue;
+				}
+				
+				// Check if this is a user_message containing login JSON
+				if (message.message_type === 'user_message' && message.content && typeof message.content === 'string') {
+					try {
+						const parsedContent = JSON.parse(message.content.trim());
+						if (parsedContent.type === 'login') {
+							continue;
+						}
+					} catch (e) {
+						// Not JSON, continue processing normally
+					}
+				}
+				
 				const messageType = message.message_type || message.type;
 				// Processing historical message
 			
@@ -2093,6 +2109,25 @@ class LettaChatView extends ItemView {
 			  message.text.includes('request_heartbeat=true')))) {
 			// Skipping historical heartbeat message
 			return;
+		}
+		
+		// Filter out login messages - check both direct type and content containing login JSON
+		if (messageType === 'login' || 
+			message.message_type === 'login' ||
+			messageRole === 'login') {
+			return;
+		}
+		
+		// Check if this is a user_message containing login JSON
+		if (message.message_type === 'user_message' && message.content && typeof message.content === 'string') {
+			try {
+				const parsedContent = JSON.parse(message.content.trim());
+				if (parsedContent.type === 'login') {
+					return;
+				}
+			} catch (e) {
+				// Not JSON, continue processing normally
+			}
 		}
 		
 		// Parse different message types based on Letta's message structure
@@ -3483,6 +3518,23 @@ class LettaChatView extends ItemView {
 								message.reason.includes('request_heartbeat=true')))) {
 			this.handleHeartbeat();
 			return;
+		}
+		
+		// Filter out login messages - check both direct type and content containing login JSON
+		if (message.type === 'login' || message.message_type === 'login') {
+			return;
+		}
+		
+		// Check if this is a user_message containing login JSON
+		if (message.message_type === 'user_message' && message.content && typeof message.content === 'string') {
+			try {
+				const parsedContent = JSON.parse(message.content.trim());
+				if (parsedContent.type === 'login') {
+					return;
+				}
+			} catch (e) {
+				// Not JSON, continue processing normally
+			}
 		}
 		
 		// Handle usage statistics
