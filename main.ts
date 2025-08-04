@@ -29,6 +29,7 @@ interface LettaPluginSettings {
 	embeddingModel: string;
 	showReasoning: boolean; // Control whether reasoning messages are visible
 	enableStreaming: boolean; // Control whether to use streaming API responses
+	focusMode: boolean; // Control whether to open only the active file and close others
 }
 
 const DEFAULT_SETTINGS: LettaPluginSettings = {
@@ -42,7 +43,8 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	syncOnStartup: true,
 	embeddingModel: 'letta/letta-free',
 	showReasoning: true, // Default to showing reasoning messages in tool interactions
-	enableStreaming: true // Default to enabling streaming for real-time responses
+	enableStreaming: true, // Default to enabling streaming for real-time responses
+	focusMode: false // Default to having focus mode disabled
 }
 
 interface LettaAgent {
@@ -240,6 +242,15 @@ export default class LettaPlugin extends Plugin {
 				}),
 			);
 		}
+
+		// Track active file changes for focus mode
+		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', () => {
+				if (this.settings.focusMode) {
+					this.onActiveFileChange();
+				}
+			})
+		);
 
 		// Add context menu for syncing files
 		this.registerEvent(
@@ -1046,6 +1057,88 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
+	async openFileInAgent(file: TFile): Promise<void> {
+		if (!this.agent || !this.source) return;
+
+		try {
+			const encodedPath = this.encodeFilePath(file.path);
+			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
+			
+			if (existingFile) {
+				await this.makeRequest(`/v1/agents/${this.agent.id}/files/${existingFile.id}/open`, {
+					method: 'PATCH'
+				});
+			}
+		} catch (error) {
+			console.error('Failed to open file in agent:', error);
+		}
+	}
+
+	async closeFileInAgent(file: TFile): Promise<void> {
+		if (!this.agent || !this.source) return;
+
+		try {
+			const encodedPath = this.encodeFilePath(file.path);
+			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
+			
+			if (existingFile) {
+				await this.makeRequest(`/v1/agents/${this.agent.id}/files/${existingFile.id}/close`, {
+					method: 'PATCH'
+				});
+			}
+		} catch (error) {
+			console.error('Failed to close file in agent:', error);
+		}
+	}
+
+	async closeAllFilesInAgent(): Promise<void> {
+		if (!this.agent) return;
+
+		try {
+			await this.makeRequest(`/v1/agents/${this.agent.id}/files/close-all`, {
+				method: 'PATCH'
+			});
+		} catch (error) {
+			console.error('Failed to close all files in agent:', error);
+		}
+	}
+
+	async onActiveFileChange(): Promise<void> {
+		if (!this.settings.focusMode || !this.agent) return;
+
+		const activeFile = this.app.workspace.getActiveFile();
+		if (!activeFile || !activeFile.path.endsWith('.md')) return;
+
+		try {
+			// Close all files first
+			await this.closeAllFilesInAgent();
+			
+			// Open the currently active file
+			await this.openFileInAgent(activeFile);
+		} catch (error) {
+			console.error('Failed to apply focus mode on active file change:', error);
+		}
+	}
+
+	async applyFocusMode(): Promise<void> {
+		if (!this.agent) return;
+
+		try {
+			// Close all files first
+			await this.closeAllFilesInAgent();
+			
+			// Open the currently active file if there is one
+			const activeFile = this.app.workspace.getActiveFile();
+			if (activeFile && activeFile.path.endsWith('.md')) {
+				await this.openFileInAgent(activeFile);
+			}
+		} catch (error) {
+			console.error('Failed to apply focus mode:', error);
+		}
+	}
+
 	async openChatView(): Promise<void> {
 		// Auto-connect if not connected to server
 		if (!this.source) {
@@ -1218,7 +1311,6 @@ export default class LettaPlugin extends Plugin {
 class LettaChatView extends ItemView {
 	plugin: LettaPlugin;
 	chatContainer: HTMLElement;
-	systemMessagesContainer: HTMLElement;
 	typingIndicator: HTMLElement;
 	heartbeatTimeout: NodeJS.Timeout | null = null;
 	inputContainer: HTMLElement;
@@ -1318,24 +1410,6 @@ class LettaChatView extends ItemView {
 		typingDots.createEl('span', { text: '.' });
 		typingDots.createEl('span', { text: '.' });
 		
-		// Hidden system messages container
-		this.systemMessagesContainer = container.createEl('div', { 
-			cls: 'letta-system-messages-container'
-		});
-		this.systemMessagesContainer.style.display = 'none';
-		
-		// System messages toggle button (unobtrusive)
-		const systemToggle = container.createEl('div', { 
-			cls: 'letta-system-toggle',
-			text: '⚙️',
-			attr: { title: 'Toggle system messages' }
-		});
-		systemToggle.style.cssText = 'position: absolute; top: 10px; right: 10px; cursor: pointer; opacity: 0.3; font-size: 12px; z-index: 100;';
-		systemToggle.addEventListener('click', () => {
-			const isVisible = this.systemMessagesContainer.style.display !== 'none';
-			this.systemMessagesContainer.style.display = isVisible ? 'none' : 'block';
-			systemToggle.style.opacity = isVisible ? '0.3' : '0.8';
-		});
 		
 		// Now that chat container exists, update status to show disconnected message if needed
 		this.updateChatStatus();
@@ -1447,13 +1521,20 @@ class LettaChatView extends ItemView {
 		if (type === 'assistant') {
 			this.cleanupPreviousToolCalls();
 		}
-		// Debug: Check for system_alert content being added as regular message
+		// Check if this is actually a system_alert that wasn't properly filtered
 		if (textContent && textContent.includes('"type": "system_alert"')) {
-			console.error('[Letta Plugin] ALERT: system_alert content being added as regular message!');
-			console.error('[Letta Plugin] Content:', textContent);
-			console.error('[Letta Plugin] Stack trace:', new Error().stack);
-			// Don't add this message - it should have been filtered
-			return null;
+			// Try to parse and handle as system message instead
+			try {
+				const parsed = JSON.parse(textContent);
+				if (parsed.type === 'system_alert') {
+					this.addSystemMessage(parsed);
+					return null;
+				}
+			} catch (e) {
+				// If parsing fails, continue with regular message handling
+				// but log this case for debugging
+				console.debug('[Letta Plugin] Failed to parse potential system_alert content:', e);
+			}
 		}
 		
 		// Debug: Check for heartbeat content being added as regular message
@@ -1732,8 +1813,6 @@ class LettaChatView extends ItemView {
 			// Process messages in groups (reasoning -> tool_call -> tool_return -> assistant)
 			this.processMessagesInGroups(sortedMessages);
 
-			// Add a separator to distinguish historical messages from new ones
-			this.addMessageSeparator('Previous conversation history');
 
 		} catch (error) {
 			console.error('[Letta Plugin] Failed to load historical messages:', error);
@@ -2183,24 +2262,57 @@ class LettaChatView extends ItemView {
 	}
 
 	addSystemMessage(message: any) {
-		const messageEl = this.systemMessagesContainer.createEl('div', { 
-			cls: 'letta-system-message' 
+		// Create system message using the same separator style as "Previous conversation history"
+		const separatorEl = this.chatContainer.createEl('div', { 
+			cls: 'letta-message-separator letta-system-message-separator' 
+		});
+		// Hidden by default - can be toggled via settings or UI control
+		
+		// Create clickable separator text
+		const separatorText = separatorEl.createEl('span', { 
+			text: 'memory update',
+			cls: 'letta-separator-text letta-system-separator-text'
+		});
+		separatorText.style.cursor = 'pointer';
+		separatorText.style.userSelect = 'none';
+		
+		// Create expandable content container (hidden initially)
+		const expandedContent = this.chatContainer.createEl('div', { 
+			cls: 'letta-system-expanded-content'
+		});
+		expandedContent.style.cssText = 'display: none; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 4px; padding: 12px; margin: 8px 0; font-size: 12px; line-height: 1.4;';
+		
+		
+		// For system_alert messages, show the readable content
+		if (message.type === 'system_alert' && message.message) {
+			const messageEl = expandedContent.createEl('div', { 
+				text: message.message,
+				cls: 'letta-system-content'
+			});
+			messageEl.style.cssText = 'color: var(--text-normal); white-space: pre-wrap; margin-bottom: 8px;';
+		}
+		
+		// Add a subtle "click to collapse" hint when expanded
+		const collapseHint = expandedContent.createEl('div', { 
+			text: 'Click "System Message" above to collapse',
+			cls: 'letta-system-collapse-hint'
+		});
+		collapseHint.style.cssText = 'font-size: 10px; color: var(--text-muted); margin-top: 8px; font-style: italic;';
+		
+		// Toggle functionality
+		let isExpanded = false;
+		separatorText.addEventListener('click', () => {
+			isExpanded = !isExpanded;
+			expandedContent.style.display = isExpanded ? 'block' : 'none';
+			
+			if (isExpanded) {
+				// Scroll to keep the expanded content visible
+				expandedContent.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+			}
 		});
 		
-		// Add timestamp
-		const timestamp = new Date().toLocaleTimeString();
-		const timeEl = messageEl.createEl('div', { 
-			text: `[${timestamp}] ${message.type || message.message_type || 'system'}`,
-			cls: 'letta-system-message-header'
-		});
-		
-		// Add message content as JSON for debugging
-		const contentEl = messageEl.createEl('pre', { 
-			cls: 'letta-system-message-content' 
-		});
-		contentEl.createEl('code', { 
-			text: JSON.stringify(message, null, 2)
-		});
+		// Auto-scroll to show the new system message separator
+		this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
 	}
 
 	showTypingIndicator() {
@@ -2929,7 +3041,7 @@ class LettaChatView extends ItemView {
 			reasoningEl.innerHTML = formattedReasoning;
 		}
 
-		// Tool call expandable section with enhanced design
+		// Normal expandable display for all tools
 		const toolCallHeader = bubbleEl.createEl('div', { cls: 'letta-expandable-header letta-tool-section letta-tool-prominent' });
 		
 		// Left side with tool name and loading
@@ -6281,6 +6393,20 @@ class LettaSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.enableStreaming = value;
 					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Focus Mode')
+			.setDesc('When enabled, only the currently active file is opened in the agent context, all other files are closed')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.focusMode)
+				.onChange(async (value) => {
+					this.plugin.settings.focusMode = value;
+					await this.plugin.saveSettings();
+					// Apply focus mode immediately if enabled
+					if (value) {
+						await this.plugin.applyFocusMode();
+					}
 				}));
 
 		// Actions

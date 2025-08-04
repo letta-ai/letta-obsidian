@@ -232,14 +232,13 @@
     margin-left: auto;
     border-radius: 16px 4px 16px 16px;
     max-width: 70%;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     font-weight: 500;
-    /* Outline style that respects theme colors */
+    /* Subtle outline style that respects theme colors */
     background: transparent;
     color: var(--text-normal);
-    border: 2px solid var(--interactive-accent);
+    border: 1px solid var(--background-modifier-border-hover);
     /* Add subtle background tint */
-    background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
+    background: color-mix(in srgb, var(--interactive-accent) 4%, transparent);
 }
 
 .letta-message-assistant {
@@ -1645,17 +1644,6 @@
     flex-direction: column;
     align-items: center;
     gap: 20px;
-    padding: 48px 32px;
-    background: var(--background-primary-alt);
-    border-radius: 16px;
-    border: 1px solid var(--background-modifier-border);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-    transition: all 0.2s ease;
-}
-
-.letta-disconnected-message:hover {
-    box-shadow: 0 6px 25px rgba(0, 0, 0, 0.12);
-    transform: translateY(-1px);
 }
 
 
@@ -1678,9 +1666,10 @@
 
 .letta-connect-button {
     padding: 12px 24px;
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
-    border: none;
+    background: transparent !important;
+    background-color: transparent !important;
+    color: var(--text-normal);
+    border: 1px solid var(--text-faint);
     border-radius: 8px;
     font-weight: 600;
     font-size: 1em;
@@ -1688,16 +1677,18 @@
     transition: all 0.2s ease;
     margin-top: 8px;
     min-width: 160px;
+    box-shadow: none !important;
 }
 
 .letta-connect-button:hover:not(:disabled) {
-    background: var(--interactive-accent-hover);
+    background: transparent;
+    color: var(--text-normal);
+    border: 2px solid var(--interactive-accent);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(var(--interactive-accent-rgb), 0.3);
 }
 
 .letta-connect-button:disabled {
-    background: var(--background-modifier-border);
+    background: transparent;
     color: var(--text-muted);
     cursor: not-allowed;
     transform: none;
@@ -1958,6 +1949,7 @@
     word-wrap: break-word;
     font-family: var(--font-text);
 }
+
 
 @keyframes letta-tool-loading-prominent {
     0%, 100% {
