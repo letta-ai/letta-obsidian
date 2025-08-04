@@ -245,11 +245,33 @@ export default class LettaPlugin extends Plugin {
 
 		// Track active file changes for focus mode
 		this.registerEvent(
-			this.app.workspace.on('active-leaf-change', () => {
-				console.log('[LETTA DEBUG] active-leaf-change event triggered, focusMode:', this.settings.focusMode);
+			this.app.workspace.on('active-leaf-change', (leaf) => {
+				const activeFile = this.app.workspace.getActiveFile();
+				console.log('[LETTA DEBUG] active-leaf-change event triggered');
+				console.log('[LETTA DEBUG] - focusMode:', this.settings.focusMode);
+				console.log('[LETTA DEBUG] - leaf type:', leaf?.getViewState()?.type);
+				console.log('[LETTA DEBUG] - active file:', activeFile?.path || 'null');
 				if (this.settings.focusMode) {
 					this.onActiveFileChange();
 				}
+			})
+		);
+
+		// Additional debugging events to track file switching
+		this.registerEvent(
+			this.app.workspace.on('file-open', (file) => {
+				console.log('[LETTA DEBUG] file-open event:', file?.path || 'null');
+				if (this.settings.focusMode && file && file.path.endsWith('.md')) {
+					console.log('[LETTA DEBUG] file-open triggering focus mode update');
+					this.onActiveFileChange();
+				}
+			})
+		);
+
+		this.registerEvent(
+			this.app.workspace.on('layout-change', () => {
+				const activeFile = this.app.workspace.getActiveFile();
+				console.log('[LETTA DEBUG] layout-change event, active file:', activeFile?.path || 'null');
 			})
 		);
 
@@ -300,9 +322,12 @@ export default class LettaPlugin extends Plugin {
 
 	updateStatusBar(status: string) {
 		if (this.statusBarItem) {
-			// Use detailed connection text for "Connected" status
-			const displayStatus = status === 'Connected' ? this.getConnectionStatusText() : status;
-			this.statusBarItem.setText(`Letta: ${displayStatus}`);
+			// Only show sync-related status, hide connection details
+			if (status === 'Connected') {
+				this.statusBarItem.setText('');
+			} else {
+				this.statusBarItem.setText(status);
+			}
 		}
 		
 		// Also update chat status if chat view is open
@@ -872,7 +897,7 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		try {
-			this.updateStatusBar('Syncing file...');
+			this.updateStatusBar(`Syncing ${file.name}...`);
 			
 			const encodedPath = this.encodeFilePath(file.path);
 			
@@ -885,11 +910,6 @@ export default class LettaPlugin extends Plugin {
 
 				const content = await this.app.vault.read(file);
 
-				// Skip files with no content
-				if (!content || content.trim().length === 0) {
-					new Notice('Cannot sync empty file');
-					return;
-				}
 
 				// Check if file exists in Letta and get metadata
 				const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
@@ -927,8 +947,9 @@ export default class LettaPlugin extends Plugin {
 					isFileUpload: true
 				});
 
-				this.updateStatusBar('Connected');
-				new Notice(`File "${file.name}" ${action} to Letta successfully`);
+				// Show success indication for longer duration, then return to connected
+				this.updateStatusBar(`Synced ${file.name}`);
+				setTimeout(() => this.updateStatusBar('Connected'), 5000);
 			});
 
 		} catch (error: any) {
@@ -1080,10 +1101,55 @@ export default class LettaPlugin extends Plugin {
 				});
 				console.log('[LETTA DEBUG] openFileInAgent - successfully opened file:', file.path);
 			} else {
-				console.log('[LETTA DEBUG] openFileInAgent - file not found in source:', encodedPath);
+				console.log('[LETTA DEBUG] openFileInAgent - file not found in source, syncing:', encodedPath);
+				
+				// Show sync status
+				this.updateStatusBar(`Syncing ${file.name} for focus...`);
+				
+				try {
+					// Auto-sync the missing file
+					await this.syncCurrentFile(file);
+					console.log('[LETTA DEBUG] openFileInAgent - file synced successfully');
+					
+					// Now try to open it again with retry logic for timing issues
+					let newFile = null;
+					let retryCount = 0;
+					const maxRetries = 5;
+					const baseDelay = 1000; // Start with 1 second
+					
+					while (!newFile && retryCount < maxRetries) {
+						if (retryCount > 0) {
+							const delay = baseDelay * Math.pow(1.5, retryCount - 1); // Exponential backoff
+							console.log(`[LETTA DEBUG] openFileInAgent - retrying file lookup in ${delay}ms, attempt:`, retryCount + 1);
+							await new Promise(resolve => setTimeout(resolve, delay));
+						}
+						
+						const updatedFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+						newFile = updatedFiles.find((f: any) => f.file_name === encodedPath);
+						retryCount++;
+					}
+					
+					if (newFile) {
+						await this.makeRequest(`/v1/agents/${this.agent.id}/files/${newFile.id}/open`, {
+							method: 'PATCH'
+						});
+						console.log('[LETTA DEBUG] openFileInAgent - successfully opened synced file:', file.path);
+						this.updateStatusBar('Connected');
+					} else {
+						console.error('[LETTA DEBUG] openFileInAgent - file still not found after sync and retries');
+						this.updateStatusBar('Sync failed');
+						setTimeout(() => this.updateStatusBar('Connected'), 3000);
+					}
+				} catch (syncError) {
+					console.error('Failed to sync file:', syncError);
+					this.updateStatusBar('Sync failed');
+					setTimeout(() => this.updateStatusBar('Connected'), 3000);
+				}
 			}
 		} catch (error) {
 			console.error('Failed to open file in agent:', error);
+			this.updateStatusBar('Error');
+			setTimeout(() => this.updateStatusBar('Connected'), 3000);
 		}
 	}
 
@@ -5814,6 +5880,7 @@ class ModelSwitcherModal extends Modal {
 	
 	// Model list
 	modelList: HTMLElement;
+	resultsCounter: HTMLElement;
 	
 	constructor(app: App, plugin: LettaPlugin, currentAgent: LettaAgent) {
 		super(app);
@@ -5856,10 +5923,21 @@ class ModelSwitcherModal extends Modal {
 
 		// Filters section
 		const filtersSection = content.createEl('div', { cls: 'config-section' });
-		filtersSection.createEl('h3', { text: 'Filter Models' });
+		const filtersHeader = filtersSection.createEl('div', { cls: 'filters-header' });
+		filtersHeader.createEl('h3', { text: 'Filter Models' });
+		
+		// Add clear filters button
+		const clearFiltersBtn = filtersHeader.createEl('button', { 
+			text: 'Clear Filters',
+			cls: 'clear-filters-btn'
+		});
+		clearFiltersBtn.addEventListener('click', () => this.clearFilters());
+
+		// Filters grid container
+		const filtersGrid = filtersSection.createEl('div', { cls: 'filters-grid' });
 
 		// Provider category filter
-		const categoryGroup = filtersSection.createEl('div', { cls: 'config-group' });
+		const categoryGroup = filtersGrid.createEl('div', { cls: 'config-group' });
 		categoryGroup.createEl('label', { text: 'Provider Category:', cls: 'config-label' });
 		this.providerCategorySelect = categoryGroup.createEl('select', { cls: 'config-select' });
 		this.providerCategorySelect.createEl('option', { text: 'All Categories', value: '' });
@@ -5867,22 +5945,42 @@ class ModelSwitcherModal extends Modal {
 		this.providerCategorySelect.createEl('option', { text: 'BYOK (Bring Your Own Key)', value: 'byok' });
 
 		// Provider name filter
-		const providerGroup = filtersSection.createEl('div', { cls: 'config-group' });
+		const providerGroup = filtersGrid.createEl('div', { cls: 'config-group' });
 		providerGroup.createEl('label', { text: 'Provider:', cls: 'config-label' });
 		this.providerNameSelect = providerGroup.createEl('select', { cls: 'config-select' });
 		this.providerNameSelect.createEl('option', { text: 'All Providers', value: '' });
 
 		// Search filter
-		const searchGroup = filtersSection.createEl('div', { cls: 'config-group' });
-		searchGroup.createEl('label', { text: 'Search Models:', cls: 'config-label' });
-		this.searchInput = searchGroup.createEl('input', { 
-			cls: 'config-input',
-			attr: { type: 'text', placeholder: 'Search by model name...' }
+		const searchGroup = filtersGrid.createEl('div', { cls: 'config-group' });
+		const searchLabel = searchGroup.createEl('label', { text: 'Search Models:', cls: 'config-label' });
+		const searchContainer = searchGroup.createEl('div', { cls: 'search-input-container' });
+		this.searchInput = searchContainer.createEl('input', { 
+			cls: 'config-input search-input',
+			attr: { type: 'text', placeholder: 'Search models...' }
+		});
+		
+		// Add search clear button
+		const searchClearBtn = searchContainer.createEl('button', { 
+			cls: 'search-clear-btn',
+			attr: { type: 'button', title: 'Clear search' }
+		});
+		searchClearBtn.innerHTML = '×';
+		searchClearBtn.addEventListener('click', () => {
+			this.searchInput.value = '';
+			this.filterModels();
 		});
 
 		// Models section
 		const modelsSection = content.createEl('div', { cls: 'config-section' });
-		modelsSection.createEl('h3', { text: 'Available Models' });
+		const modelsHeader = modelsSection.createEl('div', { cls: 'models-header' });
+		modelsHeader.createEl('h3', { text: 'Available Models' });
+		
+		// Add results counter
+		const resultsCounter = modelsHeader.createEl('span', { 
+			cls: 'results-counter',
+			text: 'Loading...'
+		});
+		this.resultsCounter = resultsCounter;
 		
 		this.modelList = modelsSection.createEl('div', { cls: 'block-search-list' });
 		this.modelList.createEl('div', { 
@@ -5942,6 +6040,34 @@ class ModelSwitcherModal extends Modal {
 		this.providerCategorySelect.addEventListener('change', () => this.filterModels());
 		this.providerNameSelect.addEventListener('change', () => this.filterModels());
 		this.searchInput.addEventListener('input', () => this.filterModels());
+		
+		// Add keyboard shortcuts
+		this.searchInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Escape') {
+				this.searchInput.value = '';
+				this.filterModels();
+			} else if (e.key === 'Enter' && this.filteredModels.length === 1) {
+				// Select the only filtered model on Enter
+				this.selectModel(this.filteredModels[0]);
+			}
+		});
+		
+		// Auto-focus search input
+		setTimeout(() => this.searchInput.focus(), 100);
+	}
+
+	clearFilters() {
+		this.providerCategorySelect.value = '';
+		this.providerNameSelect.value = '';
+		this.searchInput.value = '';
+		this.filterModels();
+	}
+
+	highlightSearchTerm(text: string, searchTerm: string): string {
+		if (!searchTerm) return text;
+		
+		const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+		return text.replace(regex, '<mark class="search-highlight">$1</mark>');
 	}
 
 	filterModels() {
@@ -5962,6 +6088,11 @@ class ModelSwitcherModal extends Modal {
 
 	renderModels() {
 		this.modelList.empty();
+		
+		// Update results counter
+		const totalModels = this.models.length;
+		const filteredCount = this.filteredModels.length;
+		this.resultsCounter.textContent = `${filteredCount} of ${totalModels} models`;
 
 		if (this.filteredModels.length === 0) {
 			this.modelList.createEl('div', { 
@@ -5989,9 +6120,21 @@ class ModelSwitcherModal extends Modal {
 		this.filteredModels.forEach(model => {
 			const row = tbody.createEl('tr', { cls: 'model-table-row' });
 			
-			// Model name
+			// Model name with search highlighting
 			const modelCell = row.createEl('td', { cls: 'model-cell-name' });
-			modelCell.createEl('span', { text: model.model, cls: 'model-name' });
+			const modelNameSpan = modelCell.createEl('span', { cls: 'model-name' });
+			const searchTerm = this.searchInput.value.toLowerCase();
+			modelNameSpan.innerHTML = this.highlightSearchTerm(model.model, searchTerm);
+			
+			// Add model details as tooltip
+			const modelDetails = [
+				`Provider: ${model.provider_name || 'Unknown'}`,
+				`Category: ${model.provider_category || 'Unknown'}`,
+				`Context: ${model.context_window?.toLocaleString() || 'Unknown'} tokens`,
+				model.model_endpoint ? `Endpoint: ${model.model_endpoint}` : null
+			].filter(Boolean).join('\n');
+			
+			modelCell.setAttribute('title', modelDetails);
 			
 			// Provider
 			row.createEl('td', { 
@@ -6016,28 +6159,37 @@ class ModelSwitcherModal extends Modal {
 			const statusCell = row.createEl('td', { cls: 'model-cell-status' });
 			const currentModel = this.currentAgent.llm_config?.model;
 			if (currentModel === model.model) {
-				statusCell.createEl('span', { 
-					text: 'Current',
+				const currentBadge = statusCell.createEl('span', { 
+					text: '✓ Current',
 					cls: 'model-current-badge'
 				});
+				currentBadge.setAttribute('title', 'This model is currently selected for your agent');
+				// Disable clicking on current model
+				row.classList.add('model-current-row');
 			} else {
-				statusCell.createEl('span', { 
-					text: 'Available',
+				const availableBadge = statusCell.createEl('span', { 
+					text: 'Select',
 					cls: 'model-available-badge'
 				});
+				availableBadge.setAttribute('title', 'Click to select this model');
 			}
 
-			// Click handler
-			row.addEventListener('click', () => this.selectModel(model));
-			row.style.cursor = 'pointer';
-			
-			// Hover effect
-			row.addEventListener('mouseenter', () => {
-				row.style.backgroundColor = 'var(--background-modifier-hover)';
-			});
-			row.addEventListener('mouseleave', () => {
-				row.style.backgroundColor = '';
-			});
+			// Click handler - only for non-current models
+			if (currentModel !== model.model) {
+				row.addEventListener('click', () => this.selectModel(model));
+				row.style.cursor = 'pointer';
+				
+				// Hover effect
+				row.addEventListener('mouseenter', () => {
+					row.style.backgroundColor = 'var(--background-modifier-hover)';
+				});
+				row.addEventListener('mouseleave', () => {
+					row.style.backgroundColor = '';
+				});
+			} else {
+				row.style.cursor = 'default';
+				row.style.opacity = '0.7';
+			}
 		});
 	}
 
