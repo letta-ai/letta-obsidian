@@ -2861,18 +2861,42 @@ class LettaChatView extends ItemView {
 		}
 
 		// Creating new agent
+		console.log('[Letta Plugin] Starting agent creation with config:', agentConfig);
+
+		// Check if this is a cloud instance and validate project
+		const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
+		if (isCloudInstance) {
+			console.log('[Letta Plugin] Cloud instance detected, validating project...');
+			try {
+				const projects = await this.plugin.makeRequest('/v1/projects');
+				console.log('[Letta Plugin] Available projects:', projects);
+				
+				const projectExists = projects.some((p: any) => p.id === this.plugin.settings.lettaProjectSlug);
+				if (!projectExists) {
+					throw new Error(`Project "${this.plugin.settings.lettaProjectSlug}" not found. Available projects: ${projects.map((p: any) => p.id).join(', ')}`);
+				}
+				console.log('[Letta Plugin] Project validation successful');
+			} catch (error) {
+				console.error('[Letta Plugin] Project validation failed:', error);
+				throw new Error(`Failed to validate project: ${error.message}`);
+			}
+		}
 
 		// Get embedding config for agent creation
+		console.log('[Letta Plugin] Fetching embedding models...');
 		const embeddingConfigs = await this.plugin.makeRequest('/v1/models/embedding');
+		console.log('[Letta Plugin] Available embedding configs:', embeddingConfigs);
+		
 		const embeddingConfig = embeddingConfigs.find((config: any) => 
 			config.handle === 'letta/letta-free' || (config.handle && config.handle.includes('letta'))
 		) || embeddingConfigs[0];
+		
+		console.log('[Letta Plugin] Selected embedding config:', embeddingConfig);
 
 		// Create new agent with user configuration and corrected defaults
-		const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
 		const agentBody: any = {
 			name: agentConfig.name,
-			agent_type: 'memgpt_v2_agent', // Use MemGPT v2 architecture
+			agent_type: agentConfig.agent_type || 'memgpt_v2_agent', // Use user selection or default to MemGPT v2
 			description: agentConfig.description,
 			model: agentConfig.model,
 			include_base_tools: false, // Don't include base tools, use custom memory tools
@@ -2901,6 +2925,8 @@ class LettaChatView extends ItemView {
 				delete agentBody[key];
 			}
 		});
+
+		console.log('[Letta Plugin] Creating agent with config:', JSON.stringify(agentBody, null, 2));
 
 		const newAgent = await this.plugin.makeRequest('/v1/agents', {
 			method: 'POST',
