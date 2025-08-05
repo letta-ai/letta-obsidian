@@ -4945,7 +4945,7 @@ class LettaChatView extends ItemView {
 					// @ts-ignore
 					this.app.setting.open();
 					// @ts-ignore 
-					this.app.setting.openTabById('letta-ai-agent');
+					this.app.setting.openTabById('letta-obsidian');
 				});
 			} else {
 				// Generic error handling
