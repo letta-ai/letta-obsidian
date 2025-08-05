@@ -17,6 +17,26 @@ import {
 export const LETTA_CHAT_VIEW_TYPE = 'letta-chat-view';
 export const LETTA_MEMORY_VIEW_TYPE = 'letta-memory-view';
 
+// Rate limit message constants
+export const RATE_LIMIT_MESSAGE = {
+	TITLE: 'Rate Limit Exceeded - You\'ve reached the rate limit for your account. Please wait a moment before sending another message.',
+	UPGRADE_TEXT: 'Need more? Letta Cloud offers Pro, Scale, and Enterprise plans:',
+	BILLING_URL: 'https://app.letta.com/settings/organization/billing',
+	CUSTOM_KEYS_TEXT: 'Or bring your own inference provider:',
+	CUSTOM_KEYS_URL: 'https://docs.letta.com/guides/cloud/custom-keys',
+	
+	// Helper function to create full message
+	create: (reason: string) => `${RATE_LIMIT_MESSAGE.TITLE}
+
+Reason: ${reason}
+
+${RATE_LIMIT_MESSAGE.UPGRADE_TEXT}
+${RATE_LIMIT_MESSAGE.BILLING_URL}
+
+${RATE_LIMIT_MESSAGE.CUSTOM_KEYS_TEXT}
+${RATE_LIMIT_MESSAGE.CUSTOM_KEYS_URL}`
+};
+
 interface LettaPluginSettings {
 	lettaApiKey: string;
 	lettaBaseUrl: string;
@@ -30,6 +50,7 @@ interface LettaPluginSettings {
 	showReasoning: boolean; // Control whether reasoning messages are visible
 	enableStreaming: boolean; // Control whether to use streaming API responses
 	focusMode: boolean; // Control whether to open only the active file and close others
+	allowAgentCreation: boolean; // Control whether agent creation modal can be shown
 }
 
 const DEFAULT_SETTINGS: LettaPluginSettings = {
@@ -44,7 +65,8 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	embeddingModel: 'letta/letta-free',
 	showReasoning: true, // Default to showing reasoning messages in tool interactions
 	enableStreaming: true, // Default to enabling streaming for real-time responses
-	focusMode: false // Default to having focus mode disabled
+	focusMode: false, // Default to having focus mode disabled
+	allowAgentCreation: false // Default to disabling agent creation modal
 }
 
 interface LettaAgent {
@@ -338,7 +360,36 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-	async makeRequest(path: string, options: any = {}) {
+	async makeRequest(path: string, options: any = {}): Promise<any> {
+		return this.makeRequestWithRetry(path, options, 3);
+	}
+
+	async makeRequestWithRetry(path: string, options: any = {}, maxRetries: number = 3): Promise<any> {
+		let lastError: any;
+		
+		for (let attempt = 0; attempt <= maxRetries; attempt++) {
+			try {
+				return await this.executeSingleRequest(path, options);
+			} catch (error: any) {
+				lastError = error;
+				
+				// Only retry on rate limiting errors
+				if (error.isRateLimit && attempt < maxRetries) {
+					const waitTime = error.retryAfter ? error.retryAfter * 1000 : Math.pow(2, attempt) * 1000; // Exponential backoff
+					console.log(`[Letta Plugin] Rate limited, waiting ${waitTime}ms before retry ${attempt + 1}/${maxRetries}`);
+					await new Promise(resolve => setTimeout(resolve, waitTime));
+					continue;
+				}
+				
+				// For non-rate-limit errors or final attempt, throw immediately
+				throw error;
+			}
+		}
+		
+		throw lastError;
+	}
+
+	async executeSingleRequest(path: string, options: any = {}): Promise<any> {
 		const url = `${this.settings.lettaBaseUrl}${path}`;
 		const headers: any = {
 			...options.headers
@@ -421,6 +472,31 @@ export default class LettaPlugin extends Plugin {
 					}
 				} else if (response.status === 405) {
 					errorMessage = `Method not allowed for ${path}. This may indicate:\n• Incorrect HTTP method\n• API endpoint has changed\n• Feature not supported in this Letta version`;
+				} else if (response.status === 429) {
+					// Handle rate limiting with retry logic
+					const retryAfter = response.headers?.['retry-after'] || response.headers?.['Retry-After'];
+					const rateLimitReset = response.headers?.['x-ratelimit-reset'] || response.headers?.['X-RateLimit-Reset'];
+					
+					// Create detailed error message
+					errorMessage = `Rate limit exceeded. ${responseJson?.detail || response.text || 'Please wait before making more requests.'}`;
+					
+					if (retryAfter) {
+						errorMessage += `\nRetry after: ${retryAfter} seconds`;
+					}
+					if (rateLimitReset) {
+						try {
+							const resetTime = new Date(parseInt(rateLimitReset) * 1000);
+							errorMessage += `\nRate limit resets at: ${resetTime.toLocaleTimeString()}`;
+						} catch {
+							errorMessage += `\nRate limit reset: ${rateLimitReset}`;
+						}
+					}
+					
+					// Create a special error type for rate limiting
+					const rateLimitError = new Error(errorMessage);
+					(rateLimitError as any).isRateLimit = true;
+					(rateLimitError as any).retryAfter = retryAfter ? parseInt(retryAfter) : null;
+					throw rateLimitError;
 				}
 				
 				// Enhanced error message created
@@ -620,7 +696,12 @@ export default class LettaPlugin extends Plugin {
 
 	async setupAgent(): Promise<void> {
 		if (!this.source) throw new Error('Source not set up');
-		if (!this.settings.agentId) throw new Error('No agent ID configured');
+		
+		// If no agent ID is configured, skip agent setup silently
+		if (!this.settings.agentId) {
+			console.log('[Letta Plugin] No agent ID configured, skipping agent setup');
+			return;
+		}
 
 		try {
 			// Try to get the specific agent by ID
@@ -653,12 +734,20 @@ export default class LettaPlugin extends Plugin {
 					// Source already attached to agent
 				}
 			} else {
-				throw new Error(`Agent with ID ${this.settings.agentId} not found`);
+				// Agent with configured ID not found, clear the invalid ID
+				console.log(`[Letta Plugin] Agent with ID ${this.settings.agentId} not found, clearing invalid ID`);
+				this.settings.agentId = '';
+				this.settings.agentName = '';
+				await this.saveSettings();
 			}
 
 		} catch (error) {
 			console.error('Failed to setup agent:', error);
-			throw error;
+			// Clear invalid agent ID on error
+			this.settings.agentId = '';
+			this.settings.agentName = '';
+			await this.saveSettings();
+			// Don't throw error to prevent blocking startup
 		}
 	}
 
@@ -1380,6 +1469,45 @@ export default class LettaPlugin extends Plugin {
 			});
 
 			if (!response.ok) {
+				// For rate limiting, try to extract more detailed error information
+				if (response.status === 429) {
+					let detailedError = `HTTP 429: Rate limit exceeded`;
+					try {
+						const errorBody = await response.text();
+						if (errorBody) {
+							// Try to parse as JSON first
+							try {
+								const errorJson = JSON.parse(errorBody);
+								if (errorJson.detail) {
+									detailedError = `HTTP 429: ${errorJson.detail}`;
+								} else if (errorJson.message) {
+									detailedError = `HTTP 429: ${errorJson.message}`;
+								}
+							} catch {
+								// If not JSON, use the raw text
+								detailedError = `HTTP 429: ${errorBody}`;
+							}
+						}
+						// Check for rate limit headers
+						const retryAfter = response.headers.get('Retry-After');
+						const rateLimitReset = response.headers.get('X-RateLimit-Reset');
+						const rateLimitRemaining = response.headers.get('X-RateLimit-Remaining');
+						
+						if (retryAfter) {
+							detailedError += ` | Retry after: ${retryAfter} seconds`;
+						}
+						if (rateLimitReset) {
+							const resetTime = new Date(parseInt(rateLimitReset) * 1000);
+							detailedError += ` | Rate limit resets at: ${resetTime.toLocaleTimeString()}`;
+						}
+						if (rateLimitRemaining) {
+							detailedError += ` | Remaining requests: ${rateLimitRemaining}`;
+						}
+					} catch (bodyError) {
+						console.error('[Letta Plugin] Error reading rate limit response body:', bodyError);
+					}
+					throw new Error(detailedError);
+				}
 				throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 			}
 
@@ -2096,15 +2224,18 @@ class LettaChatView extends ItemView {
 			cls: 'letta-rate-limit-content'
 		});
 		
-		// Process the content to extract the main message and billing link
+		// Process the content to extract the main message and links
 		const lines = content.split('\n');
 		let mainMessage = '';
 		let billingLink = '';
+		let customKeysLink = '';
 		
 		for (const line of lines) {
 			if (line.includes('https://app.letta.com/settings/organization/billing')) {
 				billingLink = line.trim();
-			} else if (line.trim() && !line.includes('Need more?')) {
+			} else if (line.includes('https://docs.letta.com/guides/cloud/custom-keys')) {
+				customKeysLink = line.trim();
+			} else if (line.trim() && !line.includes('Need more?') && !line.includes('Or bring your own')) {
 				if (mainMessage) mainMessage += ' ';
 				mainMessage += line.replace(/[⚠️*]/g, '').trim();
 			}
@@ -2124,6 +2255,26 @@ class LettaChatView extends ItemView {
 			const link = linkEl.createEl('a', { 
 				href: billingLink,
 				text: 'Upgrade to Pro, Scale, or Enterprise',
+				cls: 'letta-rate-limit-upgrade-link'
+			});
+			link.setAttribute('target', '_blank');
+		}
+		
+		// Add "or" separator if both links are present
+		if (billingLink && customKeysLink) {
+			const orEl = contentEl.createEl('div', { 
+				cls: 'letta-rate-limit-separator',
+				text: 'or'
+			});
+			orEl.style.cssText = 'text-align: center; margin: 8px 0; color: var(--text-muted); font-size: 0.9em;';
+		}
+		
+		// Add custom keys link if present
+		if (customKeysLink) {
+			const linkEl = contentEl.createEl('div', { cls: 'letta-rate-limit-link' });
+			const link = linkEl.createEl('a', { 
+				href: customKeysLink,
+				text: 'Learn about bringing your own inference provider',
 				cls: 'letta-rate-limit-upgrade-link'
 			});
 			link.setAttribute('target', '_blank');
@@ -2630,29 +2781,57 @@ class LettaChatView extends ItemView {
 			selectAgentButton.style.cursor = 'not-allowed';
 		}
 		
-		const createAgentButton = buttonContainer.createEl('button', { 
-			text: 'Create New Agent',
-			cls: 'letta-create-agent-button'
-		});
-		
-		createAgentButton.addEventListener('click', async () => {
-			// Open agent creation modal
-			const configModal = new AgentConfigModal(this.app, this.plugin);
-			const agentConfig = await configModal.showModal();
+		// Only show the create agent button if enabled in settings
+		if (this.plugin.settings.allowAgentCreation) {
+			const createAgentButton = buttonContainer.createEl('button', { 
+				text: 'Create New Agent (Advanced)',
+				cls: 'letta-create-agent-button'
+			});
 			
-			if (agentConfig) {
-				try {
-					// Create the agent using the configuration
-					await this.createAgentFromConfig(agentConfig);
-					new Notice('Agent created successfully!');
-					// Refresh the no-agent message to update button state
-					await this.showNoAgentMessage();
-				} catch (error) {
-					console.error('[Letta Plugin] Failed to create agent:', error);
-					new Notice(`Failed to create agent: ${error.message}`);
+			// Make the button less prominent to prevent accidental clicks
+			createAgentButton.style.cssText = 'opacity: 0.7; font-size: 0.9em;';
+			createAgentButton.addEventListener('mouseenter', () => { createAgentButton.style.opacity = '1'; });
+			createAgentButton.addEventListener('mouseleave', () => { createAgentButton.style.opacity = '0.7'; });
+			
+			createAgentButton.addEventListener('click', async () => {
+			// Show confirmation before opening agent creation modal
+			const confirmModal = new Modal(this.app);
+			confirmModal.titleEl.setText('Create New Agent');
+			
+			const content = confirmModal.contentEl;
+			content.createEl('p', { text: 'Are you sure you want to create a new agent? This will open the agent configuration modal.' });
+			
+			const buttonContainer = content.createEl('div', { cls: 'modal-button-container' });
+			buttonContainer.style.cssText = 'display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;';
+			
+			const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
+			cancelButton.addEventListener('click', () => confirmModal.close());
+			
+			const createButton = buttonContainer.createEl('button', { text: 'Create Agent', cls: 'mod-cta' });
+			createButton.addEventListener('click', async () => {
+				confirmModal.close();
+				
+				// Open agent creation modal after confirmation
+				const configModal = new AgentConfigModal(this.app, this.plugin);
+				const agentConfig = await configModal.showModal();
+				
+				if (agentConfig) {
+					try {
+						// Create the agent using the configuration
+						await this.createAgentFromConfig(agentConfig);
+						new Notice('Agent created successfully!');
+						// Refresh the no-agent message to update button state
+						await this.showNoAgentMessage();
+					} catch (error) {
+						console.error('[Letta Plugin] Failed to create agent:', error);
+						new Notice(`Failed to create agent: ${error.message}`);
+					}
 				}
-			}
-		});
+			});
+			
+			confirmModal.open();
+			});
+		}
 	}
 
 	async createAgentFromConfig(agentConfig: AgentConfig): Promise<void> {
@@ -3010,7 +3189,15 @@ class LettaChatView extends ItemView {
 					(error) => {
 						// Handle streaming error
 						console.error('Streaming error:', error);
-						this.addMessage('assistant', `**Streaming Error**: ${error.message}`, 'Error');
+						
+						// Check if it's a rate limiting error and handle it specially
+						if (error.message && error.message.includes('HTTP 429')) {
+							console.log('[Letta Plugin] Rate limit error detected, showing specialized message');
+							// Create the proper rate limit message format that includes billing link
+							this.addRateLimitMessage(RATE_LIMIT_MESSAGE.create(error.message));
+						} else {
+							this.addMessage('assistant', `**Streaming Error**: ${error.message}`, 'Error');
+						}
 					},
 					() => {
 						// Handle streaming completion
@@ -3047,7 +3234,8 @@ class LettaChatView extends ItemView {
 			
 			if (error.message.includes('429') || error.message.includes('Rate limited')) {
 				// Use the special rate limit message display instead of regular error message
-				this.addRateLimitMessage(`Rate Limit Exceeded - You've reached the rate limit for your account. Please wait a moment before sending another message.\n\nReason: ${error.message.includes('model-unknown') ? 'Unknown model configuration' : 'Too many requests'}\n\nNeed more? Letta Cloud offers Pro, Scale, and Enterprise plans:\nhttps://app.letta.com/settings/organization/billing`);
+				const reason = error.message.includes('model-unknown') ? 'Unknown model configuration' : 'Too many requests';
+				this.addRateLimitMessage(RATE_LIMIT_MESSAGE.create(reason));
 				return; // Return early to avoid showing regular error message
 			} else if (error.message.includes('401') || error.message.includes('Unauthorized')) {
 				errorMessage = `**Authentication Error**\n\nYour API key may be invalid or expired. Please check your settings.\n\n*${error.message}*`;
@@ -6616,6 +6804,16 @@ class LettaSettingTab extends PluginSettingTab {
 					if (value) {
 						await this.plugin.applyFocusMode();
 					}
+				}));
+
+		new Setting(containerEl)
+			.setName('Allow Agent Creation')
+			.setDesc('When enabled, shows the "Create New Agent" button in the chat interface when no agent is selected')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.allowAgentCreation)
+				.onChange(async (value) => {
+					this.plugin.settings.allowAgentCreation = value;
+					await this.plugin.saveSettings();
 				}));
 
 		// Actions
