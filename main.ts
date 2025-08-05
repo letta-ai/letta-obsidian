@@ -3030,10 +3030,15 @@ class LettaChatView extends ItemView {
 			const agent = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}`);
 			
 			if (agent && agent.llm_config && agent.llm_config.model) {
-				// Display just the model name for brevity
+				// Display model with provider and category info
 				const modelName = agent.llm_config.model;
-				this.modelButton.textContent = modelName;
-				this.modelButton.title = `Current model: ${modelName}\nProvider: ${agent.llm_config.provider_name || 'Unknown'}\nClick to change model`;
+				const providerName = agent.llm_config.provider_name || 'Unknown';
+				const providerCategory = agent.llm_config.provider_category || 'Unknown';
+				
+				// Show provider/model format with category indicator
+				const categoryIndicator = providerCategory === 'byok' ? ' (BYOK)' : '';
+				this.modelButton.textContent = `${providerName}/${modelName}${categoryIndicator}`;
+				this.modelButton.title = `Current model: ${modelName}\nProvider: ${providerName}\nCategory: ${providerCategory}\nClick to change model`;
 			} else {
 				this.modelButton.textContent = 'Unknown';
 			}
