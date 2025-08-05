@@ -1070,6 +1070,16 @@
     font-size: 0.9em;
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
     cursor: pointer;
+    line-height: 1.4;
+    min-height: 42px;
+    box-sizing: border-box;
+}
+
+.config-select option {
+    color: var(--text-normal);
+    background: var(--background-primary);
+    padding: 8px 12px;
+    line-height: 1.4;
 }
 
 .config-select:hover {
