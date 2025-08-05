@@ -1599,7 +1599,10 @@ class LettaChatView extends ItemView {
 		
 		const titleSection = header.createEl('div', { cls: 'letta-chat-title-section' });
 		const titleContainer = titleSection.createEl('div', { cls: 'letta-title-container' });
-		this.agentNameElement = titleContainer.createEl('h3', { text: this.plugin.settings.agentName, cls: 'letta-chat-title' });
+		this.agentNameElement = titleContainer.createEl('h3', { 
+			text: this.plugin.agent ? this.plugin.settings.agentName : 'No Agent', 
+			cls: this.plugin.agent ? 'letta-chat-title' : 'letta-chat-title no-agent'
+		});
 		this.agentNameElement.style.cursor = 'pointer';
 		this.agentNameElement.title = 'Click to edit agent name';
 		this.agentNameElement.addEventListener('click', () => this.editAgentName());
@@ -2631,6 +2634,9 @@ class LettaChatView extends ItemView {
 			// Use the plugin's helper method for consistent status text
 			this.statusText.textContent = this.plugin.getConnectionStatusText();
 			
+			// Update agent name display
+			this.updateAgentNameDisplay();
+			
 			// Update model button if it exists
 			if (this.modelButton) {
 				this.updateModelButton();
@@ -2649,6 +2655,9 @@ class LettaChatView extends ItemView {
 			this.statusDot.className = 'letta-status-dot letta-status-connected';
 			this.statusText.textContent = this.plugin.getConnectionStatusText();
 			
+			// Update agent name display to show "No Agent"
+			this.updateAgentNameDisplay();
+			
 			if (this.modelButton) {
 				this.modelButton.textContent = 'No Agent';
 			}
@@ -2661,6 +2670,10 @@ class LettaChatView extends ItemView {
 			this.statusDot.className = 'letta-status-dot';
 			this.statusDot.style.backgroundColor = 'var(--text-muted)';
 			this.statusText.textContent = 'Disconnected';
+			
+			// Update agent name display to show "No Agent"
+			this.updateAgentNameDisplay();
+			
 			if (this.modelButton) {
 				this.modelButton.textContent = 'N/A';
 			}
@@ -2668,6 +2681,16 @@ class LettaChatView extends ItemView {
 			// Show disconnected message in chat area
 			this.removeNoAgentMessage();
 			this.showDisconnectedMessage();
+		}
+	}
+
+	updateAgentNameDisplay() {
+		if (this.plugin.agent) {
+			this.agentNameElement.textContent = this.plugin.settings.agentName;
+			this.agentNameElement.className = 'letta-chat-title';
+		} else {
+			this.agentNameElement.textContent = 'No Agent';
+			this.agentNameElement.className = 'letta-chat-title no-agent';
 		}
 	}
 	
@@ -2977,7 +3000,7 @@ class LettaChatView extends ItemView {
 				await this.plugin.saveSettings();
 
 				// Update UI
-				this.agentNameElement.textContent = newName;
+				this.updateAgentNameDisplay();
 				this.plugin.agent.name = newName;
 
 				new Notice(`Agent name updated to: ${newName}`);
@@ -3099,7 +3122,7 @@ class LettaChatView extends ItemView {
 				if (agentConfig.name && agentConfig.name !== this.plugin.settings.agentName) {
 					this.plugin.settings.agentName = agentConfig.name;
 					await this.plugin.saveSettings();
-					this.agentNameElement.textContent = agentConfig.name;
+					this.updateAgentNameDisplay();
 					if (this.plugin.agent) {
 						this.plugin.agent.name = agentConfig.name;
 					}
@@ -4903,7 +4926,7 @@ class LettaChatView extends ItemView {
 			console.log(`[Letta Plugin] Successfully verified agent access: ${verifyAgent.name}`);
 			
 			// Update UI - agent name
-			this.agentNameElement.textContent = agent.name;
+			this.updateAgentNameDisplay();
 			
 			// Update chat status without loading historical messages for fresh start
 			await this.updateChatStatus(false);

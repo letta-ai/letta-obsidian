@@ -41,6 +41,15 @@
     color: var(--interactive-accent);
 }
 
+.letta-chat-title.no-agent {
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.letta-chat-title.no-agent:hover {
+    color: var(--text-muted);
+}
+
 
 .letta-status-indicator {
     display: flex;
