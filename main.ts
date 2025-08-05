@@ -56,7 +56,7 @@ interface LettaPluginSettings {
 const DEFAULT_SETTINGS: LettaPluginSettings = {
 	lettaApiKey: '',
 	lettaBaseUrl: 'https://api.letta.com',
-	lettaProjectSlug: 'obsidian-vault',
+	lettaProjectSlug: '', // No default project - will be determined by agent selection
 	agentId: '',
 	agentName: 'Obsidian Assistant',
 	sourceName: 'obsidian-vault-files',
@@ -454,6 +454,8 @@ export default class LettaPlugin extends Plugin {
 						errorMessage = 'Cannot connect to Letta API. Please verify:\n• Base URL is correct\n• Letta service is running\n• Network connectivity is available';
 					} else if (path.includes('/v1/sources')) {
 						errorMessage = 'Source not found. This may indicate:\n• Invalid project configuration\n• Missing permissions\n• Source was deleted externally';
+					} else if (path === '/v1/agents' && options.method === 'POST') {
+						errorMessage = 'Failed to create agent. This may indicate:\n• Invalid project ID\n• Missing permissions\n• API endpoint has changed\n• Server configuration issue';
 					} else if (path.includes('/v1/agents')) {
 						errorMessage = 'Agent not found. This may indicate:\n• Invalid project configuration\n• Missing permissions\n• Agent was deleted externally';
 					} else if (path.includes('/v1/models/embedding')) {
@@ -499,8 +501,12 @@ export default class LettaPlugin extends Plugin {
 					throw rateLimitError;
 				}
 				
-				// Enhanced error message created
-				throw new Error(errorMessage);
+				// Enhanced error message created with preserved response details
+				const enhancedError = new Error(errorMessage);
+				(enhancedError as any).status = response.status;
+				(enhancedError as any).responseText = response.text;
+				(enhancedError as any).responseJson = responseJson;
+				throw enhancedError;
 			}
 
 			return responseJson;
@@ -2863,22 +2869,42 @@ class LettaChatView extends ItemView {
 		// Creating new agent
 		console.log('[Letta Plugin] Starting agent creation with config:', agentConfig);
 
-		// Check if this is a cloud instance and validate project
+		// Check if this is a cloud instance and handle project selection
 		const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
+		let selectedProject: any = null;
+		
 		if (isCloudInstance) {
-			console.log('[Letta Plugin] Cloud instance detected, validating project...');
+			console.log('[Letta Plugin] Cloud instance detected, checking projects...');
 			try {
-				const projects = await this.plugin.makeRequest('/v1/projects');
-				console.log('[Letta Plugin] Available projects:', projects);
+				const projectsResponse = await this.plugin.makeRequest('/v1/projects');
+				console.log('[Letta Plugin] Available projects response:', projectsResponse);
 				
-				const projectExists = projects.some((p: any) => p.id === this.plugin.settings.lettaProjectSlug);
-				if (!projectExists) {
-					throw new Error(`Project "${this.plugin.settings.lettaProjectSlug}" not found. Available projects: ${projects.map((p: any) => p.id).join(', ')}`);
+				// Handle both direct array and nested response formats
+				const projects = projectsResponse.projects || projectsResponse;
+				console.log('[Letta Plugin] Projects array:', projects);
+				
+				// If we have a configured project slug, try to find it
+				if (this.plugin.settings.lettaProjectSlug) {
+					selectedProject = projects.find((p: any) => p.slug === this.plugin.settings.lettaProjectSlug);
+					if (!selectedProject) {
+						console.warn(`[Letta Plugin] Configured project "${this.plugin.settings.lettaProjectSlug}" not found`);
+					}
 				}
-				console.log('[Letta Plugin] Project validation successful');
+				
+				// If no valid project is selected, use the first available project
+				if (!selectedProject && projects.length > 0) {
+					selectedProject = projects[0];
+					console.log('[Letta Plugin] Using first available project:', selectedProject);
+					console.log('[Letta Plugin] Project fields available:', Object.keys(selectedProject));
+				}
+				
+				if (!selectedProject) {
+					throw new Error('No projects available. Please create a project first in your Letta instance.');
+				}
+				
 			} catch (error) {
-				console.error('[Letta Plugin] Project validation failed:', error);
-				throw new Error(`Failed to validate project: ${error.message}`);
+				console.error('[Letta Plugin] Project setup failed:', error);
+				throw new Error(`Failed to setup project: ${error.message}`);
 			}
 		}
 
@@ -2915,8 +2941,10 @@ class LettaChatView extends ItemView {
 		}
 
 		// Only include project for cloud instances
-		if (isCloudInstance) {
-			agentBody.project = this.plugin.settings.lettaProjectSlug;
+		if (isCloudInstance && selectedProject) {
+			// Try using slug instead of id since the API error suggests id is not found
+			agentBody.project = selectedProject.slug;
+			console.log('[Letta Plugin] Using project for agent creation:', selectedProject.slug);
 		}
 
 		// Remove undefined values to keep the request clean
@@ -2928,10 +2956,26 @@ class LettaChatView extends ItemView {
 
 		console.log('[Letta Plugin] Creating agent with config:', JSON.stringify(agentBody, null, 2));
 
-		const newAgent = await this.plugin.makeRequest('/v1/agents', {
-			method: 'POST',
-			body: agentBody
-		});
+		let newAgent: any;
+		try {
+			newAgent = await this.plugin.makeRequest('/v1/agents', {
+				method: 'POST',
+				body: agentBody
+			});
+			console.log('[Letta Plugin] Agent created successfully:', newAgent);
+		} catch (error: any) {
+			console.error('[Letta Plugin] Agent creation failed with error:', error);
+			console.error('[Letta Plugin] Error details:', {
+				status: error.status,
+				message: error.message,
+				responseText: error.responseText,
+				responseJson: error.responseJson,
+				url: `${this.plugin.settings.lettaBaseUrl}/v1/agents`,
+				method: 'POST',
+				body: agentBody
+			});
+			throw error;
+		}
 
 		// Update plugin state with the new agent
 		this.plugin.agent = { id: newAgent.id, name: newAgent.name };
@@ -2939,6 +2983,13 @@ class LettaChatView extends ItemView {
 		// Update settings with the new agent
 		this.plugin.settings.agentId = newAgent.id;
 		this.plugin.settings.agentName = agentConfig.name;
+		
+		// Update project settings if we selected a project
+		if (selectedProject) {
+			this.plugin.settings.lettaProjectSlug = selectedProject.slug;
+			console.log('[Letta Plugin] Updated project settings to:', selectedProject.slug);
+		}
+		
 		await this.plugin.saveSettings();
 	}
 
@@ -6745,10 +6796,10 @@ class LettaSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('Project Slug')
-			.setDesc('Letta project identifier')
+			.setName('Project ID')
+			.setDesc('Current project identifier (automatically set when selecting agents)')
 			.addText(text => text
-				.setPlaceholder('obsidian-vault')
+				.setPlaceholder('Auto-detected from agent selection')
 				.setValue(this.plugin.settings.lettaProjectSlug)
 				.onChange(async (value) => {
 					this.plugin.settings.lettaProjectSlug = value;
