@@ -66,7 +66,7 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	showReasoning: true, // Default to showing reasoning messages in tool interactions
 	enableStreaming: true, // Default to enabling streaming for real-time responses
 	focusMode: false, // Default to having focus mode disabled
-	allowAgentCreation: false // Default to disabling agent creation modal
+	allowAgentCreation: true // Default to enabling agent creation modal
 }
 
 interface LettaAgent {
@@ -2804,12 +2804,11 @@ class LettaChatView extends ItemView {
 			selectAgentButton.style.cursor = 'not-allowed';
 		}
 		
-		// Only show the create agent button if enabled in settings
-		if (this.plugin.settings.allowAgentCreation) {
-			const createAgentButton = buttonContainer.createEl('button', { 
-				text: 'Create New Agent (Advanced)',
-				cls: 'letta-create-agent-button'
-			});
+		// Show the create agent button
+		const createAgentButton = buttonContainer.createEl('button', { 
+			text: 'Create New Agent',
+			cls: 'letta-create-agent-button'
+		});
 			
 			// Make the button less prominent to prevent accidental clicks
 			createAgentButton.style.cssText = 'opacity: 0.7; font-size: 0.9em;';
@@ -2854,7 +2853,6 @@ class LettaChatView extends ItemView {
 			
 			confirmModal.open();
 			});
-		}
 	}
 
 	async createAgentFromConfig(agentConfig: AgentConfig): Promise<void> {
@@ -6829,15 +6827,6 @@ class LettaSettingTab extends PluginSettingTab {
 					}
 				}));
 
-		new Setting(containerEl)
-			.setName('Allow Agent Creation')
-			.setDesc('When enabled, shows the "Create New Agent" button in the chat interface when no agent is selected')
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.allowAgentCreation)
-				.onChange(async (value) => {
-					this.plugin.settings.allowAgentCreation = value;
-					await this.plugin.saveSettings();
-				}));
 
 		// Actions
 		containerEl.createEl('h3', { text: 'Actions' });
