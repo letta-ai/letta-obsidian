@@ -45,7 +45,8 @@ interface LettaPluginSettings {
 	agentName: string; // Keep for display purposes, but use agentId for API calls
 	sourceName: string;
 	autoSync: boolean;
-	syncOnStartup: boolean;
+	autoConnect: boolean; // Control whether to auto-connect on startup
+	syncOnStartup: boolean; // Control whether to sync vault after connecting on startup
 	embeddingModel: string;
 	showReasoning: boolean; // Control whether reasoning messages are visible
 	enableStreaming: boolean; // Control whether to use streaming API responses
@@ -61,6 +62,7 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	agentName: 'Obsidian Assistant',
 	sourceName: 'obsidian-vault-files',
 	autoSync: true,
+	autoConnect: false, // Default to not auto-connecting to avoid startup blocking
 	syncOnStartup: true,
 	embeddingModel: 'letta/letta-free',
 	showReasoning: true, // Default to showing reasoning messages in tool interactions
@@ -157,7 +159,7 @@ export default class LettaPlugin extends Plugin {
 
 		// Add status bar
 		this.statusBarItem = this.addStatusBarItem();
-		this.updateStatusBar('Disconnected');
+		this.updateStatusBar('Letta Disconnected');
 
 		// Add commands
 		this.addCommand({
@@ -227,7 +229,7 @@ export default class LettaPlugin extends Plugin {
 			callback: () => {
 				this.agent = null;
 				this.source = null;
-				this.updateStatusBar('Disconnected');
+				this.updateStatusBar('Letta Disconnected');
 				new Notice('Disconnected from Letta');
 			}
 		});
@@ -235,9 +237,12 @@ export default class LettaPlugin extends Plugin {
 		// Add settings tab
 		this.addSettingTab(new LettaSettingTab(this.app, this));
 
-		// Auto-connect on startup if configured
-		if (this.settings.lettaApiKey && this.settings.syncOnStartup) {
-			await this.connectToLetta();
+		// Auto-connect on startup if configured (non-blocking)
+		if (this.settings.lettaApiKey && this.settings.autoConnect) {
+			this.connectToLetta().catch(error => {
+				console.error('[Letta Plugin] Background connection failed:', error);
+				// Don't show notices for background connection failures during startup
+			});
 		}
 
 		// Auto-sync on file changes if configured
@@ -405,7 +410,8 @@ export default class LettaPlugin extends Plugin {
 			headers['Content-Type'] = 'application/json';
 		}
 
-		// Debug logging removed for cleaner console output
+		// Debug logging
+		console.log(`[Letta Plugin] Making request to ${url} with options:`, options);
 
 		try {
 			let requestBody;
@@ -452,7 +458,7 @@ export default class LettaPlugin extends Plugin {
 				if (response.status === 404) {
 					if (path === '/v1/models/embedding') {
 						errorMessage = 'Cannot connect to Letta API. Please verify:\n• Base URL is correct\n• Letta service is running\n• Network connectivity is available';
-					} else if (path.includes('/v1/sources')) {
+					} else if (path.includes('/v1/folders')) {
 						errorMessage = 'Source not found. This may indicate:\n• Invalid project configuration\n• Missing permissions\n• Source was deleted externally';
 					} else if (path === '/v1/agents' && options.method === 'POST') {
 						errorMessage = 'Failed to create agent. This may indicate:\n• Invalid project ID\n• Missing permissions\n• API endpoint has changed\n• Server configuration issue';
@@ -651,9 +657,10 @@ export default class LettaPlugin extends Plugin {
 	async setupSource(): Promise<void> {
 		try {
 			// Try to get existing source
-			const sources = await this.makeRequest('/v1/sources');
-			const existingSource = sources.find((s: any) => s.name === this.settings.sourceName);
-			
+			console.log(`[Letta Plugin] Setting up source: ${this.settings.sourceName}`);
+			const existingSource = await this.makeRequest(`/v1/folders/name/${this.settings.sourceName}`);
+			console.log(`[Letta Plugin] Existing source: ${existingSource}`);
+
 			if (existingSource) {
 				this.source = { id: existingSource.id, name: existingSource.name };
 			} else {
@@ -686,7 +693,7 @@ export default class LettaPlugin extends Plugin {
 					sourceBody.embedding_config = embeddingConfig;
 				}
 
-				const newSource = await this.makeRequest('/v1/sources', {
+				const newSource = await this.makeRequest('/v1/folders', {
 					method: 'POST',
 					body: sourceBody
 				});
@@ -719,25 +726,25 @@ export default class LettaPlugin extends Plugin {
 				this.settings.agentName = existingAgent.name;
 				await this.saveSettings();
 				
-				// Check if source is already attached to existing agent
-				// Checking if source is attached to existing agent
-				const agentSources = existingAgent.sources || [];
-				const sourceAttached = agentSources.some((s: any) => s.id === this.source!.id);
+				// Check if folder is already attached to existing agent
+				// Checking if folder is attached to existing agent
+				const agentFolders = existingAgent.sources || [];
+				const folderAttached = agentFolders.some((s: any) => s.id === this.source!.id);
 				
-				if (!sourceAttached) {
-					// Source not attached, updating agent
-					// Get current source IDs and add our source
-					const currentSourceIds = agentSources.map((s: any) => s.id);
-					currentSourceIds.push(this.source!.id);
+				if (!folderAttached) {
+					// Folder not attached, updating agent
+					// Get current folder IDs and add our folder
+					const currentFolderIds = agentFolders.map((s: any) => s.id);
+					currentFolderIds.push(this.source!.id);
 					
 					await this.makeRequest(`/v1/agents/${this.agent?.id}`, {
 						method: 'PATCH',
 						body: {
-							source_ids: currentSourceIds
+							source_ids: currentFolderIds
 						}
 					});
 				} else {
-					// Source already attached to agent
+					// Folder already attached to agent
 				}
 			} else {
 				// Agent with configured ID not found, clear the invalid ID
@@ -853,7 +860,7 @@ export default class LettaPlugin extends Plugin {
 			this.updateStatusBar('Syncing...');
 			
 			// Get existing files from Letta
-			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+			const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
 			const existingFilesMap = new Map();
 			existingFiles.forEach((file: any) => {
 				existingFilesMap.set(file.file_name, file);
@@ -911,7 +918,7 @@ export default class LettaPlugin extends Plugin {
 
 						// Delete existing file if it exists
 						if (existingFile) {
-							await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
+							await this.makeRequest(`/v1/folders/${this.source.id}/${existingFile.id}`, {
 								method: 'DELETE'
 							});
 						}
@@ -941,7 +948,7 @@ export default class LettaPlugin extends Plugin {
 							`--${boundary}--`
 						].join('\r\n');
 
-						await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
+						await this.makeRequest(`/v1/folders/${this.source.id}/upload`, {
 							method: 'POST',
 							headers: {
 								'Content-Type': `multipart/form-data; boundary=${boundary}`
@@ -1007,14 +1014,14 @@ export default class LettaPlugin extends Plugin {
 
 
 				// Check if file exists in Letta and get metadata
-				const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+				const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
 				const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 				
 				let action = 'uploaded';
 				
 				if (existingFile) {
 					// Delete existing file first
-					await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
+					await this.makeRequest(`/v1/folders/${this.source.id}/${existingFile.id}`, {
 						method: 'DELETE'
 					});
 					action = 'updated';
@@ -1033,7 +1040,7 @@ export default class LettaPlugin extends Plugin {
 					`--${boundary}--`
 				].join('\r\n');
 
-				await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
+				await this.makeRequest(`/v1/folders/${this.source.id}/upload`, {
 					method: 'POST',
 					headers: {
 						'Content-Type': `multipart/form-data; boundary=${boundary}`
@@ -1099,10 +1106,10 @@ export default class LettaPlugin extends Plugin {
 
 				// Delete existing file if it exists
 				try {
-					const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+					const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
 					const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 					if (existingFile) {
-						await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
+						await this.makeRequest(`/v1/folders/${this.source.id}/${existingFile.id}`, {
 							method: 'DELETE'
 						});
 					}
@@ -1123,7 +1130,7 @@ export default class LettaPlugin extends Plugin {
 					`--${boundary}--`
 				].join('\r\n');
 
-				await this.makeRequest(`/v1/sources/${this.source.id}/upload`, {
+				await this.makeRequest(`/v1/folders/${this.source.id}/upload`, {
 					method: 'POST',
 					headers: {
 						'Content-Type': `multipart/form-data; boundary=${boundary}`
@@ -1161,11 +1168,11 @@ export default class LettaPlugin extends Plugin {
 			}
 
 			const encodedPath = this.encodeFilePath(file.path);
-			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+			const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
 			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 			
 			if (existingFile) {
-				await this.makeRequest(`/v1/sources/${this.source.id}/${existingFile.id}`, {
+				await this.makeRequest(`/v1/folders/${this.source.id}/${existingFile.id}`, {
 					method: 'DELETE'
 				});
 			}
@@ -1186,7 +1193,7 @@ export default class LettaPlugin extends Plugin {
 			const encodedPath = this.encodeFilePath(file.path);
 			console.log('[LETTA DEBUG] openFileInAgent - encoded path:', encodedPath);
 			
-			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+			const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
 			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 			
 			if (existingFile) {
@@ -1219,7 +1226,7 @@ export default class LettaPlugin extends Plugin {
 							await new Promise(resolve => setTimeout(resolve, delay));
 						}
 						
-						const updatedFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+						const updatedFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
 						newFile = updatedFiles.find((f: any) => f.file_name === encodedPath);
 						retryCount++;
 					}
@@ -1253,7 +1260,7 @@ export default class LettaPlugin extends Plugin {
 
 		try {
 			const encodedPath = this.encodeFilePath(file.path);
-			const existingFiles = await this.makeRequest(`/v1/sources/${this.source.id}/files`);
+			const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
 			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 			
 			if (existingFile) {
@@ -2675,7 +2682,7 @@ class LettaChatView extends ItemView {
 			// Not connected to server
 			this.statusDot.className = 'letta-status-dot';
 			this.statusDot.style.backgroundColor = 'var(--text-muted)';
-			this.statusText.textContent = 'Disconnected';
+			this.statusText.textContent = 'Letta Disconnected';
 			
 			// Update agent name display to show "No Agent"
 			this.updateAgentNameDisplay();
@@ -6863,8 +6870,18 @@ class LettaSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
+			.setName('Auto-Connect on Startup')
+			.setDesc('Automatically connect to Letta when Obsidian starts')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoConnect)
+				.onChange(async (value) => {
+					this.plugin.settings.autoConnect = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
 			.setName('Sync on Startup')
-			.setDesc('Sync vault to Letta when Obsidian starts')
+			.setDesc('Sync vault to Letta after connecting (requires Auto-Connect enabled)')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.syncOnStartup)
 				.onChange(async (value) => {
@@ -7051,7 +7068,7 @@ class LettaSettingTab extends PluginSettingTab {
 		try {
 			if (this.plugin.source) {
 				// Delete the existing source
-				await this.plugin.makeRequest(`/v1/sources/${this.plugin.source.id}`, {
+				await this.plugin.makeRequest(`/v1/folders/${this.plugin.source.id}`, {
 					method: 'DELETE'
 				});
 				
@@ -7127,7 +7144,7 @@ class LettaSettingTab extends PluginSettingTab {
 			
 			if (this.plugin.source) {
 				// Delete the existing source
-				await this.plugin.makeRequest(`/v1/sources/${this.plugin.source.id}`, {
+				await this.plugin.makeRequest(`/v1/folders/${this.plugin.source.id}`, {
 					method: 'DELETE'
 				});
 			}
@@ -7159,7 +7176,7 @@ class LettaSettingTab extends PluginSettingTab {
 				sourceBody.embedding_config = embeddingConfig;
 			}
 
-			const newSource = await this.plugin.makeRequest('/v1/sources', {
+			const newSource = await this.plugin.makeRequest('/v1/folders', {
 				method: 'POST',
 				body: sourceBody
 			});
