@@ -411,7 +411,9 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		// Debug logging
-		console.log(`[Letta Plugin] Making request to ${url} with options:`, options);
+		console.log(`[Letta Plugin] Making request to ${url}`);
+		console.log(`[Letta Plugin] Request headers:`, headers);
+		console.log(`[Letta Plugin] Request options:`, options);
 
 		try {
 			let requestBody;
@@ -438,13 +440,15 @@ export default class LettaPlugin extends Plugin {
 			// Response details available for debugging if needed
 			
 			// Try to parse JSON, but handle cases where response isn't JSON
+			console.log(`[Letta Plugin] Raw response text:`, response.text);
+			console.log(`[Letta Plugin] Response status:`, response.status);
 			let responseJson = null;
 			try {
-				if (response.text && (response.text.trim().startsWith('{') || response.text.trim().startsWith('['))) {
+				if (response.text && (response.text.trim().startsWith('{') || response.text.trim().startsWith('[') || response.text.trim().startsWith('"'))) {
 					responseJson = JSON.parse(response.text);
-					// Response JSON parsed successfully
+					console.log(`[Letta Plugin] Parsed JSON response:`, responseJson);
 				} else {
-					// Response is not JSON, skipping parse
+					console.log(`[Letta Plugin] Response is not JSON, raw text:`, response.text);
 				}
 			} catch (jsonError) {
 				// Failed to parse JSON - continuing with text response
@@ -658,11 +662,41 @@ export default class LettaPlugin extends Plugin {
 		try {
 			// Try to get existing source
 			console.log(`[Letta Plugin] Setting up source: ${this.settings.sourceName}`);
-			const existingSource = await this.makeRequest(`/v1/folders/name/${this.settings.sourceName}`);
-			console.log(`[Letta Plugin] Existing source: ${existingSource}`);
+			let existingSource = null;
+			
+			try {
+				const encodedSourceName = encodeURIComponent(this.settings.sourceName);
+				console.log(`[Letta Plugin] Encoded source name: ${encodedSourceName}`);
+				existingSource = await this.makeRequest(`/v1/folders/name/${encodedSourceName}`);
+				console.log(`[Letta Plugin] Existing source response:`, existingSource);
+				console.log(`[Letta Plugin] Existing source type:`, typeof existingSource);
+			} catch (lookupError: any) {
+				console.log(`[Letta Plugin] Source lookup failed:`, lookupError.message);
+				console.log(`[Letta Plugin] Lookup error status:`, lookupError.status);
+				// If it's a 404, that's expected for non-existent sources
+				if (lookupError.status === 404) {
+					console.log(`[Letta Plugin] Source does not exist (404), will create new one`);
+					existingSource = null;
+				} else {
+					// For other errors, re-throw
+					throw lookupError;
+				}
+			}
 
 			if (existingSource) {
-				this.source = { id: existingSource.id, name: existingSource.name };
+				// Handle different response formats from the API
+				if (typeof existingSource === 'string') {
+					// API returned just the source ID as a string
+					this.source = { id: existingSource, name: this.settings.sourceName };
+					console.log(`[Letta Plugin] Using existing source with ID: ${existingSource}`);
+				} else if (existingSource.id) {
+					// API returned a full source object
+					this.source = { id: existingSource.id, name: existingSource.name };
+					console.log(`[Letta Plugin] Using existing source object: ${existingSource.id}`);
+				} else {
+					console.warn(`[Letta Plugin] Unexpected source response format:`, existingSource);
+					throw new Error('Unexpected response format from source lookup');
+				}
 			} else {
 				// Create new source with selected embedding model
 				const embeddingConfigs = await this.makeRequest('/v1/models/embedding');
@@ -693,13 +727,49 @@ export default class LettaPlugin extends Plugin {
 					sourceBody.embedding_config = embeddingConfig;
 				}
 
-				const newSource = await this.makeRequest('/v1/folders', {
-					method: 'POST',
-					body: sourceBody
-				});
+				try {
+					const newSource = await this.makeRequest('/v1/folders', {
+						method: 'POST',
+						body: sourceBody
+					});
 
-				this.source = { id: newSource.id, name: newSource.name };
-				// Created new source with embedding model
+					this.source = { id: newSource.id, name: newSource.name };
+					console.log(`[Letta Plugin] Created new source: ${newSource.id}`);
+				} catch (createError: any) {
+					// Handle 409 conflict - source was created between our check and creation attempt
+					if (createError.message && createError.message.includes('409')) {
+						console.log(`[Letta Plugin] Source creation conflict (409), retrying lookup...`);
+						
+						// Retry the source lookup since it was likely created by another process
+						let retrySource = null;
+						try {
+							const encodedSourceName = encodeURIComponent(this.settings.sourceName);
+							retrySource = await this.makeRequest(`/v1/folders/name/${encodedSourceName}`);
+							console.log(`[Letta Plugin] Retry source response:`, retrySource);
+						} catch (retryError: any) {
+							console.log(`[Letta Plugin] Retry source lookup failed:`, retryError.message);
+							console.log(`[Letta Plugin] Retry error status:`, retryError.status);
+							throw new Error(`Source creation failed with 409 conflict and retry lookup also failed: ${retryError.message}`);
+						}
+						
+						if (retrySource) {
+							if (typeof retrySource === 'string') {
+								this.source = { id: retrySource, name: this.settings.sourceName };
+								console.log(`[Letta Plugin] Using existing source after conflict: ${retrySource}`);
+							} else if (retrySource.id) {
+								this.source = { id: retrySource.id, name: retrySource.name };
+								console.log(`[Letta Plugin] Using existing source object after conflict: ${retrySource.id}`);
+							} else {
+								throw new Error('Source creation failed and retry lookup returned unexpected format');
+							}
+						} else {
+							throw new Error('Source creation failed with 409 conflict but retry lookup found no source');
+						}
+					} else {
+						// Re-throw non-409 errors
+						throw createError;
+					}
+				}
 			}
 		} catch (error) {
 			console.error('Failed to setup source:', error);
