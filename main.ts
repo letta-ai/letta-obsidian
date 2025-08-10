@@ -440,8 +440,6 @@ export default class LettaPlugin extends Plugin {
 			// Response details available for debugging if needed
 			
 			// Try to parse JSON, but handle cases where response isn't JSON
-			console.log(`[Letta Plugin] Raw response text:`, response.text);
-			console.log(`[Letta Plugin] Response status:`, response.status);
 			let responseJson = null;
 			try {
 				if (response.text && (response.text.trim().startsWith('{') || response.text.trim().startsWith('[') || response.text.trim().startsWith('"'))) {
@@ -522,6 +520,15 @@ export default class LettaPlugin extends Plugin {
 			return responseJson;
 		} catch (error: any) {
 			// Exception details available for debugging if needed
+			console.error('[Letta Plugin] Letta API request failed:', {
+				error: error.message,
+				status: error.status,
+				responseText: error.responseText,
+				responseJson: error.responseJson,
+				path,
+				method: options.method || 'GET',
+				stack: error.stack
+			});
 			
 			// Check if this is a network/connection error that might indicate the same issues as a 404
 			if (error.message && (error.message.includes('fetch') || error.message.includes('network') || error.message.includes('ECONNREFUSED'))) {
@@ -531,7 +538,6 @@ export default class LettaPlugin extends Plugin {
 				}
 			}
 			
-			console.error('[Letta Plugin] Letta API request failed:', error);
 			throw error;
 		}
 	}
@@ -1591,7 +1597,29 @@ export default class LettaPlugin extends Plugin {
 					}
 					throw new Error(detailedError);
 				}
-				throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+				// For other HTTP errors, try to get the response body for better error details
+				let errorBody = '';
+				try {
+					errorBody = await response.text();
+				} catch (bodyError) {
+					console.error('[Letta Plugin] Error reading response body:', bodyError);
+				}
+				
+				// Convert headers to a plain object
+				const headersObj: Record<string, string> = {};
+				response.headers.forEach((value, key) => {
+					headersObj[key] = value;
+				});
+				
+				console.error('[Letta Plugin] HTTP error response:', {
+					status: response.status,
+					statusText: response.statusText,
+					body: errorBody,
+					headers: headersObj
+				});
+				
+				const errorMessage = errorBody ? `HTTP ${response.status}: ${errorBody}` : `HTTP ${response.status}: ${response.statusText}`;
+				throw new Error(errorMessage);
 			}
 
 			if (!response.body) {
@@ -2294,6 +2322,7 @@ class LettaChatView extends ItemView {
 
 	// Add a clean, centered rate limiting notification
 	addRateLimitMessage(content: string) {
+		console.log('[Letta Plugin] Adding rate limit message:', content);
 		const messageEl = this.chatContainer.createEl('div', { 
 			cls: 'letta-rate-limit-message' 
 		});
@@ -3373,8 +3402,10 @@ class LettaChatView extends ItemView {
 						// Check if it's a rate limiting error and handle it specially
 						if (error.message && error.message.includes('HTTP 429')) {
 							console.log('[Letta Plugin] Rate limit error detected, showing specialized message');
+							const rateLimitContent = RATE_LIMIT_MESSAGE.create(error.message);
+							console.log('[Letta Plugin] Rate limit message content:', rateLimitContent);
 							// Create the proper rate limit message format that includes billing link
-							this.addRateLimitMessage(RATE_LIMIT_MESSAGE.create(error.message));
+							this.addRateLimitMessage(rateLimitContent);
 						} else {
 							this.addMessage('assistant', `**Streaming Error**: ${error.message}`, 'Error');
 						}
@@ -3415,7 +3446,9 @@ class LettaChatView extends ItemView {
 			if (error.message.includes('429') || error.message.includes('Rate limited')) {
 				// Use the special rate limit message display instead of regular error message
 				const reason = error.message.includes('model-unknown') ? 'Unknown model configuration' : 'Too many requests';
-				this.addRateLimitMessage(RATE_LIMIT_MESSAGE.create(reason));
+				const rateLimitContent = RATE_LIMIT_MESSAGE.create(reason);
+				console.log('[Letta Plugin] Non-streaming rate limit message content:', rateLimitContent);
+				this.addRateLimitMessage(rateLimitContent);
 				return; // Return early to avoid showing regular error message
 			} else if (error.message.includes('401') || error.message.includes('Unauthorized')) {
 				errorMessage = `**Authentication Error**\n\nYour API key may be invalid or expired. Please check your settings.\n\n*${error.message}*`;
@@ -4620,30 +4653,40 @@ class LettaChatView extends ItemView {
 		const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
 		
 		if (isCloudInstance) {
-			// For cloud instances, check if we have a valid project ID
+			// For cloud instances, check if we have a valid project slug
 			const projectSlug = this.plugin.settings.lettaProjectSlug;
 			
-			// Check if project slug looks like a proper UUID or known invalid values
-			const isValidProjectId = projectSlug && 
+			// Check if project slug looks valid
+			const isValidProjectSlug = projectSlug && 
 				projectSlug !== 'obsidian-vault' && 
 				projectSlug !== 'default-project' && 
-				projectSlug !== 'filesystem' &&
-				(projectSlug.includes('-') && projectSlug.length > 10); // Basic UUID-like check
+				projectSlug !== 'filesystem';
 				
-			if (!isValidProjectId) {
+			if (!isValidProjectSlug) {
 				// Invalid project slug for cloud instances, show project selector
 				new Notice('Please select a valid project first');
 				this.openProjectSelector();
 				return;
 			}
 			
-			// Show agents from current project first  
-			const currentProject = { 
-				id: projectSlug, 
-				name: projectSlug || 'Current Project',
-				slug: projectSlug 
-			};
-			this.openAgentSelector(currentProject, true); // true indicates it's the current project
+			try {
+				// Look up the actual project by slug to get the correct ID
+				const projectsResponse = await this.plugin.makeRequest('/v1/projects');
+				const projects = projectsResponse.projects || projectsResponse;
+				const currentProject = projects.find((p: any) => p.slug === projectSlug);
+				
+				if (!currentProject) {
+					new Notice('Project not found. Please select a valid project.');
+					this.openProjectSelector();
+					return;
+				}
+				
+				this.openAgentSelector(currentProject, true); // true indicates it's the current project
+			} catch (error: any) {
+				console.error('Failed to load projects:', error);
+				new Notice('Failed to load projects. Please check your connection and try again.');
+				return;
+			}
 		} else {
 			// For local instances, show all agents directly
 			this.openAgentSelector();
@@ -4656,49 +4699,82 @@ class LettaChatView extends ItemView {
 		
 		const { contentEl } = modal;
 		
-		const loadingEl = contentEl.createEl('div', { 
-			text: 'Loading projects...', 
-			cls: 'letta-memory-empty' 
+		// Add search input
+		const searchContainer = contentEl.createEl('div', { 
+			attr: { style: 'margin-bottom: 16px;' }
 		});
 		
-		try {
-			const projectsResponse = await this.plugin.makeRequest('/v1/projects');
-			loadingEl.remove();
-			
-			let projects = Array.isArray(projectsResponse) ? projectsResponse : projectsResponse?.projects || [];
-			
-			if (projects.length === 0) {
-				contentEl.createEl('div', { 
-					text: 'No projects found', 
-					cls: 'letta-memory-empty' 
-				});
-				return;
+		const searchInput = searchContainer.createEl('input', {
+			type: 'text',
+			placeholder: 'Search projects...',
+			attr: { 
+				style: 'width: 100%; padding: 8px; border: 1px solid var(--background-modifier-border); border-radius: 4px;'
+			}
+		});
+		
+		// Container for projects list
+		const projectsContainer = contentEl.createEl('div');
+		
+		// Pagination state
+		let currentOffset = 0;
+		const limit = 10;
+		let currentSearch = '';
+		let hasMore = true;
+		
+		const loadProjects = async (reset = false) => {
+			if (reset) {
+				currentOffset = 0;
+				projectsContainer.empty();
+				hasMore = true;
 			}
 			
-			const projectsWithCounts = await Promise.all(
-				projects.map(async (project: any) => {
-					try {
-						const agents = await this.plugin.makeRequest(`/v1/agents?project_id=${project.id}`);
-						return { ...project, agentCount: agents?.length || 0 };
-					} catch (error) {
-						return { ...project, agentCount: 0 };
-					}
-				})
-			);
+			if (!hasMore && !reset) return;
 			
-			for (const project of projectsWithCounts) {
-				const projectEl = contentEl.createEl('div');
-				projectEl.style.padding = '10px';
-				projectEl.style.borderBottom = '1px solid var(--background-modifier-border)';
-				projectEl.style.cursor = project.agentCount > 0 ? 'pointer' : 'not-allowed';
-				projectEl.style.opacity = project.agentCount > 0 ? '1' : '0.5';
+			const loadingEl = projectsContainer.createEl('div', { 
+				text: reset ? 'Loading projects...' : 'Loading more projects...', 
+				cls: 'letta-memory-empty' 
+			});
+			
+			try {
+				const params = new URLSearchParams();
+				params.append('limit', limit.toString());
+				params.append('offset', currentOffset.toString());
+				if (currentSearch) {
+					params.append('name', currentSearch);
+				}
 				
-				projectEl.createEl('div', { 
-					text: `${project.name} (${project.agentCount} agents)`,
-					style: 'font-weight: 500;'
-				});
+				const projectsResponse = await this.plugin.makeRequest(`/v1/projects?${params.toString()}`);
+				loadingEl.remove();
 				
-				if (project.agentCount > 0) {
+				const projects = projectsResponse?.projects || [];
+				hasMore = projectsResponse?.hasNextPage || false;
+				
+				if (projects.length === 0 && currentOffset === 0) {
+					projectsContainer.createEl('div', { 
+						text: currentSearch ? 'No projects found matching your search' : 'No projects found', 
+						cls: 'letta-memory-empty' 
+					});
+					return;
+				}
+				
+				for (const project of projects) {
+					const projectEl = projectsContainer.createEl('div');
+					projectEl.style.padding = '12px';
+					projectEl.style.borderBottom = '1px solid var(--background-modifier-border)';
+					projectEl.style.cursor = 'pointer';
+					
+					projectEl.createEl('div', { 
+						text: project.name,
+						attr: { style: 'font-weight: 500; margin-bottom: 4px;' }
+					});
+					
+					if (project.description) {
+						projectEl.createEl('div', { 
+							text: project.description,
+							attr: { style: 'color: var(--text-muted); font-size: 0.9em;' }
+						});
+					}
+					
 					projectEl.addEventListener('click', () => {
 						modal.close();
 						this.openAgentSelector(project);
@@ -4712,13 +4788,46 @@ class LettaChatView extends ItemView {
 						projectEl.style.backgroundColor = '';
 					});
 				}
+				
+				currentOffset += projects.length;
+				
+				// Add "Load More" button if there are more projects
+				if (hasMore) {
+					const loadMoreBtn = projectsContainer.createEl('button', {
+						text: 'Load More',
+						attr: { 
+							style: 'width: 100%; padding: 10px; margin-top: 10px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); cursor: pointer;'
+						}
+					});
+					
+					loadMoreBtn.addEventListener('click', () => {
+						loadMoreBtn.remove();
+						loadProjects(false);
+					});
+				}
+				
+			} catch (error: any) {
+				loadingEl.textContent = `Failed to load projects: ${error.message}`;
 			}
-			
-		} catch (error) {
-			loadingEl.textContent = `Failed to load projects: ${error.message}`;
-		}
+		};
+		
+		// Search debouncing
+		let searchTimeout: NodeJS.Timeout;
+		searchInput.addEventListener('input', () => {
+			clearTimeout(searchTimeout);
+			searchTimeout = setTimeout(() => {
+				currentSearch = searchInput.value.trim();
+				loadProjects(true);
+			}, 300);
+		});
+		
+		// Initial load
+		loadProjects(true);
 		
 		modal.open();
+		
+		// Focus search input after modal opens
+		setTimeout(() => searchInput.focus(), 100);
 	}
 
 	async openAgentSelector(project?: any, isCurrentProject?: boolean) {
@@ -4732,7 +4841,7 @@ class LettaChatView extends ItemView {
 		if (isCloudInstance && this.plugin.settings.lettaApiKey && project && !isCurrentProject) {
 			const backButton = contentEl.createEl('button', { 
 				text: '← Back to Projects',
-				style: 'margin-bottom: 16px;'
+				attr: { style: 'margin-bottom: 16px;' }
 			});
 			backButton.addEventListener('click', () => {
 				modal.close();
@@ -4760,13 +4869,13 @@ class LettaChatView extends ItemView {
 			if (!agents || agents.length === 0) {
 				const emptyDiv = contentEl.createEl('div', { 
 					text: project ? `No agents found in "${project.name}"` : 'No agents found',
-					style: 'text-align: center; padding: 40px;'
+					attr: { style: 'text-align: center; padding: 40px;' }
 				});
 				
 				if (project && !isCurrentProject) {
 					const backButton = emptyDiv.createEl('button', { 
 						text: '← Back to Projects',
-						style: 'margin-top: 16px;'
+						attr: { style: 'margin-top: 16px;' }
 					});
 					backButton.addEventListener('click', () => {
 						modal.close();
@@ -4786,12 +4895,12 @@ class LettaChatView extends ItemView {
 				
 				const nameEl = agentEl.createEl('div', { 
 					text: agent.name,
-					style: 'font-weight: 500; margin-bottom: 4px;'
+					attr: { style: 'font-weight: 500; margin-bottom: 4px;' }
 				});
 				
 				const infoEl = agentEl.createEl('div', { 
 					text: `${agent.id.substring(0, 8)}... ${isCurrentAgent ? '(Current)' : ''}`,
-					style: 'color: var(--text-muted); font-size: 0.9em;'
+					attr: { style: 'color: var(--text-muted); font-size: 0.9em;' }
 				});
 				
 				if (isCurrentAgent) {
@@ -5557,7 +5666,7 @@ class LettaMemoryView extends ItemView {
 			const attachedBlockIds = new Set(attachedBlocks.map((block: any) => block.id));
 
 			// Build query parameters for block search
-			let queryParams = '?limit=100'; // Get more blocks for searching
+			let queryParams = '?limit=20'; // Get more blocks for searching
 			
 			// If we have a project, filter by project_id
 			if (this.plugin.settings.lettaProjectSlug) {
