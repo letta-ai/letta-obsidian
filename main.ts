@@ -61,9 +61,9 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	agentId: '',
 	agentName: 'Obsidian Assistant',
 	sourceName: 'obsidian-vault-files',
-	autoSync: true,
+	autoSync: false,
 	autoConnect: false, // Default to not auto-connecting to avoid startup blocking
-	syncOnStartup: true,
+	syncOnStartup: false,
 	embeddingModel: 'letta/letta-free',
 	showReasoning: true, // Default to showing reasoning messages in tool interactions
 	enableStreaming: true, // Default to enabling streaming for real-time responses
@@ -4655,32 +4655,19 @@ class LettaChatView extends ItemView {
 		modal.setTitle('Select Project');
 		
 		const { contentEl } = modal;
-		contentEl.style.width = '700px';
-		contentEl.style.height = '500px';
 		
-		// Loading state
 		const loadingEl = contentEl.createEl('div', { 
-			text: 'Loading projects and counting agents...', 
+			text: 'Loading projects...', 
 			cls: 'letta-memory-empty' 
 		});
 		
 		try {
-			console.log('[Letta Plugin] Making request to /v1/projects');
 			const projectsResponse = await this.plugin.makeRequest('/v1/projects');
-			console.log('[Letta Plugin] Projects response:', projectsResponse);
 			loadingEl.remove();
 			
-			// Handle different response formats
-			let projects;
-			if (Array.isArray(projectsResponse)) {
-				projects = projectsResponse;
-			} else if (projectsResponse.projects) {
-				projects = projectsResponse.projects;
-			} else {
-				projects = [];
-			}
+			let projects = Array.isArray(projectsResponse) ? projectsResponse : projectsResponse?.projects || [];
 			
-			if (!projects || projects.length === 0) {
+			if (projects.length === 0) {
 				contentEl.createEl('div', { 
 					text: 'No projects found', 
 					cls: 'letta-memory-empty' 
@@ -4688,104 +4675,47 @@ class LettaChatView extends ItemView {
 				return;
 			}
 			
-			const projectList = contentEl.createEl('div');
-			projectList.style.maxHeight = '400px';
-			projectList.style.overflowY = 'auto';
-			
-			// Pre-fetch agent counts for each project
-			console.log('[Letta Plugin] Fetching agent counts for projects:', projects);
 			const projectsWithCounts = await Promise.all(
 				projects.map(async (project: any) => {
 					try {
 						const agents = await this.plugin.makeRequest(`/v1/agents?project_id=${project.id}`);
-						console.log(`[Letta Plugin] Project ${project.name} has ${agents?.length || 0} agents:`, agents);
 						return { ...project, agentCount: agents?.length || 0 };
 					} catch (error) {
-						console.warn(`Failed to get agent count for project ${project.name}:`, error);
 						return { ...project, agentCount: 0 };
 					}
 				})
 			);
-			console.log('[Letta Plugin] Projects with counts:', projectsWithCounts);
 			
 			for (const project of projectsWithCounts) {
-				const projectEl = projectList.createEl('div');
-				projectEl.style.padding = '12px';
-				projectEl.style.border = '1px solid var(--background-modifier-border)';
-				projectEl.style.borderRadius = '8px';
-				projectEl.style.marginBottom = '8px';
-				projectEl.style.cursor = 'pointer';
-				projectEl.style.transition = 'background 0.2s ease';
+				const projectEl = contentEl.createEl('div');
+				projectEl.style.padding = '10px';
+				projectEl.style.borderBottom = '1px solid var(--background-modifier-border)';
+				projectEl.style.cursor = project.agentCount > 0 ? 'pointer' : 'not-allowed';
+				projectEl.style.opacity = project.agentCount > 0 ? '1' : '0.5';
 				
-				// Grey out projects with no agents
-				if (project.agentCount === 0) {
-					projectEl.style.opacity = '0.6';
-					projectEl.style.cursor = 'not-allowed';
-				}
-				
-				const headerEl = projectEl.createEl('div');
-				headerEl.style.display = 'flex';
-				headerEl.style.justifyContent = 'space-between';
-				headerEl.style.alignItems = 'center';
-				headerEl.style.marginBottom = '4px';
-				headerEl.style.gap = '12px';
-				
-				const nameEl = headerEl.createEl('div', { text: project.name });
-				nameEl.style.fontWeight = '600';
-				nameEl.style.flex = '1';
-				nameEl.style.minWidth = '0';
-				nameEl.style.overflow = 'hidden';
-				nameEl.style.textOverflow = 'ellipsis';
-				nameEl.style.whiteSpace = 'nowrap';
-				
-				const countEl = headerEl.createEl('div', { 
-					text: `${project.agentCount || 0} agent${(project.agentCount || 0) !== 1 ? 's' : ''}` 
-				});
-				countEl.style.fontSize = '0.8em';
-				countEl.style.color = (project.agentCount || 0) > 0 ? 'var(--color-green)' : 'var(--text-muted)';
-				countEl.style.fontWeight = '500';
-				countEl.style.flexShrink = '0';
-				countEl.style.whiteSpace = 'nowrap';
-				countEl.style.backgroundColor = 'var(--background-modifier-border)';
-				countEl.style.padding = '2px 6px';
-				countEl.style.borderRadius = '4px';
-				
-				const slugEl = projectEl.createEl('div', { text: project.slug });
-				slugEl.style.fontSize = '0.9em';
-				slugEl.style.color = 'var(--text-muted)';
-				
-				if (project.agentCount === 0) {
-					const noAgentsEl = projectEl.createEl('div', { text: 'No agents available' });
-					noAgentsEl.style.fontSize = '0.8em';
-					noAgentsEl.style.color = 'var(--text-faint)';
-					noAgentsEl.style.fontStyle = 'italic';
-					noAgentsEl.style.marginTop = '4px';
-				}
-				
-				projectEl.addEventListener('mouseenter', () => {
-					if (project.agentCount > 0) {
-						projectEl.style.backgroundColor = 'var(--background-modifier-hover)';
-					}
+				projectEl.createEl('div', { 
+					text: `${project.name} (${project.agentCount} agents)`,
+					style: 'font-weight: 500;'
 				});
 				
-				projectEl.addEventListener('mouseleave', () => {
-					projectEl.style.backgroundColor = '';
-				});
-				
-				projectEl.addEventListener('click', () => {
-					if (project.agentCount > 0) {
-						console.log('[Letta Plugin] Project selected:', project);
+				if (project.agentCount > 0) {
+					projectEl.addEventListener('click', () => {
 						modal.close();
 						this.openAgentSelector(project);
-					} else {
-						new Notice(`Project "${project.name}" has no agents available`);
-					}
-				});
+					});
+					
+					projectEl.addEventListener('mouseenter', () => {
+						projectEl.style.backgroundColor = 'var(--background-modifier-hover)';
+					});
+					
+					projectEl.addEventListener('mouseleave', () => {
+						projectEl.style.backgroundColor = '';
+					});
+				}
 			}
 			
 		} catch (error) {
-			console.error('[Letta Plugin] Failed to load projects:', error);
-			loadingEl.textContent = `Failed to load projects: ${error.message || 'Please check your connection.'}`;
+			loadingEl.textContent = `Failed to load projects: ${error.message}`;
 		}
 		
 		modal.open();
@@ -4796,58 +4726,26 @@ class LettaChatView extends ItemView {
 		modal.setTitle(project ? `Select Agent - ${project.name}` : 'Select Agent');
 		
 		const { contentEl } = modal;
-		contentEl.style.width = '700px';
-		contentEl.style.height = '600px';
 		
-		// Add navigation buttons
 		const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
 		
-		// Always show change project button for cloud instances, and when there's an API key
-		if (isCloudInstance && this.plugin.settings.lettaApiKey) {
-			const buttonContainer = contentEl.createEl('div');
-			buttonContainer.style.display = 'flex';
-			buttonContainer.style.gap = '8px';
-			buttonContainer.style.marginBottom = '16px';
-			
-			if (project && isCurrentProject) {
-				const changeProjectButton = buttonContainer.createEl('button', { 
-					text: 'Change Project',
-					cls: 'letta-clear-button'
-				});
-				changeProjectButton.addEventListener('click', () => {
-					modal.close();
-					this.openProjectSelector();
-				});
-			} else if (project && !isCurrentProject) {
-				const backButton = buttonContainer.createEl('button', { 
-					text: '← Back to Projects',
-					cls: 'letta-clear-button'
-				});
-				backButton.addEventListener('click', () => {
-					modal.close();
-					this.openProjectSelector();
-				});
-			} else {
-				// No specific project - show generic change project button
-				const changeProjectButton = buttonContainer.createEl('button', { 
-					text: 'Select Project',
-					cls: 'letta-clear-button'
-				});
-				changeProjectButton.addEventListener('click', () => {
-					modal.close();
-					this.openProjectSelector();
-				});
-			}
+		if (isCloudInstance && this.plugin.settings.lettaApiKey && project && !isCurrentProject) {
+			const backButton = contentEl.createEl('button', { 
+				text: '← Back to Projects',
+				style: 'margin-bottom: 16px;'
+			});
+			backButton.addEventListener('click', () => {
+				modal.close();
+				this.openProjectSelector();
+			});
 		}
 		
-		// Loading state
 		const loadingEl = contentEl.createEl('div', { 
 			text: 'Loading agents...', 
 			cls: 'letta-memory-empty' 
 		});
 		
 		try {
-			// Build query params for agents request
 			const params = new URLSearchParams();
 			if (project) {
 				params.append('project_id', project.id);
@@ -4860,191 +4758,66 @@ class LettaChatView extends ItemView {
 			loadingEl.remove();
 			
 			if (!agents || agents.length === 0) {
-				const emptyDiv = contentEl.createEl('div', { cls: 'letta-memory-empty' });
-				emptyDiv.style.textAlign = 'center';
-				emptyDiv.style.padding = '40px';
-				
-				emptyDiv.createEl('div', { 
+				const emptyDiv = contentEl.createEl('div', { 
 					text: project ? `No agents found in "${project.name}"` : 'No agents found',
-					cls: 'letta-memory-empty'
+					style: 'text-align: center; padding: 40px;'
 				});
 				
-				if (project) {
-					if (isCurrentProject) {
-						emptyDiv.createEl('p', { 
-							text: 'Your current project doesn\'t have any agents yet. Try selecting a different project or create a new agent.',
-							cls: 'letta-memory-empty'
-						});
-						
-						const changeProjectButton = emptyDiv.createEl('button', { 
-							text: 'Change Project',
-							cls: 'letta-clear-button'
-						});
-						changeProjectButton.style.marginTop = '16px';
-						changeProjectButton.addEventListener('click', () => {
-							modal.close();
-							this.openProjectSelector();
-						});
-					} else {
-						emptyDiv.createEl('p', { 
-							text: 'This project doesn\'t have any agents yet. Try selecting a different project or create a new agent.',
-							cls: 'letta-memory-empty'
-						});
-						
-						const backButton = emptyDiv.createEl('button', { 
-							text: '← Back to Projects',
-							cls: 'letta-clear-button'
-						});
-						backButton.style.marginTop = '16px';
-						backButton.addEventListener('click', () => {
-							modal.close();
-							this.openProjectSelector();
-						});
-					}
-				}
-				return;
-			}
-			
-			// Create table structure
-			const agentList = contentEl.createEl('div', { cls: 'agent-selector-list' });
-			agentList.style.maxHeight = '450px';
-			agentList.style.overflowY = 'auto';
-			agentList.style.border = '1px solid var(--background-modifier-border)';
-			agentList.style.borderRadius = '6px';
-			
-			const table = agentList.createEl('table', { cls: 'model-table' });
-			
-			// Table header
-			const thead = table.createEl('thead');
-			const headerRow = thead.createEl('tr');
-			headerRow.createEl('th', { text: 'Agent Name' });
-			headerRow.createEl('th', { text: 'Template' });
-			headerRow.createEl('th', { text: 'Agent ID' });
-			headerRow.createEl('th', { text: 'Status' });
-
-			// Table body
-			const tbody = table.createEl('tbody');
-			
-			for (const agent of agents) {
-				const row = tbody.createEl('tr', { cls: 'model-table-row' });
-				
-				// Agent name
-				const nameCell = row.createEl('td', { cls: 'model-cell-name' });
-				nameCell.createEl('span', { text: agent.name, cls: 'model-name' });
-				
-				// Template
-				row.createEl('td', { 
-					text: agent.template_id || 'Unknown',
-					cls: 'model-cell-provider'
-				});
-				
-				// Agent ID (shortened)
-				const idCell = row.createEl('td', { cls: 'model-cell-context' });
-				const shortId = agent.id.substring(0, 8) + '...';
-				idCell.createEl('span', { 
-					text: shortId,
-					title: agent.id // Show full ID on hover
-				});
-				
-				// Status (current indicator)
-				const statusCell = row.createEl('td', { cls: 'model-cell-status' });
-				const isCurrentAgent = agent.id === this.plugin.agent?.id;
-				if (isCurrentAgent) {
-					statusCell.createEl('span', { 
-						text: 'Current',
-						cls: 'model-current-badge'
+				if (project && !isCurrentProject) {
+					const backButton = emptyDiv.createEl('button', { 
+						text: '← Back to Projects',
+						style: 'margin-top: 16px;'
 					});
-				} else {
-					statusCell.createEl('span', { 
-						text: 'Available',
-						cls: 'model-available-badge'
-					});
-				}
-
-				// Click handler - allow clicking on current agent too
-				row.addEventListener('click', () => {
-					modal.close();
-					this.switchToAgent(agent, project);
-				});
-				row.style.cursor = 'pointer';
-				
-				// Hover effect
-				row.addEventListener('mouseenter', () => {
-					row.style.backgroundColor = 'var(--background-modifier-hover)';
-				});
-				row.addEventListener('mouseleave', () => {
-					row.style.backgroundColor = '';
-				});
-			}
-			
-		} catch (error: any) {
-			console.error('Failed to load agents:', error);
-			loadingEl.remove();
-			
-			// Create error container
-			const errorDiv = contentEl.createEl('div', { cls: 'letta-memory-error' });
-			errorDiv.style.textAlign = 'center';
-			errorDiv.style.padding = '40px';
-			
-			// Check if this is a project not found error
-			if (error.message && (error.message.includes('Project not found') || (error.message.includes('Agent not found') && project))) {
-				const errorTitle = errorDiv.createEl('h3', { 
-					text: 'Project Not Found'
-				});
-				errorTitle.style.cssText = 'margin-bottom: 16px; color: var(--text-error);';
-				
-				const errorText = errorDiv.createEl('p', { 
-					text: `The project "${project?.id || 'default-project'}" does not exist or you don't have access to it.`
-				});
-				errorText.style.cssText = 'margin-bottom: 16px;';
-				
-				// For cloud instances, offer to change project
-				if (this.plugin.settings.lettaBaseUrl.includes('api.letta.com')) {
-					const changeProjectButton = errorDiv.createEl('button', { 
-						text: 'Select Different Project',
-						cls: 'letta-connect-button'
-					});
-					changeProjectButton.style.marginRight = '12px';
-					changeProjectButton.addEventListener('click', () => {
+					backButton.addEventListener('click', () => {
 						modal.close();
 						this.openProjectSelector();
 					});
 				}
+				return;
+			}
+			
+			for (const agent of agents) {
+				const agentEl = contentEl.createEl('div');
+				agentEl.style.padding = '12px';
+				agentEl.style.borderBottom = '1px solid var(--background-modifier-border)';
+				agentEl.style.cursor = 'pointer';
 				
-				// Settings button
-				const settingsButton = errorDiv.createEl('button', { 
-					text: 'Check Settings',
-					cls: 'letta-model-button'
+				const isCurrentAgent = agent.id === this.plugin.agent?.id;
+				
+				const nameEl = agentEl.createEl('div', { 
+					text: agent.name,
+					style: 'font-weight: 500; margin-bottom: 4px;'
 				});
-				settingsButton.addEventListener('click', () => {
+				
+				const infoEl = agentEl.createEl('div', { 
+					text: `${agent.id.substring(0, 8)}... ${isCurrentAgent ? '(Current)' : ''}`,
+					style: 'color: var(--text-muted); font-size: 0.9em;'
+				});
+				
+				if (isCurrentAgent) {
+					agentEl.style.backgroundColor = 'var(--background-modifier-border-hover)';
+				}
+				
+				agentEl.addEventListener('click', () => {
 					modal.close();
-					// Open Obsidian settings to the plugin page
-					// @ts-ignore
-					this.app.setting.open();
-					// @ts-ignore 
-					this.app.setting.openTabById('letta-obsidian');
+					this.switchToAgent(agent, project);
 				});
-			} else {
-				// Generic error handling
-				const errorTitle = errorDiv.createEl('h3', { 
-					text: 'Failed to Load Agents'
-				});
-				errorTitle.style.cssText = 'margin-bottom: 16px; color: var(--text-error);';
 				
-				const errorText = errorDiv.createEl('p', { 
-					text: 'Please check your connection and try again.'
+				agentEl.addEventListener('mouseenter', () => {
+					agentEl.style.backgroundColor = 'var(--background-modifier-hover)';
 				});
-				errorText.style.cssText = 'margin-bottom: 16px;';
 				
-				const retryButton = errorDiv.createEl('button', { 
-					text: 'Retry',
-					cls: 'letta-connect-button'
-				});
-				retryButton.addEventListener('click', () => {
-					modal.close();
-					this.openAgentSelector(project, isCurrentProject);
+				agentEl.addEventListener('mouseleave', () => {
+					if (!isCurrentAgent) {
+						agentEl.style.backgroundColor = '';
+					} else {
+						agentEl.style.backgroundColor = 'var(--background-modifier-border-hover)';
+					}
 				});
 			}
+			
+		} catch (error: any) {
+			loadingEl.textContent = `Failed to load agents: ${error.message}`;
 		}
 		
 		modal.open();
@@ -6931,7 +6704,7 @@ class LettaSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Auto Sync')
-			.setDesc('Automatically sync file changes to Letta')
+			.setDesc('Automatically sync file changes to Letta. Note: Tracking metadata for large vaults can require significant context and may require users to increase maximum context size.')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.autoSync)
 				.onChange(async (value) => {
