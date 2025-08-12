@@ -11,7 +11,9 @@ import {
 	TFolder,
 	requestUrl,
 	ItemView,
-	WorkspaceLeaf
+	WorkspaceLeaf,
+	MarkdownRenderer,
+	Component
 } from 'obsidian';
 
 export const LETTA_CHAT_VIEW_TYPE = 'letta-chat-view';
@@ -1554,12 +1556,37 @@ export default class LettaPlugin extends Plugin {
 			const response = await fetch(url, {
 				method: 'POST',
 				headers,
-				body: JSON.stringify(body)
+				body: JSON.stringify(body),
+				// Explicitly handle CORS and streaming
+				mode: 'cors',
+				credentials: 'omit',
+				cache: 'no-cache'
 			});
 
+			console.log('[LETTA DEBUG] sendMessageToAgentStream - response:', response);
+
 			if (!response.ok) {
-				// For rate limiting, try to extract more detailed error information
+				// Check for CORS errors (which often report as 429 or other status codes)
+				const isCorsError = response.status === 0 || 
+					(response.status === 429 && !response.headers.get('Retry-After') && !response.headers.get('X-RateLimit-Reset'));
+				
+				if (isCorsError) {
+					// This is a CORS error, not a rate limit
+					throw new Error('CORS_ERROR: Cross-origin request blocked. Streaming not available from this origin. Falling back to non-streaming API.');
+				}
+				
+				// For actual rate limiting, try to extract more detailed error information
 				if (response.status === 429) {
+					// Check for actual rate limit headers to confirm it's really rate limiting
+					const hasRateLimitHeaders = response.headers.get('Retry-After') || 
+						response.headers.get('X-RateLimit-Reset') || 
+						response.headers.get('X-RateLimit-Remaining');
+					
+					if (!hasRateLimitHeaders) {
+						// No rate limit headers - likely a CORS error misreported as 429
+						throw new Error('CORS_ERROR: Request blocked (reported as 429 but no rate limit headers found). Falling back to non-streaming API.');
+					}
+					
 					let detailedError = `HTTP 429: Rate limit exceeded`;
 					try {
 						const errorBody = await response.text();
@@ -1623,7 +1650,12 @@ export default class LettaPlugin extends Plugin {
 			}
 
 			if (!response.body) {
-				throw new Error('No response body available for streaming');
+				throw new Error('CORS_ERROR: No response body available for streaming (likely CORS or browser compatibility issue)');
+			}
+
+			// Check if we can actually read from the stream
+			if (!response.body.getReader) {
+				throw new Error('CORS_ERROR: Streaming not supported in this environment');
 			}
 
 			const reader = response.body.getReader();
@@ -1663,7 +1695,18 @@ export default class LettaPlugin extends Plugin {
 				reader.releaseLock();
 			}
 		} catch (error: any) {
-			onError(error);
+			// Check if this is a network/CORS error that happened during fetch
+			if (error instanceof TypeError && 
+				(error.message.includes('NetworkError') || 
+				 error.message.includes('fetch') || 
+				 error.message.includes('Failed to fetch') ||
+				 error.message.includes('CORS'))) {
+				// This is a network/CORS error
+				const corsError = new Error('CORS_ERROR: Network request failed, likely due to CORS restrictions. Falling back to non-streaming API.');
+				onError(corsError);
+			} else {
+				onError(error);
+			}
 		}
 	}
 
@@ -1839,7 +1882,30 @@ class LettaChatView extends ItemView {
 		}
 	}
 
-	addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: any, title?: string, reasoningContent?: string) {
+	/**
+	 * Safely render markdown content using Obsidian's built-in MarkdownRenderer
+	 */
+	async renderMarkdownContent(container: HTMLElement, content: string): Promise<void> {
+		// Clear existing content
+		container.empty();
+		
+		try {
+			// Use Obsidian's built-in markdown renderer
+			await MarkdownRenderer.render(
+				this.plugin.app,
+				content,
+				container,
+				'', // sourcePath - empty for dynamic content
+				new Component() // Component for lifecycle management
+			);
+		} catch (error) {
+			console.error('Error rendering markdown:', error);
+			// Fallback to plain text if markdown rendering fails
+			container.textContent = content;
+		}
+	}
+
+	async addMessage(type: 'user' | 'assistant' | 'reasoning' | 'tool-call' | 'tool-result', content: any, title?: string, reasoningContent?: string) {
 		// Adding message to chat interface
 		
 		// Extract text content from various possible formats
@@ -2019,48 +2085,6 @@ class LettaChatView extends ItemView {
 				reasoningEl.innerHTML = formattedReasoning;
 			}
 
-			// Enhanced markdown-like formatting
-			let formattedContent = textContent
-				// Trim leading and trailing whitespace first
-				.trim()
-				// Normalize multiple consecutive newlines to double newlines
-				.replace(/\n{3,}/g, '\n\n')
-				// Handle headers (must be done before other formatting)
-				.replace(/^### (.+)$/gm, '<h3>$1</h3>')
-				.replace(/^## (.+)$/gm, '<h2>$1</h2>')
-				.replace(/^# (.+)$/gm, '<h1>$1</h1>')
-				// Handle bold and italic
-				.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-				.replace(/\*(.*?)\*/g, '<em>$1</em>')
-				.replace(/`([^`]+)`/g, '<code>$1</code>')
-				// Handle numbered lists (1. 2. 3. etc.)
-				.replace(/^(\d+)\.\s+(.+)$/gm, '<li class="numbered-list">$2</li>')
-				// Handle bullet lists (•, -, *)
-				.replace(/^[•*-]\s+(.+)$/gm, '<li>$1</li>')
-				// Handle double newlines as paragraph breaks first
-				.replace(/\n\n/g, '</p><p>')
-				// Convert remaining single newlines to <br> tags
-				.replace(/\n/g, '<br>');
-			
-			// Wrap consecutive numbered list items in <ol> tags
-			formattedContent = formattedContent.replace(/(<li class="numbered-list">.*?<\/li>)(\s*<br>\s*<li class="numbered-list">.*?<\/li>)*/g, (match) => {
-				// Remove the <br> tags between numbered list items and wrap in <ol>
-				const cleanMatch = match.replace(/<br>\s*/g, '');
-				return '<ol>' + cleanMatch + '</ol>';
-			});
-			
-			// Wrap consecutive regular list items in <ul> tags
-			formattedContent = formattedContent.replace(/(<li>(?!.*class="numbered-list").*?<\/li>)(\s*<br>\s*<li>(?!.*class="numbered-list").*?<\/li>)*/g, (match) => {
-				// Remove the <br> tags between list items and wrap in <ul>
-				const cleanMatch = match.replace(/<br>\s*/g, '');
-				return '<ul>' + cleanMatch + '</ul>';
-			});
-			
-			// Wrap in paragraphs if needed
-			if (formattedContent.includes('</p><p>') && !formattedContent.startsWith('<')) {
-				formattedContent = '<p>' + formattedContent + '</p>';
-			}
-
 			// Handle collapsible user messages
 			if (type === 'user' && textContent.length > 200) {
 				// Create container for collapsible content
@@ -2077,7 +2101,8 @@ class LettaChatView extends ItemView {
 				const fullContentEl = contentContainer.createEl('div', { 
 					cls: 'letta-message-content letta-user-message-full letta-user-message-collapsed' 
 				});
-				fullContentEl.innerHTML = formattedContent;
+				// Use robust markdown rendering instead of innerHTML
+				await this.renderMarkdownContent(fullContentEl, textContent);
 				
 				// Create expand/collapse button
 				const expandBtn = contentContainer.createEl('button', { 
@@ -2105,7 +2130,8 @@ class LettaChatView extends ItemView {
 			} else {
 				// Regular content for short messages or non-user messages
 				const contentEl = bubbleEl.createEl('div', { cls: 'letta-message-content' });
-				contentEl.innerHTML = formattedContent;
+				// Use robust markdown rendering instead of innerHTML
+				await this.renderMarkdownContent(contentEl, textContent);
 			}
 		}
 
@@ -2176,14 +2202,14 @@ class LettaChatView extends ItemView {
 			);
 
 			// Process messages in groups (reasoning -> tool_call -> tool_return -> assistant)
-			this.processMessagesInGroups(sortedMessages);
+			await this.processMessagesInGroups(sortedMessages);
 
 
 		} catch (error) {
 			console.error('[Letta Plugin] Failed to load historical messages:', error);
 			// Show a minimal error message for malformed data issues
 			if (error.message && error.message.includes('missing message argument')) {
-				this.addMessage('assistant', 'Some messages in your conversation history could not be loaded due to data issues. New messages will work normally.', 'System');
+				await this.addMessage('assistant', 'Some messages in your conversation history could not be loaded due to data issues. New messages will work normally.', 'System');
 			}
 		}
 	}
@@ -2399,7 +2425,7 @@ class LettaChatView extends ItemView {
 		this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
 	}
 
-	processMessagesInGroups(messages: any[]) {
+	async processMessagesInGroups(messages: any[]) {
 		let currentReasoning = '';
 		let currentToolCallMessage: HTMLElement | null = null;
 		let currentToolName = '';
@@ -2447,14 +2473,14 @@ class LettaChatView extends ItemView {
 				// Validate message has required fields based on type
 				if (!this.validateMessageStructure(message, messageType)) {
 					console.warn('[Letta Plugin] Skipping malformed message:', message);
-					this.addErrorMessage(`Malformed ${messageType || 'unknown'} message`, message);
+					await this.addErrorMessage(`Malformed ${messageType || 'unknown'} message`, message);
 					continue;
 				}
 			
 			switch (messageType) {
 			case 'user_message':
 				if (message.content || message.text) {
-					this.addMessage('user', message.text || message.content || '');
+					await this.addMessage('user', message.text || message.content || '');
 				}
 				break;
 			
@@ -2498,7 +2524,7 @@ class LettaChatView extends ItemView {
 					// Filter out system prompt content and use accumulated reasoning
 					const rawContent = message.content || message.text || '';
 					const filteredContent = this.filterSystemPromptContent(rawContent);
-					this.addMessage('assistant', filteredContent, 
+					await this.addMessage('assistant', filteredContent, 
 						this.plugin.settings.agentName, currentReasoning || undefined);
 					// Clear reasoning after using it
 					currentReasoning = '';
@@ -2510,7 +2536,7 @@ class LettaChatView extends ItemView {
 			}
 			} catch (error) {
 				console.error('[Letta Plugin] Error processing message:', error, message);
-				this.addErrorMessage(`Error processing ${message?.message_type || message?.type || 'unknown'} message`, { error: error.message, message });
+				await this.addErrorMessage(`Error processing ${message?.message_type || message?.type || 'unknown'} message`, { error: error.message, message });
 			}
 		}
 	}
@@ -2537,12 +2563,12 @@ class LettaChatView extends ItemView {
 	}
 
 	// Add error message for malformed messages
-	addErrorMessage(title: string, data: any) {
+	async addErrorMessage(title: string, data: any) {
 		const errorContent = `${title} - This message had invalid data and was skipped.`;
-		this.addMessage('assistant', errorContent, 'System');
+		await this.addMessage('assistant', errorContent, 'System');
 	}
 
-	displayHistoricalMessage(message: any) {
+	async displayHistoricalMessage(message: any) {
 		// Processing historical message
 		
 		// Handle system messages - capture system_alert for hidden viewing, skip heartbeats entirely
@@ -2602,7 +2628,7 @@ class LettaChatView extends ItemView {
 		switch (message.message_type) {
 			case 'user_message':
 				if (message.text || message.content) {
-					this.addMessage('user', message.text || message.content || '');
+					await this.addMessage('user', message.text || message.content || '');
 				}
 				break;
 			
@@ -2623,7 +2649,7 @@ class LettaChatView extends ItemView {
 					// Filter out system prompt content
 					const rawContent = message.content || message.text || '';
 					const filteredContent = this.filterSystemPromptContent(rawContent);
-					this.addMessage('assistant', filteredContent, this.plugin.settings.agentName);
+					await this.addMessage('assistant', filteredContent, this.plugin.settings.agentName);
 				}
 				break;
 			
@@ -3339,17 +3365,17 @@ class LettaChatView extends ItemView {
 
 		// Check connection and auto-connect if needed
 		if (!this.plugin.source) {
-			this.addMessage('assistant', 'Connecting to Letta...', 'System');
+			await this.addMessage('assistant', 'Connecting to Letta...', 'System');
 			const connected = await this.plugin.connectToLetta();
 			if (!connected) {
-				this.addMessage('assistant', '**Connection failed**. Please check your settings and try again.', 'Error');
+				await this.addMessage('assistant', '**Connection failed**. Please check your settings and try again.', 'Error');
 				return;
 			}
 		}
 		
 		// Check if agent is attached after connection
 		if (!this.plugin.agent) {
-			this.addMessage('assistant', '**No agent selected**. Please select an agent to start chatting.', 'System');
+			await this.addMessage('assistant', '**No agent selected**. Please select an agent to start chatting.', 'System');
 			return;
 		}
 
@@ -3360,7 +3386,7 @@ class LettaChatView extends ItemView {
 		this.sendButton.addClass('letta-button-loading');
 
 		// Add user message to chat
-		this.addMessage('user', message);
+		await this.addMessage('user', message);
 
 		// Clear and reset input
 		this.messageInput.value = '';
@@ -3395,19 +3421,25 @@ class LettaChatView extends ItemView {
 						// Handle each streaming message
 						this.processStreamingMessage(message);
 					},
-					(error) => {
+					async (error) => {
 						// Handle streaming error
 						console.error('Streaming error:', error);
 						
+						// Check if it's a CORS error and trigger fallback
+						if (error.message && error.message.includes('CORS_ERROR')) {
+							console.log('[Letta Plugin] CORS error detected, triggering fallback to non-streaming API');
+							// Don't show error message - let the fallback handle it
+							throw error; // This will be caught by the outer catch block and trigger fallback
+						}
 						// Check if it's a rate limiting error and handle it specially
-						if (error.message && error.message.includes('HTTP 429')) {
+						else if (error.message && error.message.includes('HTTP 429')) {
 							console.log('[Letta Plugin] Rate limit error detected, showing specialized message');
 							const rateLimitContent = RATE_LIMIT_MESSAGE.create(error.message);
 							console.log('[Letta Plugin] Rate limit message content:', rateLimitContent);
 							// Create the proper rate limit message format that includes billing link
 							this.addRateLimitMessage(rateLimitContent);
 						} else {
-							this.addMessage('assistant', `**Streaming Error**: ${error.message}`, 'Error');
+							await this.addMessage('assistant', `**Streaming Error**: ${error.message}`, 'Error');
 						}
 					},
 					() => {
@@ -3420,19 +3452,25 @@ class LettaChatView extends ItemView {
 				// Use non-streaming API for more stable responses
 				// Sending message via non-streaming API
 				const messages = await this.plugin.sendMessageToAgent(message);
-				this.processNonStreamingMessages(messages);
+				await this.processNonStreamingMessages(messages);
 			}
 
 		} catch (error: any) {
 			console.error('Failed to send message:', error);
 			
-			// Try fallback to non-streaming API only if streaming was enabled and fails
+			// Try fallback to non-streaming API if streaming was enabled and fails with CORS or network issues
 			if (this.plugin.settings.enableStreaming && 
-				(error.message.includes('stream') || error.message.includes('fetch') || error.message.includes('network'))) {
-				// Streaming failed, trying non-streaming fallback
+				(error.message.includes('CORS_ERROR') || error.message.includes('stream') || error.message.includes('fetch') || error.message.includes('network'))) {
+				
+				if (error.message.includes('CORS_ERROR')) {
+					console.log('[Letta Plugin] Streaming blocked by CORS, falling back to non-streaming API');
+				} else {
+					console.log('[Letta Plugin] Streaming failed, trying non-streaming fallback');
+				}
+				
 				try {
 					const messages = await this.plugin.sendMessageToAgent(message);
-					this.processNonStreamingMessages(messages);
+					await this.processNonStreamingMessages(messages);
 					return; // Success with fallback
 				} catch (fallbackError: any) {
 					console.error('Fallback also failed:', fallbackError);
@@ -3460,7 +3498,7 @@ class LettaChatView extends ItemView {
 				errorMessage += '\n\nPlease check your connection and try again.';
 			}
 			
-			this.addMessage('assistant', errorMessage, 'Error');
+			await this.addMessage('assistant', errorMessage, 'Error');
 		} finally {
 			// Re-enable input
 			this.messageInput.disabled = false;
@@ -4007,7 +4045,7 @@ class LettaChatView extends ItemView {
 	}
 
 
-	processNonStreamingMessages(messages: any[]) {
+	async processNonStreamingMessages(messages: any[]) {
 		// Processing non-streaming messages
 		
 		// Process response messages (fallback for when streaming fails)
@@ -4087,14 +4125,14 @@ class LettaChatView extends ItemView {
 					if (content) {
 						// Filter out system prompt content and use accumulated reasoning
 						const filteredContent = this.filterSystemPromptContent(content);
-						this.addMessage('assistant', filteredContent, this.plugin.settings.agentName, 
+						await this.addMessage('assistant', filteredContent, this.plugin.settings.agentName, 
 							tempReasoning || undefined);
 						// Clear temp reasoning after using it
 						tempReasoning = '';
 					} else {
 						console.warn('[Letta Plugin] Assistant message has no recognizable content field:', Object.keys(responseMessage));
 						// Fallback: display the whole message structure for debugging
-						this.addMessage('assistant', `**Debug**: ${JSON.stringify(responseMessage, null, 2)}`, 'Debug');
+						await this.addMessage('assistant', `**Debug**: ${JSON.stringify(responseMessage, null, 2)}`, 'Debug');
 					}
 					break;
 					
@@ -4124,11 +4162,11 @@ class LettaChatView extends ItemView {
 						}
 						
 						const filteredContent = this.filterSystemPromptContent(content);
-						this.addMessage('assistant', filteredContent, this.plugin.settings.agentName);
+						await this.addMessage('assistant', filteredContent, this.plugin.settings.agentName);
 					} else {
 						// Last resort: show the JSON structure for debugging
 						console.warn('[Letta Plugin] Message has no recognizable content, displaying as debug info');
-						this.addMessage('assistant', `**Debug**: Unknown message structure\n\`\`\`json\n${JSON.stringify(responseMessage, null, 2)}\n\`\`\``, 'Debug');
+						await this.addMessage('assistant', `**Debug**: Unknown message structure\n\`\`\`json\n${JSON.stringify(responseMessage, null, 2)}\n\`\`\``, 'Debug');
 					}
 					break;
 			}
@@ -4971,14 +5009,14 @@ class LettaChatView extends ItemView {
 			await this.updateChatStatus(false);
 			
 			// Show success message for fresh conversation
-			this.addMessage('assistant', `Started fresh conversation with **${agent.name}**${project ? ` (Project: ${project.name})` : ''}`, 'System');
+			await this.addMessage('assistant', `Started fresh conversation with **${agent.name}**${project ? ` (Project: ${project.name})` : ''}`, 'System');
 			
 			new Notice(`Switched to agent: ${agent.name}`);
 			
 		} catch (error) {
 			console.error('Failed to switch agent:', error);
 			new Notice(`Failed to switch agent: ${error.message}`);
-			this.addMessage('assistant', `**Error**: Failed to switch agent: ${error.message}`, 'Error');
+			await this.addMessage('assistant', `**Error**: Failed to switch agent: ${error.message}`, 'Error');
 		}
 	}
 
