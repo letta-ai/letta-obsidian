@@ -276,10 +276,10 @@ export default class LettaPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', (leaf) => {
 				const activeFile = this.app.workspace.getActiveFile();
-				console.log('[LETTA DEBUG] active-leaf-change event triggered');
-				console.log('[LETTA DEBUG] - focusMode:', this.settings.focusMode);
-				console.log('[LETTA DEBUG] - leaf type:', leaf?.getViewState()?.type);
-				console.log('[LETTA DEBUG] - active file:', activeFile?.path || 'null');
+				// console.log('[LETTA DEBUG] active-leaf-change event triggered');
+				// console.log('[LETTA DEBUG] - focusMode:', this.settings.focusMode);
+				// console.log('[LETTA DEBUG] - leaf type:', leaf?.getViewState()?.type);
+				// console.log('[LETTA DEBUG] - active file:', activeFile?.path || 'null');
 				if (this.settings.focusMode) {
 					this.onActiveFileChange();
 				}
@@ -289,9 +289,9 @@ export default class LettaPlugin extends Plugin {
 		// Additional debugging events to track file switching
 		this.registerEvent(
 			this.app.workspace.on('file-open', (file) => {
-				console.log('[LETTA DEBUG] file-open event:', file?.path || 'null');
+				// console.log('[LETTA DEBUG] file-open event:', file?.path || 'null');
 				if (this.settings.focusMode && file && file.path.endsWith('.md')) {
-					console.log('[LETTA DEBUG] file-open triggering focus mode update');
+					// console.log('[LETTA DEBUG] file-open triggering focus mode update');
 					this.onActiveFileChange();
 				}
 			})
@@ -300,7 +300,7 @@ export default class LettaPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on('layout-change', () => {
 				const activeFile = this.app.workspace.getActiveFile();
-				console.log('[LETTA DEBUG] layout-change event, active file:', activeFile?.path || 'null');
+				// console.log('[LETTA DEBUG] layout-change event, active file:', activeFile?.path || 'null');
 			})
 		);
 
@@ -383,7 +383,7 @@ export default class LettaPlugin extends Plugin {
 				// Only retry on rate limiting errors
 				if (error.isRateLimit && attempt < maxRetries) {
 					const waitTime = error.retryAfter ? error.retryAfter * 1000 : Math.pow(2, attempt) * 1000; // Exponential backoff
-					console.log(`[Letta Plugin] Rate limited, waiting ${waitTime}ms before retry ${attempt + 1}/${maxRetries}`);
+					// console.log(`[Letta Plugin] Rate limited, waiting ${waitTime}ms before retry ${attempt + 1}/${maxRetries}`);
 					await new Promise(resolve => setTimeout(resolve, waitTime));
 					continue;
 				}
@@ -413,9 +413,9 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		// Debug logging
-		console.log(`[Letta Plugin] Making request to ${url}`);
-		console.log(`[Letta Plugin] Request headers:`, headers);
-		console.log(`[Letta Plugin] Request options:`, options);
+		// console.log(`[Letta Plugin] Making request to ${url}`);
+		// console.log(`[Letta Plugin] Request headers:`, headers);
+		// console.log(`[Letta Plugin] Request options:`, options);
 
 		try {
 			let requestBody;
@@ -446,9 +446,9 @@ export default class LettaPlugin extends Plugin {
 			try {
 				if (response.text && (response.text.trim().startsWith('{') || response.text.trim().startsWith('[') || response.text.trim().startsWith('"'))) {
 					responseJson = JSON.parse(response.text);
-					console.log(`[Letta Plugin] Parsed JSON response:`, responseJson);
+					// console.log(`[Letta Plugin] Parsed JSON response:`, responseJson);
 				} else {
-					console.log(`[Letta Plugin] Response is not JSON, raw text:`, response.text);
+					// console.log(`[Letta Plugin] Response is not JSON, raw text:`, response.text);
 				}
 			} catch (jsonError) {
 				// Failed to parse JSON - continuing with text response
@@ -555,6 +555,52 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
+	async checkEmbeddingCompatibility(): Promise<void> {
+		if (!this.agent || !this.source) return;
+
+		try {
+			// Get agent's embedding config
+			const agentData = await this.makeRequest(`/v1/agents/${this.agent.id}`);
+			
+			// Get folder's embedding config
+			const folderData = await this.makeRequest(`/v1/folders/${this.source.id}`);
+			
+			const agentEmbedding = agentData?.embedding_config;
+			const folderEmbedding = folderData?.embedding_config;
+			
+			// Check if both have embedding configs
+			if (!agentEmbedding || !folderEmbedding) {
+				console.warn('[Letta Plugin] Missing embedding config - Agent:', !!agentEmbedding, 'Folder:', !!folderEmbedding);
+				return;
+			}
+			
+			// Compare embedding models
+			const agentModel = agentEmbedding.embedding_model || agentEmbedding.handle;
+			const folderModel = folderEmbedding.embedding_model || folderEmbedding.handle;
+			
+			if (agentModel !== folderModel) {
+				// Models are incompatible - show brief warning with direction to settings
+				new Notice(
+					`⚠️ Embedding model mismatch detected. Check plugin settings to fix.`,
+					8000 // 8 second notice
+				);
+				
+				console.warn('[Letta Plugin] Embedding model mismatch:', {
+					agent: agentModel,
+					folder: folderModel,
+					agentConfig: agentEmbedding,
+					folderConfig: folderEmbedding
+				});
+			} else {
+				console.log('[Letta Plugin] Embedding models are compatible:', agentModel);
+			}
+			
+		} catch (error) {
+			console.error('[Letta Plugin] Failed to check embedding compatibility:', error);
+			// Don't show user notification for this error as it's not critical
+		}
+	}
+
 	async connectToLetta(attempt: number = 1): Promise<boolean> {
 		const maxAttempts = 5;
 		const isCloudInstance = this.settings.lettaBaseUrl.includes('api.letta.com');
@@ -619,6 +665,11 @@ export default class LettaPlugin extends Plugin {
 			// Sync vault on startup if configured
 			if (this.settings.syncOnStartup) {
 				await this.syncVaultToLetta();
+			}
+
+			// Check embedding compatibility if both agent and source are set up
+			if (this.agent && this.source) {
+				await this.checkEmbeddingCompatibility();
 			}
 
 			return true;
@@ -706,22 +757,15 @@ export default class LettaPlugin extends Plugin {
 					throw new Error('Unexpected response format from source lookup');
 				}
 			} else {
-				// Create new source with selected embedding model
+				// Create new source with default embedding model
 				const embeddingConfigs = await this.makeRequest('/v1/models/embedding');
 				
-				// Find the selected embedding model, fall back to first available or letta-free
+				// Use letta-free as default, or first available embedding model
 				let embeddingConfig = embeddingConfigs.find((config: any) => 
-					config.handle === this.settings.embeddingModel
-				);
+					config.handle === 'letta/letta-free' || (config.handle && config.handle.includes('letta'))
+				) || embeddingConfigs[0];
 				
-				if (!embeddingConfig) {
-					// Fallback to letta-free or first available
-					embeddingConfig = embeddingConfigs.find((config: any) => 
-						config.handle === 'letta/letta-free' || (config.handle && config.handle.includes('letta'))
-					) || embeddingConfigs[0];
-					
-					console.warn(`[Letta Plugin] Selected embedding model "${this.settings.embeddingModel}" not found, using fallback: ${embeddingConfig?.handle}`);
-				}
+				console.log(`[Letta Plugin] Using default embedding model: ${embeddingConfig?.handle}`);
 
 				// Prepare source creation body
 				const isCloudInstance = this.settings.lettaBaseUrl.includes('api.letta.com');
@@ -1371,30 +1415,30 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async onActiveFileChange(): Promise<void> {
-		console.log('[LETTA DEBUG] onActiveFileChange called');
-		console.log('[LETTA DEBUG] onActiveFileChange - focusMode:', this.settings.focusMode, 'agent:', !!this.agent);
+		// console.log('[LETTA DEBUG] onActiveFileChange called');
+		// console.log('[LETTA DEBUG] onActiveFileChange - focusMode:', this.settings.focusMode, 'agent:', !!this.agent);
 		
 		if (!this.settings.focusMode || !this.agent) {
-			console.log('[LETTA DEBUG] onActiveFileChange - early return');
+			// console.log('[LETTA DEBUG] onActiveFileChange - early return');
 			return;
 		}
 
 		const activeFile = this.app.workspace.getActiveFile();
-		console.log('[LETTA DEBUG] onActiveFileChange - activeFile:', activeFile?.path || 'null');
+		// console.log('[LETTA DEBUG] onActiveFileChange - activeFile:', activeFile?.path || 'null');
 		
 		if (!activeFile || !activeFile.path.endsWith('.md')) {
-			console.log('[LETTA DEBUG] onActiveFileChange - early return: no file or not markdown');
+			// console.log('[LETTA DEBUG] onActiveFileChange - early return: no file or not markdown');
 			return;
 		}
 
 		try {
-			console.log('[LETTA DEBUG] onActiveFileChange - applying focus mode for file:', activeFile.path);
+			// console.log('[LETTA DEBUG] onActiveFileChange - applying focus mode for file:', activeFile.path);
 			// Close all files first
 			await this.closeAllFilesInAgent();
 			
 			// Open the currently active file
 			await this.openFileInAgent(activeFile);
-			console.log('[LETTA DEBUG] onActiveFileChange - focus mode applied successfully');
+			// console.log('[LETTA DEBUG] onActiveFileChange - focus mode applied successfully');
 		} catch (error) {
 			console.error('Failed to apply focus mode on active file change:', error);
 		}
@@ -1418,15 +1462,15 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async openChatView(): Promise<void> {
-		console.log('[LETTA DEBUG] openChatView called');
+		// console.log('[LETTA DEBUG] openChatView called');
 		
 		// Auto-connect if not connected to server
 		if (!this.source) {
-			console.log('[LETTA DEBUG] openChatView - connecting to Letta');
+			// console.log('[LETTA DEBUG] openChatView - connecting to Letta');
 			new Notice('Connecting to Letta...');
 			const connected = await this.connectToLetta();
 			if (!connected) {
-				console.log('[LETTA DEBUG] openChatView - failed to connect');
+				// console.log('[LETTA DEBUG] openChatView - failed to connect');
 				return;
 			}
 		}
@@ -1435,19 +1479,19 @@ export default class LettaPlugin extends Plugin {
 
 		// Store the currently active file before opening chat
 		const activeFileBeforeChat = workspace.getActiveFile();
-		console.log('[LETTA DEBUG] openChatView - activeFileBeforeChat:', activeFileBeforeChat?.path || 'null');
+		// console.log('[LETTA DEBUG] openChatView - activeFileBeforeChat:', activeFileBeforeChat?.path || 'null');
 
 		let leaf: WorkspaceLeaf | null = null;
 		const leaves = workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE);
 
 		if (leaves.length > 0) {
 			// A leaf with our view already exists, use that
-			console.log('[LETTA DEBUG] openChatView - using existing leaf');
+			// console.log('[LETTA DEBUG] openChatView - using existing leaf');
 			leaf = leaves[0];
 		} else {
 			// Our view could not be found in the workspace, create a new leaf
 			// in the right sidebar for it
-			console.log('[LETTA DEBUG] openChatView - creating new leaf');
+			// console.log('[LETTA DEBUG] openChatView - creating new leaf');
 			leaf = workspace.getRightLeaf(false);
 			if (leaf) {
 				await leaf.setViewState({ type: LETTA_CHAT_VIEW_TYPE, active: true });
@@ -1456,17 +1500,17 @@ export default class LettaPlugin extends Plugin {
 
 		// "Reveal" the leaf in case it is in a collapsed sidebar
 		if (leaf) {
-			console.log('[LETTA DEBUG] openChatView - revealing leaf');
+			// console.log('[LETTA DEBUG] openChatView - revealing leaf');
 			workspace.revealLeaf(leaf);
 		}
 
 		// If focus mode is enabled and we had an active file, ensure it's opened in the agent
 		if (this.settings.focusMode && activeFileBeforeChat && activeFileBeforeChat.path.endsWith('.md')) {
-			console.log('[LETTA DEBUG] openChatView - applying focus mode for file:', activeFileBeforeChat.path);
+			// console.log('[LETTA DEBUG] openChatView - applying focus mode for file:', activeFileBeforeChat.path);
 			try {
 				await this.closeAllFilesInAgent();
 				await this.openFileInAgent(activeFileBeforeChat);
-				console.log('[LETTA DEBUG] openChatView - focus mode applied successfully');
+				// console.log('[LETTA DEBUG] openChatView - focus mode applied successfully');
 			} catch (error) {
 				console.error('Failed to apply focus mode after opening chat:', error);
 			}
@@ -2286,13 +2330,16 @@ class LettaChatView extends ItemView {
 			if (!filtered || filtered.length < 10) {
 				// Minimal content after filtering, using original response
 				// Return original content instead of placeholder
-				return content;
+				// Unescape newlines to fix markdown rendering
+				return content.replace(/\\n/g, '\n');
 			}
 			
-			return filtered;
+			// Unescape newlines to fix markdown rendering
+			return filtered.replace(/\\n/g, '\n');
 		}
 		
-		return content;
+		// Unescape newlines to fix markdown rendering
+		return content.replace(/\\n/g, '\n');
 	}
 
 	// Format tool results with JSON pretty-printing when possible
@@ -6838,13 +6885,12 @@ class LettaSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		// Embedding Model Setting
-		const embeddingModelSetting = new Setting(containerEl)
-			.setName('Embedding Model')
-			.setDesc('Model used for embedding vault files. Changing this requires re-embedding all files.');
 
-		// Add dropdown for embedding models
-		this.addEmbeddingModelDropdown(embeddingModelSetting);
+		// Embedding Configuration
+		containerEl.createEl('h3', { text: 'Embedding Configuration' });
+		
+		// Add embedding info display
+		this.addEmbeddingInfoDisplay(containerEl);
 
 		// Sync Configuration
 		containerEl.createEl('h3', { text: 'Sync Configuration' });
@@ -6938,6 +6984,75 @@ class LettaSettingTab extends PluginSettingTab {
 				.onClick(async () => {
 					await this.plugin.syncVaultToLetta();
 				}));
+	}
+
+	async addEmbeddingInfoDisplay(containerEl: HTMLElement) {
+		try {
+			if (!this.plugin.agent || !this.plugin.source) {
+				const settingEl = new Setting(containerEl)
+					.setName('Embedding Status')
+					.setDesc('Connect to an agent and sync vault to view embedding configuration');
+				return;
+			}
+
+			// Get agent's embedding config
+			const agentData = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`);
+			const folderData = await this.plugin.makeRequest(`/v1/folders/${this.plugin.source.id}`);
+			
+			const agentEmbedding = agentData?.embedding_config;
+			const folderEmbedding = folderData?.embedding_config;
+			
+			const agentModel = agentEmbedding?.embedding_model || agentEmbedding?.handle || 'Unknown';
+			const folderModel = folderEmbedding?.embedding_model || folderEmbedding?.handle || 'Unknown';
+			
+			const isCompatible = agentModel === folderModel;
+			
+			// Agent embedding model display
+			new Setting(containerEl)
+				.setName('Agent Embedding Model')
+				.setDesc(`Current embedding model used by agent "${this.plugin.agent.name}"`)
+				.addText(text => text
+					.setValue(agentModel)
+					.setDisabled(true)
+				);
+
+			// Folder embedding model display
+			new Setting(containerEl)
+				.setName('Vault Folder Embedding Model')
+				.setDesc(`Current embedding model used by vault folder "${this.plugin.source.name}"`)
+				.addText(text => text
+					.setValue(folderModel)
+					.setDisabled(true)
+				);
+
+			// Compatibility status and action
+			if (!isCompatible) {
+				const actionSetting = new Setting(containerEl)
+					.setName('⚠️ Embedding Model Mismatch')
+					.setDesc(`Agent and vault folder use different embedding models. The agent may not be able to effectively search and use vault content. Click below to rebuild the vault folder with the agent's embedding model.`)
+					.addButton(button => button
+						.setButtonText('Rebuild Folder with Agent Model')
+						.setClass('mod-warning')
+						.onClick(async () => {
+							const confirmed = await this.showRebuildFolderConfirmation(agentModel, folderModel);
+							if (confirmed) {
+								await this.rebuildFolderWithAgentEmbedding();
+							}
+						})
+					);
+			} else {
+				new Setting(containerEl)
+					.setName('✅ Embedding Models Compatible')
+					.setDesc('Agent and vault folder use the same embedding model. Everything is working correctly.');
+			}
+
+		} catch (error) {
+			console.error('Failed to fetch embedding info:', error);
+			
+			new Setting(containerEl)
+				.setName('Embedding Status')
+				.setDesc('Failed to load embedding configuration. Make sure you are connected to Letta.');
+		}
 	}
 
 	async addEmbeddingModelDropdown(setting: Setting) {
@@ -7065,18 +7180,140 @@ class LettaSettingTab extends PluginSettingTab {
 				// Clear the source reference
 				this.plugin.source = null;
 				
-				new Notice('Existing source deleted. Re-syncing vault with new embedding model...');
-				
-				// Trigger a fresh sync with the new embedding model
+				// Only sync if auto-sync is enabled
 				if (this.plugin.settings.autoSync) {
+					new Notice('Existing source deleted. Re-syncing vault with new embedding model...');
+					
+					// Trigger a fresh sync with the new embedding model
 					setTimeout(() => {
 						this.plugin.syncVaultToLetta();
 					}, 1000);
+				} else {
+					new Notice('Existing source deleted. Use "Sync Vault to Letta" to upload files.');
 				}
 			}
 		} catch (error) {
 			console.error('Failed to delete source for re-embedding:', error);
 			new Notice('Failed to delete existing source. You may need to manually delete it.');
+		}
+	}
+
+	async showRebuildFolderConfirmation(agentModel: string, folderModel: string): Promise<boolean> {
+		return new Promise((resolve) => {
+			const modal = new Modal(this.app);
+			modal.setTitle('Rebuild Vault Folder with Agent Embedding');
+			
+			const { contentEl } = modal;
+			
+			contentEl.createEl('p', { 
+				text: `This will rebuild the vault folder to use the same embedding model as your agent.` 
+			});
+			
+			contentEl.createEl('p', { 
+				text: 'Changes:',
+				cls: 'setting-item-description'
+			});
+			
+			const changesList = contentEl.createEl('ul');
+			changesList.createEl('li', { text: `From: "${folderModel}" → To: "${agentModel}"` });
+			changesList.createEl('li', { text: 'Delete existing vault folder and all embedded content' });
+			changesList.createEl('li', { text: 'Create new folder with agent\'s embedding model' });
+			changesList.createEl('li', { text: 'Re-upload and re-embed all vault files' });
+			changesList.createEl('li', { text: 'Time required depends on vault size' });
+			
+			contentEl.createEl('p', { 
+				text: 'Do you want to proceed?',
+				cls: 'mod-warning'
+			});
+			
+			const buttonContainer = contentEl.createEl('div', { cls: 'modal-button-container' });
+			
+			const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
+			cancelButton.addEventListener('click', () => {
+				modal.close();
+				resolve(false);
+			});
+			
+			const proceedButton = buttonContainer.createEl('button', { 
+				text: 'Rebuild Folder',
+				cls: 'mod-cta mod-warning'
+			});
+			proceedButton.addEventListener('click', () => {
+				modal.close();
+				resolve(true);
+			});
+			
+			modal.open();
+		});
+	}
+
+	async rebuildFolderWithAgentEmbedding() {
+		try {
+			if (!this.plugin.agent || !this.plugin.source) {
+				new Notice('Agent or source not available');
+				return;
+			}
+
+			// Get agent's embedding config
+			const agentData = await this.plugin.makeRequest(`/v1/agents/${this.plugin.agent.id}`);
+			const agentEmbedding = agentData?.embedding_config;
+			
+			if (!agentEmbedding) {
+				new Notice('Could not retrieve agent embedding configuration');
+				return;
+			}
+
+			new Notice('Deleting existing vault folder...');
+			
+			// Delete the existing source
+			await this.plugin.makeRequest(`/v1/folders/${this.plugin.source.id}`, {
+				method: 'DELETE'
+			});
+			
+			// Clear the source reference
+			this.plugin.source = null;
+			
+			new Notice('Creating new vault folder with agent embedding model...');
+			
+			// Create new source with agent's embedding config
+			const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
+			const sourceBody: any = {
+				name: this.plugin.settings.sourceName,
+				instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved in filenames using '__' as path separators."
+			};
+			
+			// Only include embedding_config for non-cloud instances
+			if (!isCloudInstance) {
+				sourceBody.embedding_config = agentEmbedding;
+			}
+
+			const newSource = await this.plugin.makeRequest('/v1/folders', {
+				method: 'POST',
+				body: sourceBody
+			});
+
+			this.plugin.source = { id: newSource.id, name: newSource.name };
+			
+			// Only sync if auto-sync is enabled
+			if (this.plugin.settings.autoSync) {
+				new Notice('Vault folder rebuilt successfully. Re-syncing files...');
+				
+				// Trigger a fresh sync
+				setTimeout(() => {
+					this.plugin.syncVaultToLetta();
+				}, 1000);
+			} else {
+				new Notice('Vault folder rebuilt successfully. Use "Sync Vault to Letta" to upload files.');
+			}
+			
+			// Refresh the settings display
+			setTimeout(() => {
+				this.display();
+			}, 2000);
+
+		} catch (error) {
+			console.error('Failed to rebuild folder with agent embedding:', error);
+			new Notice('Failed to rebuild vault folder. Check console for details.');
 		}
 	}
 
@@ -7144,15 +7381,13 @@ class LettaSettingTab extends PluginSettingTab {
 			
 			new Notice('Creating new source...');
 			
-			// Create a new source using the same logic from setupSource()
+			// Create a new source using default embedding model
 			const embeddingModels = await this.plugin.makeRequest('/v1/models/embedding');
 			const embeddingConfig = embeddingModels.find((model: any) => 
-				model.handle === this.plugin.settings.embeddingModel
-			);
+				model.handle === 'letta/letta-free' || (model.handle && model.handle.includes('letta'))
+			) || embeddingModels[0];
 			
-			if (!embeddingConfig) {
-				throw new Error(`Embedding model ${this.plugin.settings.embeddingModel} not found`);
-			}
+			console.log(`[Letta Plugin] Using default embedding model for new source: ${embeddingConfig?.handle}`);
 			
 			// Prepare source creation body
 			const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
