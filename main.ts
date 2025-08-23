@@ -135,6 +135,11 @@ export default class LettaPlugin extends Plugin {
 	agent: LettaAgent | null = null;
 	source: LettaSource | null = null;
 	statusBarItem: HTMLElement | null = null;
+	
+	// Focus mode debouncing and sync tracking
+	private activeFileChangeTimeout: NodeJS.Timeout | null = null;
+	private lastProcessedFile: string | null = null;
+	private syncingFiles: Set<string> = new Set();
 
 	async onload() {
 		await this.loadSettings();
@@ -272,27 +277,11 @@ export default class LettaPlugin extends Plugin {
 			);
 		}
 
-		// Track active file changes for focus mode
+		// Track active file changes for focus mode with debouncing
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', (leaf) => {
-				const activeFile = this.app.workspace.getActiveFile();
-				// console.log('[LETTA DEBUG] active-leaf-change event triggered');
-				// console.log('[LETTA DEBUG] - focusMode:', this.settings.focusMode);
-				// console.log('[LETTA DEBUG] - leaf type:', leaf?.getViewState()?.type);
-				// console.log('[LETTA DEBUG] - active file:', activeFile?.path || 'null');
 				if (this.settings.focusMode) {
-					this.onActiveFileChange();
-				}
-			})
-		);
-
-		// Additional debugging events to track file switching
-		this.registerEvent(
-			this.app.workspace.on('file-open', (file) => {
-				// console.log('[LETTA DEBUG] file-open event:', file?.path || 'null');
-				if (this.settings.focusMode && file && file.path.endsWith('.md')) {
-					// console.log('[LETTA DEBUG] file-open triggering focus mode update');
-					this.onActiveFileChange();
+					this.onActiveFileChangeDebounced();
 				}
 			})
 		);
@@ -322,8 +311,15 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	onunload() {
+		// Clean up any pending timeouts
+		if (this.activeFileChangeTimeout) {
+			clearTimeout(this.activeFileChangeTimeout);
+			this.activeFileChangeTimeout = null;
+		}
+		
 		this.agent = null;
 		this.source = null;
+		this.syncingFiles.clear();
 	}
 
 	async loadSettings() {
@@ -1121,7 +1117,11 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		try {
-			this.updateStatusBar(`Syncing ${file.name}...`);
+			// Only show status if called independently (not from openFileInAgent)
+			const isCalledFromOpenFile = this.syncingFiles.has(file.path);
+			if (!isCalledFromOpenFile) {
+				this.updateStatusBar(`Syncing ${file.name}...`);
+			}
 			
 			const encodedPath = this.encodeFilePath(file.path);
 			
@@ -1134,24 +1134,18 @@ export default class LettaPlugin extends Plugin {
 
 				const content = await this.app.vault.read(file);
 
-
 				// Check if file exists in Letta and get metadata
 				const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
 				const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
-				
-				let action = 'uploaded';
 				
 				if (existingFile) {
 					// Delete existing file first
 					await this.makeRequest(`/v1/folders/${this.source.id}/${existingFile.id}`, {
 						method: 'DELETE'
 					});
-					action = 'updated';
 				}
 
 				// Upload the file
-				// Syncing current file
-				
 				const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
 				const multipartBody = [
 					`--${boundary}`,
@@ -1171,15 +1165,21 @@ export default class LettaPlugin extends Plugin {
 					isFileUpload: true
 				});
 
-				// Show success indication for longer duration, then return to connected
-				this.updateStatusBar(`Synced ${file.name}`);
-				setTimeout(() => this.updateStatusBar('Connected'), 5000);
+				// Only show success status if called independently
+				if (!isCalledFromOpenFile) {
+					this.updateStatusBar('Connected');
+				}
 			});
 
 		} catch (error: any) {
 			console.error('Failed to sync current file:', error);
-			this.updateStatusBar('Error');
-			new Notice(`Failed to sync file: ${error.message}`);
+			// Only show error status if called independently
+			const isCalledFromOpenFile = this.syncingFiles.has(file.path);
+			if (!isCalledFromOpenFile) {
+				this.updateStatusBar('Error');
+				new Notice(`Failed to sync file: ${error.message}`);
+			}
+			throw error; // Re-throw for openFileInAgent to handle
 		}
 	}
 
@@ -1304,76 +1304,60 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async openFileInAgent(file: TFile): Promise<void> {
-		console.log('[LETTA DEBUG] openFileInAgent called with file:', file.path);
-		
 		if (!this.agent || !this.source) {
-			console.log('[LETTA DEBUG] openFileInAgent - early return: agent =', !!this.agent, 'source =', !!this.source);
+			return;
+		}
+
+		// Skip if file is already being synced
+		if (this.syncingFiles.has(file.path)) {
 			return;
 		}
 
 		try {
 			const encodedPath = this.encodeFilePath(file.path);
-			console.log('[LETTA DEBUG] openFileInAgent - encoded path:', encodedPath);
 			
 			const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
 			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
 			
 			if (existingFile) {
-				console.log('[LETTA DEBUG] openFileInAgent - opening file with ID:', existingFile.id);
 				await this.makeRequest(`/v1/agents/${this.agent.id}/files/${existingFile.id}/open`, {
 					method: 'PATCH'
 				});
-				console.log('[LETTA DEBUG] openFileInAgent - successfully opened file:', file.path);
 			} else {
-				console.log('[LETTA DEBUG] openFileInAgent - file not found in source, syncing:', encodedPath);
+				// Mark file as being synced
+				this.syncingFiles.add(file.path);
 				
-				// Show sync status
-				this.updateStatusBar(`Syncing ${file.name} for focus...`);
+				// Show simple sync status
+				this.updateStatusBar('Syncing...');
 				
 				try {
 					// Auto-sync the missing file
 					await this.syncCurrentFile(file);
-					console.log('[LETTA DEBUG] openFileInAgent - file synced successfully');
 					
-					// Now try to open it again with retry logic for timing issues
-					let newFile = null;
-					let retryCount = 0;
-					const maxRetries = 5;
-					const baseDelay = 1000; // Start with 1 second
-					
-					while (!newFile && retryCount < maxRetries) {
-						if (retryCount > 0) {
-							const delay = baseDelay * Math.pow(1.5, retryCount - 1); // Exponential backoff
-							console.log(`[LETTA DEBUG] openFileInAgent - retrying file lookup in ${delay}ms, attempt:`, retryCount + 1);
-							await new Promise(resolve => setTimeout(resolve, delay));
-						}
-						
-						const updatedFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
-						newFile = updatedFiles.find((f: any) => f.file_name === encodedPath);
-						retryCount++;
-					}
+					// Simple retry - just check once after sync
+					await new Promise(resolve => setTimeout(resolve, 1000));
+					const updatedFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
+					const newFile = updatedFiles.find((f: any) => f.file_name === encodedPath);
 					
 					if (newFile) {
 						await this.makeRequest(`/v1/agents/${this.agent.id}/files/${newFile.id}/open`, {
 							method: 'PATCH'
 						});
-						console.log('[LETTA DEBUG] openFileInAgent - successfully opened synced file:', file.path);
 						this.updateStatusBar('Connected');
 					} else {
-						console.error('[LETTA DEBUG] openFileInAgent - file still not found after sync and retries');
-						this.updateStatusBar('Sync failed');
-						setTimeout(() => this.updateStatusBar('Connected'), 3000);
+						this.updateStatusBar('Connected'); // Still show connected even if file not found
 					}
 				} catch (syncError) {
 					console.error('Failed to sync file:', syncError);
-					this.updateStatusBar('Sync failed');
-					setTimeout(() => this.updateStatusBar('Connected'), 3000);
+					this.updateStatusBar('Connected'); // Return to connected state
+				} finally {
+					// Always remove from syncing set
+					this.syncingFiles.delete(file.path);
 				}
 			}
 		} catch (error) {
 			console.error('Failed to open file in agent:', error);
-			this.updateStatusBar('Error');
-			setTimeout(() => this.updateStatusBar('Connected'), 3000);
+			this.updateStatusBar('Connected'); // Return to connected state on error
 		}
 	}
 
@@ -1415,33 +1399,49 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async onActiveFileChange(): Promise<void> {
-		// console.log('[LETTA DEBUG] onActiveFileChange called');
-		// console.log('[LETTA DEBUG] onActiveFileChange - focusMode:', this.settings.focusMode, 'agent:', !!this.agent);
-		
 		if (!this.settings.focusMode || !this.agent) {
-			// console.log('[LETTA DEBUG] onActiveFileChange - early return');
 			return;
 		}
 
 		const activeFile = this.app.workspace.getActiveFile();
-		// console.log('[LETTA DEBUG] onActiveFileChange - activeFile:', activeFile?.path || 'null');
 		
 		if (!activeFile || !activeFile.path.endsWith('.md')) {
-			// console.log('[LETTA DEBUG] onActiveFileChange - early return: no file or not markdown');
 			return;
 		}
 
+		// Skip if this is the same file we just processed
+		if (this.lastProcessedFile === activeFile.path) {
+			return;
+		}
+
+		// Skip if this file is currently being synced
+		if (this.syncingFiles.has(activeFile.path)) {
+			return;
+		}
+
+		this.lastProcessedFile = activeFile.path;
+
 		try {
-			// console.log('[LETTA DEBUG] onActiveFileChange - applying focus mode for file:', activeFile.path);
 			// Close all files first
 			await this.closeAllFilesInAgent();
 			
 			// Open the currently active file
 			await this.openFileInAgent(activeFile);
-			// console.log('[LETTA DEBUG] onActiveFileChange - focus mode applied successfully');
 		} catch (error) {
 			console.error('Failed to apply focus mode on active file change:', error);
 		}
+	}
+
+	onActiveFileChangeDebounced(): void {
+		// Clear existing timeout if it exists
+		if (this.activeFileChangeTimeout) {
+			clearTimeout(this.activeFileChangeTimeout);
+		}
+		
+		// Set up debounced call
+		this.activeFileChangeTimeout = setTimeout(() => {
+			this.onActiveFileChange();
+		}, 500); // 500ms debounce delay
 	}
 
 	async applyFocusMode(): Promise<void> {
