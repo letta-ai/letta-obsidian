@@ -172,7 +172,7 @@ You can also manually sync using:
 
 The plugin uses Letta's v1 API for:
 - **Agent Management**: Create, retrieve, and configure agents
-- **Source Management**: Create sources and attach them to agents
+- **Folder Management**: Create folders and attach them to agents
 - **File Operations**: Upload, update, and delete vault files
 - **Message Streaming**: Real-time chat with reasoning and tool call support
 - **Memory Block Operations**: Full CRUD operations for agent memory blocks
