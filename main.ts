@@ -39,6 +39,21 @@ ${RATE_LIMIT_MESSAGE.CUSTOM_KEYS_TEXT}
 ${RATE_LIMIT_MESSAGE.CUSTOM_KEYS_URL}`
 };
 
+// Error handling interfaces
+interface RateLimitError extends Error {
+	isRateLimit: boolean;
+	retryAfter: number | null;
+}
+
+interface EnhancedError extends Error {
+	status: number;
+	responseText: string;
+	responseJson: any;
+}
+
+// Agent type definitions
+type AgentType = 'memgpt_v2_agent' | 'react_agent' | 'workflow_agent' | 'sleeptime_agent';
+
 interface LettaPluginSettings {
 	lettaApiKey: string;
 	lettaBaseUrl: string;
@@ -166,12 +181,12 @@ export default class LettaPlugin extends Plugin {
 
 		// Add status bar
 		this.statusBarItem = this.addStatusBarItem();
-		this.updateStatusBar('Letta Disconnected');
+		this.updateStatusBar('Disconnected');
 
 		// Add commands
 		this.addCommand({
 			id: 'open-letta-chat',
-			name: 'Open Letta Chat',
+			name: 'Open Chat',
 			callback: () => {
 				this.openChatView();
 			}
@@ -179,7 +194,7 @@ export default class LettaPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'open-letta-memory',
-			name: 'Open Letta Memory Blocks',
+			name: 'Open Memory Blocks',
 			callback: () => {
 				this.openMemoryView();
 			}
@@ -187,7 +202,7 @@ export default class LettaPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'sync-vault-to-letta',
-			name: 'Sync Vault to Letta',
+			name: 'Sync Vault',
 			callback: async () => {
 				await this.syncVaultToLetta();
 			}
@@ -195,7 +210,7 @@ export default class LettaPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'sync-current-file-to-letta',
-			name: 'Sync Current File to Letta',
+			name: 'Sync Current File',
 			editorCallback: async (editor: Editor, view: MarkdownView) => {
 				await this.syncCurrentFile(view.file);
 			}
@@ -205,25 +220,25 @@ export default class LettaPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'open-block-folder',
-			name: 'Open Letta Memory Blocks Folder',
+			name: 'Open Memory Blocks Folder',
 			callback: async () => {
 				const folder = this.app.vault.getAbstractFileByPath('Letta Memory Blocks');
 				if (folder && folder instanceof TFolder) {
 					// Focus the file explorer and reveal the folder
 					this.app.workspace.leftSplit.expand();
-					new Notice('📁 Letta Memory Blocks folder is now visible in the file explorer');
+					new Notice('📁 Memory Blocks folder is now visible in the file explorer');
 				} else {
-					new Notice('Letta Memory Blocks folder not found. Use "Open Memory Block Files" to create it.');
+					new Notice('Memory Blocks folder not found. Use "Open Memory Block Files" to create it.');
 				}
 			}
 		});
 
 		this.addCommand({
 			id: 'connect-to-letta',
-			name: 'Connect to Letta',
+			name: 'Connect',
 			callback: async () => {
 				if (this.agent && this.source) {
-					new Notice('Already connected to Letta');
+					new Notice('Already connected');
 					return;
 				}
 				await this.connectToLetta();
@@ -232,12 +247,12 @@ export default class LettaPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'disconnect-from-letta',
-			name: 'Disconnect from Letta',
+			name: 'Disconnect',
 			callback: () => {
 				this.agent = null;
 				this.source = null;
-				this.updateStatusBar('Letta Disconnected');
-				new Notice('Disconnected from Letta');
+				this.updateStatusBar('Disconnected');
+				new Notice('Disconnected');
 			}
 		});
 
@@ -501,17 +516,17 @@ export default class LettaPlugin extends Plugin {
 					}
 					
 					// Create a special error type for rate limiting
-					const rateLimitError = new Error(errorMessage);
-					(rateLimitError as any).isRateLimit = true;
-					(rateLimitError as any).retryAfter = retryAfter ? parseInt(retryAfter) : null;
+					const rateLimitError = new Error(errorMessage) as RateLimitError;
+					rateLimitError.isRateLimit = true;
+					rateLimitError.retryAfter = retryAfter ? parseInt(retryAfter) : null;
 					throw rateLimitError;
 				}
 				
 				// Enhanced error message created with preserved response details
-				const enhancedError = new Error(errorMessage);
-				(enhancedError as any).status = response.status;
-				(enhancedError as any).responseText = response.text;
-				(enhancedError as any).responseJson = responseJson;
+				const enhancedError = new Error(errorMessage) as EnhancedError;
+				enhancedError.status = response.status;
+				enhancedError.responseText = response.text;
+				enhancedError.responseJson = responseJson;
 				throw enhancedError;
 			}
 
@@ -588,7 +603,7 @@ export default class LettaPlugin extends Plugin {
 					folderConfig: folderEmbedding
 				});
 			} else {
-				console.log('[Letta Plugin] Embedding models are compatible:', agentModel);
+				// console.log('[Letta Plugin] Embedding models are compatible:', agentModel);
 			}
 			
 		} catch (error) {
@@ -830,7 +845,7 @@ export default class LettaPlugin extends Plugin {
 		
 		// If no agent ID is configured, skip agent setup silently
 		if (!this.settings.agentId) {
-			console.log('[Letta Plugin] No agent ID configured, skipping agent setup');
+			// console.log('[Letta Plugin] No agent ID configured, skipping agent setup');
 			return;
 		}
 
@@ -1380,19 +1395,19 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async closeAllFilesInAgent(): Promise<void> {
-		console.log('[LETTA DEBUG] closeAllFilesInAgent called');
+		// console.log('[LETTA DEBUG] closeAllFilesInAgent called');
 		
 		if (!this.agent) {
-			console.log('[LETTA DEBUG] closeAllFilesInAgent - early return: no agent');
+			// console.log('[LETTA DEBUG] closeAllFilesInAgent - early return: no agent');
 			return;
 		}
 
 		try {
-			console.log('[LETTA DEBUG] closeAllFilesInAgent - making API request to close all files');
+			// console.log('[LETTA DEBUG] closeAllFilesInAgent - making API request to close all files');
 			await this.makeRequest(`/v1/agents/${this.agent.id}/files/close-all`, {
 				method: 'PATCH'
 			});
-			console.log('[LETTA DEBUG] closeAllFilesInAgent - successfully closed all files');
+			// console.log('[LETTA DEBUG] closeAllFilesInAgent - successfully closed all files');
 		} catch (error) {
 			console.error('Failed to close all files in agent:', error);
 		}
@@ -1801,36 +1816,28 @@ class LettaChatView extends ItemView {
 			text: this.plugin.agent ? this.plugin.settings.agentName : 'No Agent', 
 			cls: this.plugin.agent ? 'letta-chat-title' : 'letta-chat-title no-agent'
 		});
-		this.agentNameElement.style.cursor = 'pointer';
+		this.agentNameElement.addClass('letta-agent-name-clickable');
 		this.agentNameElement.title = 'Click to edit agent name';
 		this.agentNameElement.addEventListener('click', () => this.editAgentName());
 		
 		const configButton = titleContainer.createEl('span', { text: 'Config' });
 		configButton.title = 'Configure agent properties';
-		configButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px; font-size: 0.8em;';
-		configButton.addEventListener('mouseenter', () => { configButton.style.opacity = '1'; });
-		configButton.addEventListener('mouseleave', () => { configButton.style.opacity = '0.7'; });
+		configButton.addClass('letta-config-button');
 		configButton.addEventListener('click', () => this.openAgentConfig());
 
 		const memoryButton = titleContainer.createEl('span', { text: 'Memory' });
 		memoryButton.title = 'Open memory blocks panel';
-		memoryButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px; font-size: 0.8em;';
-		memoryButton.addEventListener('mouseenter', () => { memoryButton.style.opacity = '1'; });
-		memoryButton.addEventListener('mouseleave', () => { memoryButton.style.opacity = '0.7'; });
+		memoryButton.addClass('letta-config-button');
 		memoryButton.addEventListener('click', () => this.plugin.openMemoryView());
 
 		const switchAgentButton = titleContainer.createEl('span', { text: 'Agent' });
 		switchAgentButton.title = 'Switch to different agent';
-		switchAgentButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px; font-size: 0.8em;';
-		switchAgentButton.addEventListener('mouseenter', () => { switchAgentButton.style.opacity = '1'; });
-		switchAgentButton.addEventListener('mouseleave', () => { switchAgentButton.style.opacity = '0.7'; });
+		switchAgentButton.addClass('letta-config-button');
 		switchAgentButton.addEventListener('click', () => this.openAgentSwitcher());
 
 		const adeButton = titleContainer.createEl('span', { text: 'ADE' });
 		adeButton.title = 'Open in Letta Agent Development Environment';
-		adeButton.style.cssText = 'cursor: pointer; opacity: 0.7; padding: 2px 6px; margin: 0 4px; font-size: 0.8em;';
-		adeButton.addEventListener('mouseenter', () => { adeButton.style.opacity = '1'; });
-		adeButton.addEventListener('mouseleave', () => { adeButton.style.opacity = '0.7'; });
+		adeButton.addClass('letta-config-button');
 		adeButton.addEventListener('click', () => this.openInADE());
 
 		
@@ -1848,7 +1855,7 @@ class LettaChatView extends ItemView {
 		this.typingIndicator = this.chatContainer.createEl('div', { 
 			cls: 'letta-typing-indicator' 
 		});
-		this.typingIndicator.style.display = 'none';
+		this.typingIndicator.addClass('letta-typing-hidden');
 		
 		const typingText = this.typingIndicator.createEl('span', { 
 			cls: 'letta-typing-text',
@@ -2161,12 +2168,12 @@ class LettaChatView extends ItemView {
 					
 					if (isCollapsed) {
 						// Expand: hide preview, show full content
-						previewEl.style.display = 'none';
+						previewEl.addClass('letta-user-message-preview-hidden');
 						fullContentEl.removeClass('letta-user-message-collapsed');
 						expandBtn.textContent = 'See less';
 					} else {
 						// Collapse: show preview, hide full content
-						previewEl.style.display = 'block';
+						previewEl.removeClass('letta-user-message-preview-hidden');
 						fullContentEl.addClass('letta-user-message-collapsed');
 						expandBtn.textContent = 'See more';
 					}
@@ -2180,12 +2187,10 @@ class LettaChatView extends ItemView {
 		}
 
 		// Animate message appearance
-		messageEl.style.opacity = '0';
-		messageEl.style.transform = 'translateY(10px)';
+		messageEl.addClass('letta-message-entering');
 		setTimeout(() => {
-			messageEl.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
-			messageEl.style.opacity = '1';
-			messageEl.style.transform = 'translateY(0)';
+			messageEl.removeClass('letta-message-entering');
+			messageEl.addClass('letta-message-entered');
 		}, 50);
 
 		// Scroll to bottom with smooth animation
@@ -2395,7 +2400,7 @@ class LettaChatView extends ItemView {
 
 	// Add a clean, centered rate limiting notification
 	addRateLimitMessage(content: string) {
-		console.log('[Letta Plugin] Adding rate limit message:', content);
+		// console.log('[Letta Plugin] Adding rate limit message:', content);
 		const messageEl = this.chatContainer.createEl('div', { 
 			cls: 'letta-rate-limit-message' 
 		});
@@ -2779,7 +2784,8 @@ class LettaChatView extends ItemView {
 
 	showTypingIndicator() {
 		if (this.typingIndicator) {
-			this.typingIndicator.style.display = 'block';
+			this.typingIndicator.removeClass('letta-typing-hidden');
+			this.typingIndicator.addClass('letta-typing-visible');
 			// Scroll to bottom to show the typing indicator
 			this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
 		}
@@ -2787,7 +2793,8 @@ class LettaChatView extends ItemView {
 
 	hideTypingIndicator() {
 		if (this.typingIndicator) {
-			this.typingIndicator.style.display = 'none';
+			this.typingIndicator.removeClass('letta-typing-visible');
+			this.typingIndicator.addClass('letta-typing-hidden');
 		}
 	}
 
@@ -3046,7 +3053,7 @@ class LettaChatView extends ItemView {
 		}
 
 		// Creating new agent
-		console.log('[Letta Plugin] Starting agent creation with config:', agentConfig);
+		// console.log('[Letta Plugin] Starting agent creation with config:', agentConfig);
 
 		// Check if this is a cloud instance and handle project selection
 		const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
@@ -3429,7 +3436,7 @@ class LettaChatView extends ItemView {
 		// Disable input while processing
 		this.messageInput.disabled = true;
 		this.sendButton.disabled = true;
-		this.sendButton.innerHTML = '<span>Sending...</span>';
+		this.sendButton.textContent = 'Sending...';
 		this.sendButton.addClass('letta-button-loading');
 
 		// Add user message to chat
@@ -3550,7 +3557,7 @@ class LettaChatView extends ItemView {
 			// Re-enable input
 			this.messageInput.disabled = false;
 			this.sendButton.disabled = false;
-			this.sendButton.innerHTML = '<span>Send</span>';
+			this.sendButton.textContent = 'Send';
 			this.sendButton.removeClass('letta-button-loading');
 			this.messageInput.focus();
 		}
@@ -3661,15 +3668,20 @@ class LettaChatView extends ItemView {
 		
 		// Curvy connecting line (SVG) - continuous flowing wave
 		const connectionLine = toolCallHeader.createEl('div', { cls: 'letta-tool-connection' });
-		connectionLine.innerHTML = `
-			<svg viewBox="0 0 400 12" class="letta-tool-curve" preserveAspectRatio="none">
-				<path d="M 0,6 Q 12.5,2 25,6 Q 37.5,10 50,6 Q 62.5,2 75,6 Q 87.5,10 100,6 Q 112.5,2 125,6 Q 137.5,10 150,6 Q 162.5,2 175,6 Q 187.5,10 200,6 Q 212.5,2 225,6 Q 237.5,10 250,6 Q 262.5,2 275,6 Q 287.5,10 300,6 Q 312.5,2 325,6 Q 337.5,10 350,6 Q 362.5,2 375,6 Q 387.5,10 400,6 Q 412.5,2 425,6 Q 437.5,10 450,6" 
-					  stroke="var(--interactive-accent)" 
-					  stroke-width="1.5" 
-					  fill="none" 
-					  opacity="0.7"/>
-			</svg>
-		`;
+		const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+		svg.setAttribute('viewBox', '0 0 400 12');
+		svg.setAttribute('preserveAspectRatio', 'none');
+		svg.setAttribute('class', 'letta-tool-curve');
+		
+		const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+		path.setAttribute('d', 'M 0,6 Q 12.5,2 25,6 Q 37.5,10 50,6 Q 62.5,2 75,6 Q 87.5,10 100,6 Q 112.5,2 125,6 Q 137.5,10 150,6 Q 162.5,2 175,6 Q 187.5,10 200,6 Q 212.5,2 225,6 Q 237.5,10 250,6 Q 262.5,2 275,6 Q 287.5,10 300,6 Q 312.5,2 325,6 Q 337.5,10 350,6 Q 362.5,2 375,6 Q 387.5,10 400,6 Q 412.5,2 425,6 Q 437.5,10 450,6');
+		path.setAttribute('stroke', 'var(--interactive-accent)');
+		path.setAttribute('stroke-width', '1.5');
+		path.setAttribute('fill', 'none');
+		path.setAttribute('opacity', '0.7');
+		
+		svg.appendChild(path);
+		connectionLine.appendChild(svg);
 		
 		// Right side with circle indicator
 		const toolRightSide = toolCallHeader.createEl('div', { cls: 'letta-tool-right' });
@@ -3714,14 +3726,14 @@ class LettaChatView extends ItemView {
 		const toolResultHeader = bubbleEl.createEl('div', { 
 			cls: 'letta-expandable-header letta-tool-section letta-tool-result-pending'
 		});
-		toolResultHeader.style.display = 'none';
+		toolResultHeader.addClass('letta-tool-result-hidden');
 		const toolResultTitle = toolResultHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Result' });
 		const toolResultChevron = toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron letta-tool-circle', text: '○' });
 		
 		const toolResultContent = bubbleEl.createEl('div', { 
 			cls: 'letta-expandable-content letta-expandable-collapsed'
 		});
-		toolResultContent.style.display = 'none';
+		toolResultContent.addClass('letta-tool-content-hidden');
 
 		// Auto-scroll to bottom
 		setTimeout(() => {
@@ -3791,8 +3803,10 @@ class LettaChatView extends ItemView {
 			}
 			
 			// Make visible
-			toolResultHeader.style.display = 'flex';
-			toolResultContent.style.display = 'block';
+			toolResultHeader.removeClass('letta-tool-result-hidden');
+			toolResultHeader.addClass('letta-tool-result-visible');
+			toolResultContent.removeClass('letta-tool-content-hidden');
+			toolResultContent.addClass('letta-tool-content-visible');
 			toolResultHeader.removeClass('letta-tool-result-pending');
 
 			// Handle special tool types
@@ -4540,15 +4554,20 @@ class LettaChatView extends ItemView {
 		
 		// Curvy connecting line (SVG)
 		const connectionLine = toolCallHeader.createEl('div', { cls: 'letta-tool-connection' });
-		connectionLine.innerHTML = `
-			<svg viewBox="0 0 400 12" class="letta-tool-curve" preserveAspectRatio="none">
-				<path d="M 0,6 Q 12.5,2 25,6 Q 37.5,10 50,6 Q 62.5,2 75,6 Q 87.5,10 100,6 Q 112.5,2 125,6 Q 137.5,10 150,6 Q 162.5,2 175,6 Q 187.5,10 200,6 Q 212.5,2 225,6 Q 237.5,10 250,6 Q 262.5,2 275,6 Q 287.5,10 300,6 Q 312.5,2 325,6 Q 337.5,10 350,6 Q 362.5,2 375,6 Q 387.5,10 400,6 Q 412.5,2 425,6 Q 437.5,10 450,6" 
-					  stroke="var(--interactive-accent)" 
-					  stroke-width="1.5" 
-					  fill="none" 
-					  opacity="0.7"/>
-			</svg>
-		`;
+		const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+		svg.setAttribute('viewBox', '0 0 400 12');
+		svg.setAttribute('preserveAspectRatio', 'none');
+		svg.setAttribute('class', 'letta-tool-curve');
+		
+		const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+		path.setAttribute('d', 'M 0,6 Q 12.5,2 25,6 Q 37.5,10 50,6 Q 62.5,2 75,6 Q 87.5,10 100,6 Q 112.5,2 125,6 Q 137.5,10 150,6 Q 162.5,2 175,6 Q 187.5,10 200,6 Q 212.5,2 225,6 Q 237.5,10 250,6 Q 262.5,2 275,6 Q 287.5,10 300,6 Q 312.5,2 325,6 Q 337.5,10 350,6 Q 362.5,2 375,6 Q 387.5,10 400,6 Q 412.5,2 425,6 Q 437.5,10 450,6');
+		path.setAttribute('stroke', 'var(--interactive-accent)');
+		path.setAttribute('stroke-width', '1.5');
+		path.setAttribute('fill', 'none');
+		path.setAttribute('opacity', '0.7');
+		
+		svg.appendChild(path);
+		connectionLine.appendChild(svg);
 		
 		const toolRightSide = toolCallHeader.createEl('div', { cls: 'letta-tool-right' });
 		toolRightSide.createEl('span', { cls: 'letta-expandable-chevron letta-tool-circle', text: '○' });
@@ -4575,14 +4594,14 @@ class LettaChatView extends ItemView {
 		const toolResultHeader = bubbleEl.createEl('div', { 
 			cls: 'letta-expandable-header letta-tool-section letta-tool-result-pending'
 		});
-		toolResultHeader.style.display = 'none';
+		toolResultHeader.addClass('letta-tool-result-hidden');
 		toolResultHeader.createEl('span', { cls: 'letta-expandable-title', text: 'Tool Result' });
 		toolResultHeader.createEl('span', { cls: 'letta-expandable-chevron letta-tool-circle', text: '○' });
 		
 		const toolResultContent = bubbleEl.createEl('div', { 
 			cls: 'letta-expandable-content letta-expandable-collapsed'
 		});
-		toolResultContent.style.display = 'none';
+		toolResultContent.addClass('letta-tool-content-hidden');
 
 		// Auto-scroll to bottom
 		setTimeout(() => {
@@ -6056,7 +6075,7 @@ class AgentConfigModal extends Modal {
 		});
 
 		typeSelect.addEventListener('change', () => {
-			this.config.agent_type = typeSelect.value as any;
+			this.config.agent_type = typeSelect.value as AgentType;
 		});
 
 		// Description
@@ -6299,7 +6318,7 @@ class ModelSwitcherModal extends Modal {
 			cls: 'search-clear-btn',
 			attr: { type: 'button', title: 'Clear search' }
 		});
-		searchClearBtn.innerHTML = '×';
+		searchClearBtn.textContent = '×';
 		searchClearBtn.addEventListener('click', () => {
 			this.searchInput.value = '';
 			this.filterModels();

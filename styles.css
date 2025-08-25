@@ -2816,4 +2816,211 @@
     opacity: 0.7;
 }
 
+/* Classes to replace JavaScript style assignments */
+
+/* Agent name and button styles */
+.letta-agent-name-clickable {
+    cursor: pointer;
+}
+
+.letta-config-button {
+    cursor: pointer;
+    opacity: 0.7;
+    padding: 2px 6px;
+    margin: 0 4px;
+    font-size: 0.8em;
+    transition: opacity 0.2s ease;
+}
+
+.letta-config-button:hover {
+    opacity: 1;
+}
+
+/* Message input auto-resize */
+.letta-message-input {
+    height: auto;
+    min-height: 40px;
+    max-height: 80px;
+    resize: none;
+}
+
+/* Message animation states */
+.letta-message-entering {
+    opacity: 0;
+    transform: translateY(10px);
+}
+
+.letta-message-entered {
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* User message expand/collapse states */
+.letta-user-message-preview-hidden {
+    display: none;
+}
+
+.letta-user-message-full-visible {
+    display: block;
+}
+
+/* Typing indicator visibility */
+.letta-typing-hidden {
+    display: none;
+}
+
+.letta-typing-visible {
+    display: block;
+}
+
+/* Status dot colors */
+.letta-status-dot-disconnected {
+    background-color: var(--text-muted);
+}
+
+.letta-status-dot-connected {
+    background-color: var(--text-success);
+}
+
+/* Button container layouts */
+.letta-button-container-flex {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.letta-button-container-basic {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+/* Modal and input styles */
+.letta-modal-wide {
+    width: 500px;
+}
+
+.letta-input-full-width {
+    width: 100%;
+    margin-bottom: 16px;
+}
+
+.letta-textarea-tall {
+    height: 120px;
+    margin-bottom: 16px;
+}
+
+/* Agent and project selection styles */
+.letta-selectable-item {
+    padding: 12px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.letta-selectable-item:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.letta-selectable-item-selected {
+    background-color: var(--background-modifier-border-hover);
+}
+
+.letta-selectable-item-disabled {
+    cursor: default;
+    opacity: 0.7;
+}
+
+/* Tool result visibility */
+.letta-tool-result-hidden {
+    display: none;
+}
+
+.letta-tool-result-visible {
+    display: flex;
+}
+
+.letta-tool-content-hidden {
+    display: none;
+}
+
+.letta-tool-content-visible {
+    display: block;
+}
+
+/* Memory block styles */
+.letta-memory-button-container {
+    display: flex;
+    gap: 8px;
+}
+
+.letta-memory-button {
+    cursor: pointer;
+    opacity: 0.7;
+    padding: 2px 6px;
+    margin: 0 4px;
+    transition: opacity 0.2s ease;
+}
+
+.letta-memory-button:hover {
+    opacity: 1;
+}
+
+.letta-memory-button-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+/* Character counter colors */
+.letta-char-counter-normal {
+    color: var(--text-muted);
+}
+
+.letta-char-counter-error {
+    color: var(--text-error);
+}
+
+/* Message layout styles */
+.letta-message-or-separator {
+    text-align: center;
+    margin: 8px 0;
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+
+.letta-message-expandable-content {
+    display: none;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 12px;
+    margin: 8px 0;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.letta-message-expandable-content.visible {
+    display: block;
+}
+
+.letta-message-expandable-message {
+    color: var(--text-normal);
+    white-space: pre-wrap;
+    margin-bottom: 8px;
+}
+
+.letta-message-collapse-hint {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 8px;
+    font-style: italic;
+}
+
+.letta-message-separator-clickable {
+    cursor: pointer;
+    user-select: none;
+}
+
 
