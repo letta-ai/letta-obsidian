@@ -782,7 +782,7 @@ export default class LettaPlugin extends Plugin {
 				const isCloudInstance = this.settings.lettaBaseUrl.includes('api.letta.com');
 				const sourceBody: any = {
 					name: this.settings.sourceName,
-					instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved in filenames using '__' as path separators."
+					instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved using folder paths."
 				};
 				
 				// Only include embedding_config for non-cloud instances
@@ -897,13 +897,6 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-	encodeFilePath(path: string): string {
-		return path.replace(/[\/\\]/g, '__');
-	}
-
-	decodeFilePath(encodedPath: string): string {
-		return encodedPath.replace(/__/g, '/');
-	}
 
 	// Rate limiter for file uploads (10 files per minute)
 	private uploadQueue: Array<() => Promise<void>> = [];
@@ -1007,8 +1000,7 @@ export default class LettaPlugin extends Plugin {
 
 			// First pass: determine which files need uploading
 			for (const file of vaultFiles) {
-				const encodedPath = this.encodeFilePath(file.path);
-				const existingFile = existingFilesMap.get(encodedPath);
+				const existingFile = existingFilesMap.get(file.path);
 				
 				let shouldUpload = true;
 
@@ -1040,8 +1032,7 @@ export default class LettaPlugin extends Plugin {
 				let processedCount = 0;
 				
 				const uploadPromises = filesToUpload.map(async (file, index) => {
-					const encodedPath = this.encodeFilePath(file.path);
-					const existingFile = existingFilesMap.get(encodedPath);
+					const existingFile = existingFilesMap.get(file.path);
 					
 					return this.addToUploadQueue(async () => {
 						// Validate source ID before starting upload
@@ -1070,14 +1061,18 @@ export default class LettaPlugin extends Plugin {
 						
 						// Uploading file ${processedCount + 1}/${filesToUpload.length}
 						
-						// Create proper multipart form data matching Python client
+						// Create proper multipart form data with name parameter for path
 						const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
 						const multipartBody = [
 							`--${boundary}`,
-							`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
+							`Content-Disposition: form-data; name="file"; filename="${file.name}"`,
 							'Content-Type: text/markdown',
 							'',
 							content,
+							`--${boundary}`,
+							`Content-Disposition: form-data; name="name"`,
+							'',
+							file.path,
 							`--${boundary}--`
 						].join('\r\n');
 
@@ -1138,8 +1133,6 @@ export default class LettaPlugin extends Plugin {
 				this.updateStatusBar(`Syncing ${file.name}...`);
 			}
 			
-			const encodedPath = this.encodeFilePath(file.path);
-			
 			// Use rate-limited upload for single files too
 			await this.addToUploadQueue(async () => {
 				// Validate source ID before starting upload
@@ -1151,7 +1144,7 @@ export default class LettaPlugin extends Plugin {
 
 				// Check if file exists in Letta and get metadata
 				const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
-				const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
+				const existingFile = existingFiles.find((f: any) => f.file_name === file.path);
 				
 				if (existingFile) {
 					// Delete existing file first
@@ -1160,14 +1153,18 @@ export default class LettaPlugin extends Plugin {
 					});
 				}
 
-				// Upload the file
+				// Upload the file with name parameter for full path
 				const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
 				const multipartBody = [
 					`--${boundary}`,
-					`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
+					`Content-Disposition: form-data; name="file"; filename="${file.name}"`,
 					'Content-Type: text/markdown',
 					'',
 					content,
+					`--${boundary}`,
+					`Content-Disposition: form-data; name="name"`,
+					'',
+					file.path,
 					`--${boundary}--`
 				].join('\r\n');
 
@@ -1224,8 +1221,6 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		try {
-			const encodedPath = this.encodeFilePath(file.path);
-			
 			// Use rate-limited upload for auto-sync too
 			await this.addToUploadQueue(async () => {
 				// Validate source ID before starting upload
@@ -1244,7 +1239,7 @@ export default class LettaPlugin extends Plugin {
 				// Delete existing file if it exists
 				try {
 					const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
-					const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
+					const existingFile = existingFiles.find((f: any) => f.file_name === file.path);
 					if (existingFile) {
 						await this.makeRequest(`/v1/folders/${this.source.id}/${existingFile.id}`, {
 							method: 'DELETE'
@@ -1256,14 +1251,18 @@ export default class LettaPlugin extends Plugin {
 
 				// Auto-syncing file change as multipart
 				
-				// Create proper multipart form data matching Python client
+				// Create proper multipart form data with name parameter for path
 				const boundary = '----formdata-obsidian-' + Math.random().toString(36).substr(2);
 				const multipartBody = [
 					`--${boundary}`,
-					`Content-Disposition: form-data; name="file"; filename="${encodedPath}"`,
+					`Content-Disposition: form-data; name="file"; filename="${file.name}"`,
 					'Content-Type: text/markdown',
 					'',
 					content,
+					`--${boundary}`,
+					`Content-Disposition: form-data; name="name"`,
+					'',
+					file.path,
 					`--${boundary}--`
 				].join('\r\n');
 
@@ -1304,9 +1303,8 @@ export default class LettaPlugin extends Plugin {
 				throw new Error('Source not properly initialized for file deletion');
 			}
 
-			const encodedPath = this.encodeFilePath(file.path);
 			const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
-			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
+			const existingFile = existingFiles.find((f: any) => f.file_name === file.path);
 			
 			if (existingFile) {
 				await this.makeRequest(`/v1/folders/${this.source.id}/${existingFile.id}`, {
@@ -1329,10 +1327,8 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		try {
-			const encodedPath = this.encodeFilePath(file.path);
-			
 			const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
-			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
+			const existingFile = existingFiles.find((f: any) => f.file_name === file.path);
 			
 			if (existingFile) {
 				await this.makeRequest(`/v1/agents/${this.agent.id}/files/${existingFile.id}/open`, {
@@ -1352,7 +1348,7 @@ export default class LettaPlugin extends Plugin {
 					// Simple retry - just check once after sync
 					await new Promise(resolve => setTimeout(resolve, 1000));
 					const updatedFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
-					const newFile = updatedFiles.find((f: any) => f.file_name === encodedPath);
+					const newFile = updatedFiles.find((f: any) => f.file_name === file.path);
 					
 					if (newFile) {
 						await this.makeRequest(`/v1/agents/${this.agent.id}/files/${newFile.id}/open`, {
@@ -1380,9 +1376,8 @@ export default class LettaPlugin extends Plugin {
 		if (!this.agent || !this.source) return;
 
 		try {
-			const encodedPath = this.encodeFilePath(file.path);
 			const existingFiles = await this.makeRequest(`/v1/folders/${this.source.id}/files`);
-			const existingFile = existingFiles.find((f: any) => f.file_name === encodedPath);
+			const existingFile = existingFiles.find((f: any) => f.file_name === file.path);
 			
 			if (existingFile) {
 				await this.makeRequest(`/v1/agents/${this.agent.id}/files/${existingFile.id}/close`, {
@@ -2288,7 +2283,7 @@ class LettaChatView extends ItemView {
 			/\*\*Currently Open Files.*Based on my current system access/i,
 			/\*\*Available Directories:\*\*/i,
 			/obsidian-vault-files.*directory structure preserved/i,
-			/using '__' as path separa/i,
+			/using folder paths/i,
 			/\*\*File System Notes:\*\*/i,
 			/I can open up to \d+ files/i,
 			// Repeated content patterns  
@@ -7298,7 +7293,7 @@ class LettaSettingTab extends PluginSettingTab {
 			const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
 			const sourceBody: any = {
 				name: this.plugin.settings.sourceName,
-				instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved in filenames using '__' as path separators."
+				instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved using folder paths."
 			};
 			
 			// Only include embedding_config for non-cloud instances
@@ -7412,7 +7407,7 @@ class LettaSettingTab extends PluginSettingTab {
 			const isCloudInstance = this.plugin.settings.lettaBaseUrl.includes('api.letta.com');
 			const sourceBody: any = {
 				name: this.plugin.settings.sourceName,
-				instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved in filenames using '__' as path separators."
+				instructions: "A collection of markdown files from an Obsidian vault. Directory structure is preserved using folder paths."
 			};
 			
 			// Only include embedding_config for non-cloud instances
