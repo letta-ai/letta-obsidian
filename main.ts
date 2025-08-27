@@ -1336,7 +1336,7 @@ export default class LettaPlugin extends Plugin {
 								Math.random().toString(36).substr(2);
 							const multipartBody = [
 								`--${boundary}`,
-								`Content-Disposition: form-data; name="file"; filename="${file.name}"`,
+								`Content-Disposition: form-data; name="file"; filename="${file.path}"`,
 								"Content-Type: text/markdown",
 								"",
 								content,
@@ -1446,7 +1446,7 @@ export default class LettaPlugin extends Plugin {
 					Math.random().toString(36).substr(2);
 				const multipartBody = [
 					`--${boundary}`,
-					`Content-Disposition: form-data; name="file"; filename="${file.name}"`,
+					`Content-Disposition: form-data; name="file"; filename="${file.path}"`,
 					"Content-Type: text/markdown",
 					"",
 					content,
@@ -1550,7 +1550,7 @@ export default class LettaPlugin extends Plugin {
 					Math.random().toString(36).substr(2);
 				const multipartBody = [
 					`--${boundary}`,
-					`Content-Disposition: form-data; name="file"; filename="${file.name}"`,
+					`Content-Disposition: form-data; name="file"; filename="${file.path}"`,
 					"Content-Type: text/markdown",
 					"",
 					content,
