@@ -1,7 +1,7 @@
 {
 	"id": "letta",
 	"name": "Letta",
-	"version": "1.3.1",
+	"version": "1.4.0",
 	"minAppVersion": "0.15.0",
 	"description": "Chat with a stateful AI agent powered by Letta that knows your vault contents and remembers your conversations. Features persistent memory, automatic vault sync, memory block management, and project-aware agent switching.",
 	"author": "Cameron Pfiffer",
