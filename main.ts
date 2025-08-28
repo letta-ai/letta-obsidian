@@ -15,6 +15,7 @@ import {
 	MarkdownRenderer,
 	Component,
 } from "obsidian";
+import { LettaClient, LettaError } from "@letta-ai/letta-client";
 
 export const LETTA_CHAT_VIEW_TYPE = "letta-chat-view";
 export const LETTA_MEMORY_VIEW_TYPE = "letta-memory-view";
@@ -165,6 +166,7 @@ export default class LettaPlugin extends Plugin {
 	agent: LettaAgent | null = null;
 	source: LettaSource | null = null;
 	statusBarItem: HTMLElement | null = null;
+	client: LettaClient | null = null;
 
 	// Focus mode debouncing and sync tracking
 	private activeFileChangeTimeout: NodeJS.Timeout | null = null;
@@ -368,10 +370,37 @@ export default class LettaPlugin extends Plugin {
 			DEFAULT_SETTINGS,
 			await this.loadData(),
 		);
+		this.initializeClient();
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		this.initializeClient();
+	}
+
+	private initializeClient() {
+		try {
+			// Only initialize if we have a base URL
+			if (!this.settings.lettaBaseUrl) {
+				this.client = null;
+				return;
+			}
+
+			// Initialize with token and base URL from settings
+			const config: any = {
+				baseURL: this.settings.lettaBaseUrl,
+			};
+
+			// Only add token if API key is provided (for self-hosted without auth)
+			if (this.settings.lettaApiKey) {
+				config.token = this.settings.lettaApiKey;
+			}
+
+			this.client = new LettaClient(config);
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to initialize client:", error);
+			this.client = null;
+		}
 	}
 
 	// Get detailed connection status text
@@ -631,8 +660,9 @@ export default class LettaPlugin extends Plugin {
 
 	async getAgentCount(): Promise<number> {
 		try {
+			if (!this.client) return 0;
 			// Get all agents across all projects (not filtered by current project)
-			const agents = await this.makeRequest("/v1/agents");
+			const agents = await this.client.agents.list();
 			return agents ? agents.length : 0;
 		} catch (error) {
 			console.error("[Letta Plugin] Failed to get agent count:", error);
@@ -685,7 +715,8 @@ export default class LettaPlugin extends Plugin {
 			);
 
 			// Test connection by trying to list agents (this endpoint should exist)
-			await this.makeRequest("/v1/agents");
+			if (!this.client) throw new Error("Client not initialized");
+			await this.client.agents.list();
 
 			// Setup source and agent
 			await this.setupSource();
@@ -794,15 +825,9 @@ export default class LettaPlugin extends Plugin {
 			let existingSource = null;
 
 			try {
-				const encodedSourceName = encodeURIComponent(
-					this.settings.sourceName,
-				);
-				console.log(
-					`[Letta Plugin] Encoded source name: ${encodedSourceName}`,
-				);
-				existingSource = await this.makeRequest(
-					`/v1/folders/name/${encodedSourceName}`,
-				);
+				if (!this.client) throw new Error("Client not initialized");
+				// Use SDK's retrieveByName method to get folder by name
+				existingSource = await this.client.folders.retrieveByName(this.settings.sourceName) as any;
 				console.log(
 					`[Letta Plugin] Existing source response:`,
 					existingSource,
@@ -888,12 +913,10 @@ export default class LettaPlugin extends Plugin {
 				}
 
 				try {
-					const newSource = await this.makeRequest("/v1/folders", {
-						method: "POST",
-						body: sourceBody,
-					});
+					if (!this.client) throw new Error("Client not initialized");
+					const newSource = await this.client.folders.create(sourceBody);
 
-					this.source = { id: newSource.id, name: newSource.name };
+					this.source = { id: newSource.id!, name: newSource.name || this.settings.sourceName };
 					console.log(
 						`[Letta Plugin] Created new source: ${newSource.id}`,
 					);
@@ -910,12 +933,8 @@ export default class LettaPlugin extends Plugin {
 						// Retry the source lookup since it was likely created by another process
 						let retrySource = null;
 						try {
-							const encodedSourceName = encodeURIComponent(
-								this.settings.sourceName,
-							);
-							retrySource = await this.makeRequest(
-								`/v1/folders/name/${encodedSourceName}`,
-							);
+							if (!this.client) throw new Error("Client not initialized");
+							retrySource = await this.client.folders.retrieveByName(this.settings.sourceName) as any;
 							console.log(
 								`[Letta Plugin] Retry source response:`,
 								retrySource,
@@ -983,10 +1002,10 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		try {
+			if (!this.client) throw new Error("Client not initialized");
+			
 			// Try to get the specific agent by ID
-			const existingAgent = await this.makeRequest(
-				`/v1/agents/${this.settings.agentId}`,
-			);
+			const existingAgent = await this.client.agents.retrieve(this.settings.agentId);
 
 			if (existingAgent) {
 				this.agent = { id: existingAgent.id, name: existingAgent.name };
@@ -1025,7 +1044,7 @@ export default class LettaPlugin extends Plugin {
 					const currentFolderIds = agentFolders.map((s: any) => s.id);
 					currentFolderIds.push(this.source!.id);
 
-					await this.makeRequest(`/v1/agents/${this.agent?.id}`, {
+					await this.makeRequest(`/v1/agents/${this.agent.id}`, {
 						method: "PATCH",
 						body: {
 							source_ids: currentFolderIds,
@@ -1152,9 +1171,8 @@ export default class LettaPlugin extends Plugin {
 			this.updateStatusBar("Syncing...");
 
 			// Get existing files from Letta
-			const existingFiles = await this.makeRequest(
-				`/v1/folders/${this.source.id}/files`,
-			);
+			if (!this.client) throw new Error("Client not initialized");
+			const existingFiles = await this.client.folders.files.list(this.source.id);
 			const existingFilesMap = new Map();
 			existingFiles.forEach((file: any) => {
 				existingFilesMap.set(file.file_name, file);
@@ -1334,9 +1352,8 @@ export default class LettaPlugin extends Plugin {
 				const content = await this.app.vault.read(file);
 
 				// Check if file exists in Letta and get metadata
-				const existingFiles = await this.makeRequest(
-					`/v1/folders/${this.source.id}/files`,
-				);
+				if (!this.client) throw new Error("Client not initialized");
+				const existingFiles = await this.client.folders.files.list(this.source.id);
 				const existingFile = existingFiles.find(
 					(f: any) => f.file_name === file.path,
 				);
@@ -1512,9 +1529,8 @@ export default class LettaPlugin extends Plugin {
 				);
 			}
 
-			const existingFiles = await this.makeRequest(
-				`/v1/folders/${this.source.id}/files`,
-			);
+			if (!this.client) throw new Error("Client not initialized");
+			const existingFiles = await this.client.folders.files.list(this.source.id);
 			const existingFile = existingFiles.find(
 				(f: any) => f.file_name === file.path,
 			);
@@ -1543,9 +1559,8 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		try {
-			const existingFiles = await this.makeRequest(
-				`/v1/folders/${this.source.id}/files`,
-			);
+			if (!this.client) throw new Error("Client not initialized");
+			const existingFiles = await this.client.folders.files.list(this.source.id);
 			const existingFile = existingFiles.find(
 				(f: any) => f.file_name === file.path,
 			);
@@ -1606,9 +1621,8 @@ export default class LettaPlugin extends Plugin {
 		if (!this.agent || !this.source) return;
 
 		try {
-			const existingFiles = await this.makeRequest(
-				`/v1/folders/${this.source.id}/files`,
-			);
+			if (!this.client) throw new Error("Client not initialized");
+			const existingFiles = await this.client.folders.files.list(this.source.id);
 			const existingFile = existingFiles.find(
 				(f: any) => f.file_name === file.path,
 			);
@@ -1825,28 +1839,21 @@ export default class LettaPlugin extends Plugin {
 
 	async sendMessageToAgent(message: string): Promise<LettaMessage[]> {
 		if (!this.agent) throw new Error("Agent not connected");
+		if (!this.client) throw new Error("Client not initialized");
 
-		const response = await this.makeRequest(
-			`/v1/agents/${this.agent?.id}/messages`,
-			{
-				method: "POST",
-				body: {
-					messages: [
-						{
-							role: "user",
-							content: [
-								{
-									type: "text",
-									text: message,
-								},
-							],
-						},
-					],
+		console.log('[Letta NonStream] Sending message to agent:', this.agent.id);
+		const response = await this.client.agents.messages.create(this.agent.id, {
+			messages: [
+				{
+					role: "user",
+					content: message,
 				},
-			},
-		);
-
-		return response.messages || [];
+			],
+		});
+		
+		console.log('[Letta NonStream] Response received:', response);
+		console.log('[Letta NonStream] Messages:', response.messages);
+		return (response.messages || []) as any;
 	}
 
 	async sendMessageToAgentStream(
@@ -1856,208 +1863,52 @@ export default class LettaPlugin extends Plugin {
 		onComplete: () => void,
 	): Promise<void> {
 		if (!this.agent) throw new Error("Agent not connected");
-
-		const url = `${this.settings.lettaBaseUrl}/v1/agents/${this.agent?.id}/messages/stream`;
-		const headers: any = {
-			"Content-Type": "application/json",
-		};
-
-		// Only add Authorization header if API key is provided
-		if (this.settings.lettaApiKey) {
-			headers["Authorization"] = `Bearer ${this.settings.lettaApiKey}`;
-		}
-
-		const body = {
-			messages: [
-				{
-					role: "user",
-					content: [
-						{
-							type: "text",
-							text: message,
-						},
-					],
-				},
-			],
-			stream_steps: this.settings.enableStreaming,
-			stream_tokens: this.settings.enableStreaming,
-		};
+		if (!this.client) throw new Error("Client not initialized");
 
 		try {
-			const response = await fetch(url, {
-				method: "POST",
-				headers,
-				body: JSON.stringify(body),
-				// Explicitly handle CORS and streaming
-				mode: "cors",
-				credentials: "omit",
-				cache: "no-cache",
-			});
-
-			console.log(
-				"[LETTA DEBUG] sendMessageToAgentStream - response:",
-				response,
+			// Use the SDK's streaming API
+			console.log('[Letta Stream] Starting stream for agent:', this.agent.id);
+			const stream = await this.client.agents.messages.createStream(
+				this.agent.id,
+				{
+					messages: [
+						{
+							role: "user",
+							content: message,
+						},
+					],
+				}
 			);
+			console.log('[Letta Stream] Stream created successfully:', stream);
 
-			if (!response.ok) {
-				// Check for CORS errors (which often report as 429 or other status codes)
-				const isCorsError =
-					response.status === 0 ||
-					(response.status === 429 &&
-						!response.headers.get("Retry-After") &&
-						!response.headers.get("X-RateLimit-Reset"));
-
-				if (isCorsError) {
-					// This is a CORS error, not a rate limit
-					throw new Error(
-						"CORS_ERROR: Cross-origin request blocked. Streaming not available from this origin. Falling back to non-streaming API.",
-					);
+			// Process the stream
+			for await (const chunk of stream) {
+				console.log('[Letta Stream] Chunk received:', chunk);
+				console.log('[Letta Stream] Chunk type:', typeof chunk);
+				
+				// Check if this is the [DONE] signal
+				if ((chunk as any) === '[DONE]' || (typeof chunk === 'string' && (chunk as string).includes('[DONE]'))) {
+					console.log('[Letta Stream] Received DONE signal');
+					onComplete();
+					return;
 				}
-
-				// For actual rate limiting, try to extract more detailed error information
-				if (response.status === 429) {
-					// Check for actual rate limit headers to confirm it's really rate limiting
-					const hasRateLimitHeaders =
-						response.headers.get("Retry-After") ||
-						response.headers.get("X-RateLimit-Reset") ||
-						response.headers.get("X-RateLimit-Remaining");
-
-					if (!hasRateLimitHeaders) {
-						// No rate limit headers - likely a CORS error misreported as 429
-						throw new Error(
-							"CORS_ERROR: Request blocked (reported as 429 but no rate limit headers found). Falling back to non-streaming API.",
-						);
-					}
-
-					let detailedError = `HTTP 429: Rate limit exceeded`;
-					try {
-						const errorBody = await response.text();
-						if (errorBody) {
-							// Try to parse as JSON first
-							try {
-								const errorJson = JSON.parse(errorBody);
-								if (errorJson.detail) {
-									detailedError = `HTTP 429: ${errorJson.detail}`;
-								} else if (errorJson.message) {
-									detailedError = `HTTP 429: ${errorJson.message}`;
-								}
-							} catch {
-								// If not JSON, use the raw text
-								detailedError = `HTTP 429: ${errorBody}`;
-							}
-						}
-						// Check for rate limit headers
-						const retryAfter = response.headers.get("Retry-After");
-						const rateLimitReset =
-							response.headers.get("X-RateLimit-Reset");
-						const rateLimitRemaining = response.headers.get(
-							"X-RateLimit-Remaining",
-						);
-
-						if (retryAfter) {
-							detailedError += ` | Retry after: ${retryAfter} seconds`;
-						}
-						if (rateLimitReset) {
-							const resetTime = new Date(
-								parseInt(rateLimitReset) * 1000,
-							);
-							detailedError += ` | Rate limit resets at: ${resetTime.toLocaleTimeString()}`;
-						}
-						if (rateLimitRemaining) {
-							detailedError += ` | Remaining requests: ${rateLimitRemaining}`;
-						}
-					} catch (bodyError) {
-						console.error(
-							"[Letta Plugin] Error reading rate limit response body:",
-							bodyError,
-						);
-					}
-					throw new Error(detailedError);
-				}
-				// For other HTTP errors, try to get the response body for better error details
-				let errorBody = "";
-				try {
-					errorBody = await response.text();
-				} catch (bodyError) {
-					console.error(
-						"[Letta Plugin] Error reading response body:",
-						bodyError,
-					);
-				}
-
-				// Convert headers to a plain object
-				const headersObj: Record<string, string> = {};
-				response.headers.forEach((value, key) => {
-					headersObj[key] = value;
-				});
-
-				console.error("[Letta Plugin] HTTP error response:", {
-					status: response.status,
-					statusText: response.statusText,
-					body: errorBody,
-					headers: headersObj,
-				});
-
-				const errorMessage = errorBody
-					? `HTTP ${response.status}: ${errorBody}`
-					: `HTTP ${response.status}: ${response.statusText}`;
-				throw new Error(errorMessage);
+				
+				onMessage(chunk);
 			}
 
-			if (!response.body) {
-				throw new Error(
-					"CORS_ERROR: No response body available for streaming (likely CORS or browser compatibility issue)",
-				);
-			}
-
-			// Check if we can actually read from the stream
-			if (!response.body.getReader) {
-				throw new Error(
-					"CORS_ERROR: Streaming not supported in this environment",
-				);
-			}
-
-			const reader = response.body.getReader();
-			const decoder = new TextDecoder();
-
-			try {
-				while (true) {
-					const { done, value } = await reader.read();
-
-					if (done) {
-						break;
-					}
-
-					const chunk = decoder.decode(value, { stream: true });
-					const lines = chunk.split("\n");
-
-					for (const line of lines) {
-						if (line.trim() === "") continue;
-						if (line.startsWith("data: ")) {
-							const data = line.slice(6); // Remove 'data: ' prefix
-
-							if (data === "[DONE]") {
-								onComplete();
-								return;
-							}
-
-							try {
-								const message = JSON.parse(data);
-								onMessage(message);
-							} catch (parseError) {
-								console.warn(
-									"[Letta Plugin] Failed to parse streaming message:",
-									data,
-								);
-							}
-						}
-					}
-				}
-			} finally {
-				reader.releaseLock();
-			}
+			// Stream completed successfully (if we exit loop normally)
+			console.log('[Letta Stream] Stream ended normally');
+			onComplete();
 		} catch (error: any) {
-			// Check if this is a network/CORS error that happened during fetch
+			console.error('[Letta Stream] Stream error:', error);
+			console.error('[Letta Stream] Error details:', { 
+				message: error.message, 
+				status: error.statusCode || error.status,
+				name: error.name,
+				stack: error.stack 
+			});
+			
+			// Check if this is a CORS-related error and create appropriate error message
 			if (
 				error instanceof TypeError &&
 				(error.message.includes("NetworkError") ||
@@ -2065,11 +1916,25 @@ export default class LettaPlugin extends Plugin {
 					error.message.includes("Failed to fetch") ||
 					error.message.includes("CORS"))
 			) {
-				// This is a network/CORS error
 				const corsError = new Error(
 					"CORS_ERROR: Network request failed, likely due to CORS restrictions. Falling back to non-streaming API.",
 				);
 				onError(corsError);
+			} else if (error instanceof LettaError) {
+				// Handle Letta SDK errors - check for rate limiting and CORS issues
+				if (error.statusCode === 429) {
+					// This is a genuine rate limit error
+					onError(new Error(`HTTP 429: ${error.message}`));
+				} else if (error.statusCode === 0 || 
+						  (error.statusCode === 429 && !error.message.includes("rate"))) {
+					// Likely a CORS error masquerading as another error
+					const corsError = new Error(
+						"CORS_ERROR: Cross-origin request blocked. Streaming not available from this origin. Falling back to non-streaming API.",
+					);
+					onError(corsError);
+				} else {
+					onError(error);
+				}
 			} else {
 				onError(error);
 			}
@@ -2989,7 +2854,7 @@ class LettaChatView extends ItemView {
 
 				// Check if this is a user_message containing login JSON
 				if (
-					message.message_type === "user_message" &&
+					(message.message_type === "user_message" || message.messageType === "user_message") &&
 					message.content &&
 					typeof message.content === "string"
 				) {
@@ -3198,7 +3063,7 @@ class LettaChatView extends ItemView {
 
 		// Check if this is a user_message containing login JSON
 		if (
-			message.message_type === "user_message" &&
+			(message.message_type === "user_message" || message.messageType === "user_message") &&
 			message.content &&
 			typeof message.content === "string"
 		) {
@@ -3732,10 +3597,8 @@ class LettaChatView extends ItemView {
 
 		let newAgent: any;
 		try {
-			newAgent = await this.plugin.makeRequest("/v1/agents", {
-				method: "POST",
-				body: agentBody,
-			});
+			if (!this.plugin.client) throw new Error("Client not initialized");
+			newAgent = await this.plugin.client.agents.create(agentBody);
 			console.log("[Letta Plugin] Agent created successfully:", newAgent);
 		} catch (error: any) {
 			console.error(
@@ -3967,12 +3830,12 @@ class LettaChatView extends ItemView {
 			}
 		}
 
+		if (!this.plugin.client) throw new Error("Client not initialized");
+		
 		// Get current agent details and blocks
 		const [agentDetails, blocks] = await Promise.all([
-			this.plugin.makeRequest(`/v1/agents/${this.plugin.agent?.id}`),
-			this.plugin.makeRequest(
-				`/v1/agents/${this.plugin.agent?.id}/core-memory/blocks`,
-			),
+			this.plugin.makeRequest(`/v1/agents/${this.plugin.agent!.id}`),
+			this.plugin.makeRequest(`/v1/agents/${this.plugin.agent!.id}/core-memory/blocks`),
 		]);
 
 		const modal = new AgentPropertyModal(
@@ -5171,6 +5034,7 @@ class LettaChatView extends ItemView {
 		if (
 			message.type === "heartbeat" ||
 			message.message_type === "heartbeat" ||
+			message.messageType === "heartbeat" ||
 			message.role === "heartbeat" ||
 			(message.reason &&
 				(message.reason.includes("automated system message") ||
@@ -5184,13 +5048,13 @@ class LettaChatView extends ItemView {
 		}
 
 		// Filter out login messages - check both direct type and content containing login JSON
-		if (message.type === "login" || message.message_type === "login") {
+		if (message.type === "login" || message.message_type === "login" || message.messageType === "login") {
 			return;
 		}
 
 		// Check if this is a user_message containing login JSON
 		if (
-			message.message_type === "user_message" &&
+			(message.message_type === "user_message" || message.messageType === "user_message") &&
 			message.content &&
 			typeof message.content === "string"
 		) {
@@ -5205,13 +5069,13 @@ class LettaChatView extends ItemView {
 		}
 
 		// Handle usage statistics
-		if (message.message_type === "usage_statistics") {
+		if (message.message_type === "usage_statistics" || message.messageType === "usage_statistics") {
 			// Received usage statistics
 			this.addUsageStatistics(message);
 			return;
 		}
 
-		switch (message.message_type) {
+		switch (message.message_type || message.messageType) {
 			case "reasoning_message":
 				if (message.reasoning) {
 					// For streaming, we accumulate reasoning and show it in real-time
@@ -9069,12 +8933,10 @@ class LettaSettingTab extends PluginSettingTab {
 			};
 
 
-			const newSource = await this.plugin.makeRequest("/v1/folders", {
-				method: "POST",
-				body: sourceBody,
-			});
+			if (!this.plugin.client) throw new Error("Client not initialized");
+			const newSource = await this.plugin.client.folders.create(sourceBody);
 
-			this.plugin.source = { id: newSource.id, name: newSource.name };
+			this.plugin.source = { id: newSource.id!, name: newSource.name || this.plugin.settings.sourceName };
 
 			// Only sync if auto-sync is enabled
 			if (this.plugin.settings.autoSync) {
@@ -9192,12 +9054,10 @@ class LettaSettingTab extends PluginSettingTab {
 			};
 
 
-			const newSource = await this.plugin.makeRequest("/v1/folders", {
-				method: "POST",
-				body: sourceBody,
-			});
+			if (!this.plugin.client) throw new Error("Client not initialized");
+			const newSource = await this.plugin.client.folders.create(sourceBody);
 
-			this.plugin.source = { id: newSource.id, name: newSource.name };
+			this.plugin.source = { id: newSource.id!, name: newSource.name || this.plugin.settings.sourceName };
 
 			new Notice(
 				"Source recreated successfully. You can now sync your vault files.",
@@ -9212,8 +9072,10 @@ class LettaSettingTab extends PluginSettingTab {
 
 	async showAgentSelector(): Promise<void> {
 		try {
+			if (!this.plugin.client) throw new Error("Client not initialized");
+			
 			// Fetch agents from server
-			const agents = await this.plugin.makeRequest("/v1/agents");
+			const agents = await this.plugin.client.agents.list();
 
 			if (!agents || agents.length === 0) {
 				new Notice("No agents found. Please create an agent first.");
