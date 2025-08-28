@@ -69,7 +69,6 @@ interface LettaPluginSettings {
 	autoSync: boolean;
 	autoConnect: boolean; // Control whether to auto-connect on startup
 	syncOnStartup: boolean; // Control whether to sync vault after connecting on startup
-	embeddingModel: string;
 	showReasoning: boolean; // Control whether reasoning messages are visible
 	enableStreaming: boolean; // Control whether to use streaming API responses
 	focusMode: boolean; // Control whether to open only the active file and close others
@@ -88,7 +87,6 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	autoSync: false,
 	autoConnect: false, // Default to not auto-connecting to avoid startup blocking
 	syncOnStartup: false,
-	embeddingModel: "letta/letta-free",
 	showReasoning: true, // Default to showing reasoning messages in tool interactions
 	enableStreaming: true, // Default to enabling streaming for real-time responses
 	focusMode: false, // Default to having focus mode disabled
@@ -521,7 +519,7 @@ export default class LettaPlugin extends Plugin {
 				// Error details available for debugging if needed
 
 				if (response.status === 404) {
-					if (path === "/v1/models/embedding") {
+					if (path === "/v1/agents") {
 						errorMessage =
 							"Cannot connect to Letta API. Please verify:\n• Base URL is correct\n• Letta service is running\n• Network connectivity is available";
 					} else if (path.includes("/v1/folders")) {
@@ -536,9 +534,6 @@ export default class LettaPlugin extends Plugin {
 					} else if (path.includes("/v1/agents")) {
 						errorMessage =
 							"Agent not found. This may indicate:\n• Invalid project configuration\n• Missing permissions\n• Agent was deleted externally";
-					} else if (path.includes("/v1/models/embedding")) {
-						errorMessage =
-							"Embedding models endpoint not found. This may indicate:\n• Outdated Letta API version\n• Server configuration issue\n• Invalid base URL";
 					} else {
 						errorMessage = `Endpoint not found (${path}). This may indicate:\n• Incorrect base URL configuration\n• Outdated plugin version\n• API endpoint has changed`;
 					}
@@ -622,7 +617,7 @@ export default class LettaPlugin extends Plugin {
 					error.message.includes("network") ||
 					error.message.includes("ECONNREFUSED"))
 			) {
-				if (path === "/v1/models/embedding") {
+				if (path === "/v1/agents") {
 					const enhancedError = new Error(
 						"Cannot connect to Letta API. Please verify:\n• Base URL is correct\n• Letta service is running\n• Network connectivity is available",
 					);
@@ -645,64 +640,6 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-	async checkEmbeddingCompatibility(): Promise<void> {
-		if (!this.agent || !this.source) return;
-
-		try {
-			// Get agent's embedding config
-			const agentData = await this.makeRequest(
-				`/v1/agents/${this.agent.id}`,
-			);
-
-			// Get folder's embedding config
-			const folderData = await this.makeRequest(
-				`/v1/folders/${this.source.id}`,
-			);
-
-			const agentEmbedding = agentData?.embedding_config;
-			const folderEmbedding = folderData?.embedding_config;
-
-			// Check if both have embedding configs
-			if (!agentEmbedding || !folderEmbedding) {
-				console.warn(
-					"[Letta Plugin] Missing embedding config - Agent:",
-					!!agentEmbedding,
-					"Folder:",
-					!!folderEmbedding,
-				);
-				return;
-			}
-
-			// Compare embedding models
-			const agentModel =
-				agentEmbedding.embedding_model || agentEmbedding.handle;
-			const folderModel =
-				folderEmbedding.embedding_model || folderEmbedding.handle;
-
-			if (agentModel !== folderModel) {
-				// Models are incompatible - show brief warning with direction to settings
-				new Notice(
-					`⚠️ Embedding model mismatch detected. Check plugin settings to fix.`,
-					8000, // 8 second notice
-				);
-
-				console.warn("[Letta Plugin] Embedding model mismatch:", {
-					agent: agentModel,
-					folder: folderModel,
-					agentConfig: agentEmbedding,
-					folderConfig: folderEmbedding,
-				});
-			} else {
-				// console.log('[Letta Plugin] Embedding models are compatible:', agentModel);
-			}
-		} catch (error) {
-			console.error(
-				"[Letta Plugin] Failed to check embedding compatibility:",
-				error,
-			);
-			// Don't show user notification for this error as it's not critical
-		}
-	}
 
 	async connectToLetta(attempt: number = 1): Promise<boolean> {
 		const maxAttempts = 5;
@@ -747,9 +684,8 @@ export default class LettaPlugin extends Plugin {
 					: `Retrying... (${attempt}/${maxAttempts})`,
 			);
 
-			// Testing connection with embedding endpoint
-			// Test connection by trying to list embedding models (this endpoint should exist)
-			await this.makeRequest("/v1/models/embedding");
+			// Test connection by trying to list agents (this endpoint should exist)
+			await this.makeRequest("/v1/agents");
 
 			// Setup source and agent
 			await this.setupSource();
@@ -784,10 +720,6 @@ export default class LettaPlugin extends Plugin {
 				await this.syncVaultToLetta();
 			}
 
-			// Check embedding compatibility if both agent and source are set up
-			if (this.agent && this.source) {
-				await this.checkEmbeddingCompatibility();
-			}
 
 			return true;
 		} catch (error: any) {
@@ -930,24 +862,7 @@ export default class LettaPlugin extends Plugin {
 					);
 				}
 			} else {
-				// Create new source with default embedding model
-				const embeddingConfigs = await this.makeRequest(
-					"/v1/models/embedding",
-				);
-
-				// Use letta-free as default, or first available embedding model
-				let embeddingConfig =
-					embeddingConfigs.find(
-						(config: any) =>
-							config.handle === "letta/letta-free" ||
-							(config.handle && config.handle.includes("letta")),
-					) || embeddingConfigs[0];
-
-				console.log(
-					`[Letta Plugin] Using default embedding model: ${embeddingConfig?.handle}`,
-				);
-
-				// Prepare source creation body
+				// Create new source
 				const isCloudInstance =
 					this.settings.lettaBaseUrl.includes("api.letta.com");
 				const sourceBody: any = {
@@ -955,11 +870,6 @@ export default class LettaPlugin extends Plugin {
 					instructions:
 						"A collection of markdown files from an Obsidian vault. Directory structure is preserved using folder paths.",
 				};
-
-				// Only include embedding_config for non-cloud instances
-				if (!isCloudInstance) {
-					sourceBody.embedding_config = embeddingConfig;
-				}
 
 				// Check if user consent is required before creating folder
 				if (this.settings.askBeforeFolderCreation) {
@@ -1330,7 +1240,7 @@ export default class LettaPlugin extends Plugin {
 
 							// Uploading file ${processedCount + 1}/${filesToUpload.length}
 
-							// Create proper multipart form data with name parameter for path
+							// Create multipart form data and query parameters for file upload
 							const boundary =
 								"----formdata-obsidian-" +
 								Math.random().toString(36).substr(2);
@@ -1340,15 +1250,16 @@ export default class LettaPlugin extends Plugin {
 								"Content-Type: text/markdown",
 								"",
 								content,
-								`--${boundary}`,
-								`Content-Disposition: form-data; name="name"`,
-								"",
-								file.path,
 								`--${boundary}--`,
 							].join("\r\n");
 
+							const queryParams = new URLSearchParams({
+								name: file.path,
+								duplicate_handling: 'replace'
+							});
+
 							await this.makeRequest(
-								`/v1/folders/${this.source.id}/upload`,
+								`/v1/folders/${this.source.id}/upload?${queryParams}`,
 								{
 									method: "POST",
 									headers: {
@@ -1440,7 +1351,7 @@ export default class LettaPlugin extends Plugin {
 					);
 				}
 
-				// Upload the file with name parameter for full path
+				// Upload the file with query parameters for full path
 				const boundary =
 					"----formdata-obsidian-" +
 					Math.random().toString(36).substr(2);
@@ -1450,14 +1361,15 @@ export default class LettaPlugin extends Plugin {
 					"Content-Type: text/markdown",
 					"",
 					content,
-					`--${boundary}`,
-					`Content-Disposition: form-data; name="name"`,
-					"",
-					file.path,
 					`--${boundary}--`,
 				].join("\r\n");
 
-				await this.makeRequest(`/v1/folders/${this.source.id}/upload`, {
+				const queryParams = new URLSearchParams({
+					name: file.path,
+					duplicate_handling: 'replace'
+				});
+
+				await this.makeRequest(`/v1/folders/${this.source.id}/upload?${queryParams}`, {
 					method: "POST",
 					headers: {
 						"Content-Type": `multipart/form-data; boundary=${boundary}`,
@@ -1544,7 +1456,7 @@ export default class LettaPlugin extends Plugin {
 
 				// Auto-syncing file change as multipart
 
-				// Create proper multipart form data with name parameter for path
+				// Create multipart form data and query parameters for file upload
 				const boundary =
 					"----formdata-obsidian-" +
 					Math.random().toString(36).substr(2);
@@ -1554,14 +1466,15 @@ export default class LettaPlugin extends Plugin {
 					"Content-Type: text/markdown",
 					"",
 					content,
-					`--${boundary}`,
-					`Content-Disposition: form-data; name="name"`,
-					"",
-					file.path,
 					`--${boundary}--`,
 				].join("\r\n");
 
-				await this.makeRequest(`/v1/folders/${this.source.id}/upload`, {
+				const queryParams = new URLSearchParams({
+					name: file.path,
+					duplicate_handling: 'replace'
+				});
+
+				await this.makeRequest(`/v1/folders/${this.source.id}/upload?${queryParams}`, {
 					method: "POST",
 					headers: {
 						"Content-Type": `multipart/form-data; boundary=${boundary}`,
@@ -3777,27 +3690,6 @@ class LettaChatView extends ItemView {
 			}
 		}
 
-		// Get embedding config for agent creation
-		console.log("[Letta Plugin] Fetching embedding models...");
-		const embeddingConfigs = await this.plugin.makeRequest(
-			"/v1/models/embedding",
-		);
-		console.log(
-			"[Letta Plugin] Available embedding configs:",
-			embeddingConfigs,
-		);
-
-		const embeddingConfig =
-			embeddingConfigs.find(
-				(config: any) =>
-					config.handle === "letta/letta-free" ||
-					(config.handle && config.handle.includes("letta")),
-			) || embeddingConfigs[0];
-
-		console.log(
-			"[Letta Plugin] Selected embedding config:",
-			embeddingConfig,
-		);
 
 		// Create new agent with user configuration and corrected defaults
 		const agentBody: any = {
@@ -3815,10 +3707,6 @@ class LettaChatView extends ItemView {
 			tools: ["memory_replace", "memory_insert", "memory_rethink"],
 		};
 
-		// Only include embedding_config for non-cloud instances
-		if (!isCloudInstance) {
-			agentBody.embedding_config = embeddingConfig;
-		}
 
 		// Only include project for cloud instances
 		if (isCloudInstance && selectedProject) {
@@ -8735,12 +8623,6 @@ class LettaSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		// Embedding Configuration
-		containerEl.createEl("h3", { text: "Embedding Configuration" });
-
-		// Add embedding info display
-		this.addEmbeddingInfoDisplay(containerEl);
-
 		// Sync Configuration
 		containerEl.createEl("h3", { text: "Sync Configuration" });
 
@@ -8904,96 +8786,6 @@ class LettaSettingTab extends PluginSettingTab {
 			);
 	}
 
-	async addEmbeddingInfoDisplay(containerEl: HTMLElement) {
-		try {
-			if (!this.plugin.agent || !this.plugin.source) {
-				const settingEl = new Setting(containerEl)
-					.setName("Embedding Status")
-					.setDesc(
-						"Connect to an agent and sync vault to view embedding configuration",
-					);
-				return;
-			}
-
-			// Get agent's embedding config
-			const agentData = await this.plugin.makeRequest(
-				`/v1/agents/${this.plugin.agent.id}`,
-			);
-			const folderData = await this.plugin.makeRequest(
-				`/v1/folders/${this.plugin.source.id}`,
-			);
-
-			const agentEmbedding = agentData?.embedding_config;
-			const folderEmbedding = folderData?.embedding_config;
-
-			const agentModel =
-				agentEmbedding?.embedding_model ||
-				agentEmbedding?.handle ||
-				"Unknown";
-			const folderModel =
-				folderEmbedding?.embedding_model ||
-				folderEmbedding?.handle ||
-				"Unknown";
-
-			const isCompatible = agentModel === folderModel;
-
-			// Agent embedding model display
-			new Setting(containerEl)
-				.setName("Agent Embedding Model")
-				.setDesc(
-					`Current embedding model used by agent "${this.plugin.agent.name}"`,
-				)
-				.addText((text) => text.setValue(agentModel).setDisabled(true));
-
-			// Folder embedding model display
-			new Setting(containerEl)
-				.setName("Vault Folder Embedding Model")
-				.setDesc(
-					`Current embedding model used by vault folder "${this.plugin.source.name}"`,
-				)
-				.addText((text) =>
-					text.setValue(folderModel).setDisabled(true),
-				);
-
-			// Compatibility status and action
-			if (!isCompatible) {
-				const actionSetting = new Setting(containerEl)
-					.setName("⚠️ Embedding Model Mismatch")
-					.setDesc(
-						`Agent and vault folder use different embedding models. The agent may not be able to effectively search and use vault content. Click below to rebuild the vault folder with the agent's embedding model.`,
-					)
-					.addButton((button) =>
-						button
-							.setButtonText("Rebuild Folder with Agent Model")
-							.setClass("mod-warning")
-							.onClick(async () => {
-								const confirmed =
-									await this.showRebuildFolderConfirmation(
-										agentModel,
-										folderModel,
-									);
-								if (confirmed) {
-									await this.rebuildFolderWithAgentEmbedding();
-								}
-							}),
-					);
-			} else {
-				new Setting(containerEl)
-					.setName("✅ Embedding Models Compatible")
-					.setDesc(
-						"Agent and vault folder use the same embedding model. Everything is working correctly.",
-					);
-			}
-		} catch (error) {
-			console.error("Failed to fetch embedding info:", error);
-
-			new Setting(containerEl)
-				.setName("Embedding Status")
-				.setDesc(
-					"Failed to load embedding configuration. Make sure you are connected to Letta.",
-				);
-		}
-	}
 
 	async addEmbeddingModelDropdown(setting: Setting) {
 		try {
@@ -9011,28 +8803,26 @@ class LettaSettingTab extends PluginSettingTab {
 				});
 
 				// Set current value
-				dropdown.setValue(this.plugin.settings.embeddingModel);
+				dropdown.setValue("letta/letta-free");
 
 				// Handle changes
 				dropdown.onChange(async (value) => {
 					// Check if the embedding model has actually changed
-					if (value !== this.plugin.settings.embeddingModel) {
+					if (value !== "letta/letta-free") {
 						// Show confirmation dialog about re-embedding
 						const shouldProceed =
 							await this.showEmbeddingChangeConfirmation(value);
 
 						if (shouldProceed) {
 							// Update the setting
-							this.plugin.settings.embeddingModel = value;
+							// Remove embedding model setting
 							await this.plugin.saveSettings();
 
 							// Delete existing source and folder to force re-embedding
 							await this.deleteSourceForReembedding();
 						} else {
 							// Revert the dropdown to the original value
-							dropdown.setValue(
-								this.plugin.settings.embeddingModel,
-							);
+							dropdown.setValue("letta/letta-free");
 						}
 					}
 				});
@@ -9044,9 +8834,9 @@ class LettaSettingTab extends PluginSettingTab {
 			setting.addText((text) =>
 				text
 					.setPlaceholder("letta/letta-free")
-					.setValue(this.plugin.settings.embeddingModel)
+					.setValue("letta/letta-free")
 					.onChange(async (value) => {
-						this.plugin.settings.embeddingModel = value;
+						// Remove embedding model setting
 						await this.plugin.saveSettings();
 					}),
 			);
@@ -9082,7 +8872,7 @@ class LettaSettingTab extends PluginSettingTab {
 			const { contentEl } = modal;
 
 			contentEl.createEl("p", {
-				text: `Changing the embedding model from "${this.plugin.settings.embeddingModel}" to "${newModel}" requires re-embedding all vault files.`,
+				text: `Changing the embedding model to "${newModel}" requires re-embedding all vault files.`,
 			});
 
 			contentEl.createEl("p", {
@@ -9246,10 +9036,9 @@ class LettaSettingTab extends PluginSettingTab {
 			const agentData = await this.plugin.makeRequest(
 				`/v1/agents/${this.plugin.agent.id}`,
 			);
-			const agentEmbedding = agentData?.embedding_config;
 
-			if (!agentEmbedding) {
-				new Notice("Could not retrieve agent embedding configuration");
+			if (!agentData) {
+				new Notice("Could not retrieve agent configuration");
 				return;
 			}
 
@@ -9279,10 +9068,6 @@ class LettaSettingTab extends PluginSettingTab {
 					"A collection of markdown files from an Obsidian vault. Directory structure is preserved using folder paths.",
 			};
 
-			// Only include embedding_config for non-cloud instances
-			if (!isCloudInstance) {
-				sourceBody.embedding_config = agentEmbedding;
-			}
 
 			const newSource = await this.plugin.makeRequest("/v1/folders", {
 				method: "POST",
@@ -9398,23 +9183,6 @@ class LettaSettingTab extends PluginSettingTab {
 			this.plugin.source = null;
 
 			new Notice("Creating new source...");
-
-			// Create a new source using default embedding model
-			const embeddingModels = await this.plugin.makeRequest(
-				"/v1/models/embedding",
-			);
-			const embeddingConfig =
-				embeddingModels.find(
-					(model: any) =>
-						model.handle === "letta/letta-free" ||
-						(model.handle && model.handle.includes("letta")),
-				) || embeddingModels[0];
-
-			console.log(
-				`[Letta Plugin] Using default embedding model for new source: ${embeddingConfig?.handle}`,
-			);
-
-			// Prepare source creation body
 			const isCloudInstance =
 				this.plugin.settings.lettaBaseUrl.includes("api.letta.com");
 			const sourceBody: any = {
@@ -9423,10 +9191,6 @@ class LettaSettingTab extends PluginSettingTab {
 					"A collection of markdown files from an Obsidian vault. Directory structure is preserved using folder paths.",
 			};
 
-			// Only include embedding_config for non-cloud instances
-			if (!isCloudInstance) {
-				sourceBody.embedding_config = embeddingConfig;
-			}
 
 			const newSource = await this.plugin.makeRequest("/v1/folders", {
 				method: "POST",
