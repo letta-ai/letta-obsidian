@@ -670,7 +670,6 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-
 	async connectToLetta(attempt: number = 1): Promise<boolean> {
 		const maxAttempts = 5;
 		const isCloudInstance =
@@ -751,7 +750,6 @@ export default class LettaPlugin extends Plugin {
 				await this.syncVaultToLetta();
 			}
 
-
 			return true;
 		} catch (error: any) {
 			console.error(
@@ -827,7 +825,9 @@ export default class LettaPlugin extends Plugin {
 			try {
 				if (!this.client) throw new Error("Client not initialized");
 				// Use SDK's retrieveByName method to get folder by name
-				existingSource = await this.client.folders.retrieveByName(this.settings.sourceName) as any;
+				existingSource = (await this.client.folders.retrieveByName(
+					this.settings.sourceName,
+				)) as any;
 				console.log(
 					`[Letta Plugin] Existing source response:`,
 					existingSource,
@@ -914,9 +914,13 @@ export default class LettaPlugin extends Plugin {
 
 				try {
 					if (!this.client) throw new Error("Client not initialized");
-					const newSource = await this.client.folders.create(sourceBody);
+					const newSource =
+						await this.client.folders.create(sourceBody);
 
-					this.source = { id: newSource.id!, name: newSource.name || this.settings.sourceName };
+					this.source = {
+						id: newSource.id!,
+						name: newSource.name || this.settings.sourceName,
+					};
 					console.log(
 						`[Letta Plugin] Created new source: ${newSource.id}`,
 					);
@@ -933,8 +937,12 @@ export default class LettaPlugin extends Plugin {
 						// Retry the source lookup since it was likely created by another process
 						let retrySource = null;
 						try {
-							if (!this.client) throw new Error("Client not initialized");
-							retrySource = await this.client.folders.retrieveByName(this.settings.sourceName) as any;
+							if (!this.client)
+								throw new Error("Client not initialized");
+							retrySource =
+								(await this.client.folders.retrieveByName(
+									this.settings.sourceName,
+								)) as any;
 							console.log(
 								`[Letta Plugin] Retry source response:`,
 								retrySource,
@@ -1003,9 +1011,11 @@ export default class LettaPlugin extends Plugin {
 
 		try {
 			if (!this.client) throw new Error("Client not initialized");
-			
+
 			// Try to get the specific agent by ID
-			const existingAgent = await this.client.agents.retrieve(this.settings.agentId);
+			const existingAgent = await this.client.agents.retrieve(
+				this.settings.agentId,
+			);
 
 			if (existingAgent) {
 				this.agent = { id: existingAgent.id, name: existingAgent.name };
@@ -1172,7 +1182,9 @@ export default class LettaPlugin extends Plugin {
 
 			// Get existing files from Letta
 			if (!this.client) throw new Error("Client not initialized");
-			const existingFiles = await this.client.folders.files.list(this.source.id);
+			const existingFiles = await this.client.folders.files.list(
+				this.source.id,
+			);
 			const existingFilesMap = new Map();
 			existingFiles.forEach((file: any) => {
 				existingFilesMap.set(file.file_name, file);
@@ -1273,7 +1285,7 @@ export default class LettaPlugin extends Plugin {
 
 							const queryParams = new URLSearchParams({
 								name: file.path,
-								duplicate_handling: 'replace'
+								duplicate_handling: "replace",
 							});
 
 							await this.makeRequest(
@@ -1353,7 +1365,9 @@ export default class LettaPlugin extends Plugin {
 
 				// Check if file exists in Letta and get metadata
 				if (!this.client) throw new Error("Client not initialized");
-				const existingFiles = await this.client.folders.files.list(this.source.id);
+				const existingFiles = await this.client.folders.files.list(
+					this.source.id,
+				);
 				const existingFile = existingFiles.find(
 					(f: any) => f.file_name === file.path,
 				);
@@ -1383,17 +1397,20 @@ export default class LettaPlugin extends Plugin {
 
 				const queryParams = new URLSearchParams({
 					name: file.path,
-					duplicate_handling: 'replace'
+					duplicate_handling: "replace",
 				});
 
-				await this.makeRequest(`/v1/folders/${this.source.id}/upload?${queryParams}`, {
-					method: "POST",
-					headers: {
-						"Content-Type": `multipart/form-data; boundary=${boundary}`,
+				await this.makeRequest(
+					`/v1/folders/${this.source.id}/upload?${queryParams}`,
+					{
+						method: "POST",
+						headers: {
+							"Content-Type": `multipart/form-data; boundary=${boundary}`,
+						},
+						body: multipartBody,
+						isFileUpload: true,
 					},
-					body: multipartBody,
-					isFileUpload: true,
-				});
+				);
 
 				// Only show success status if called independently
 				if (!isCalledFromOpenFile) {
@@ -1488,17 +1505,20 @@ export default class LettaPlugin extends Plugin {
 
 				const queryParams = new URLSearchParams({
 					name: file.path,
-					duplicate_handling: 'replace'
+					duplicate_handling: "replace",
 				});
 
-				await this.makeRequest(`/v1/folders/${this.source.id}/upload?${queryParams}`, {
-					method: "POST",
-					headers: {
-						"Content-Type": `multipart/form-data; boundary=${boundary}`,
+				await this.makeRequest(
+					`/v1/folders/${this.source.id}/upload?${queryParams}`,
+					{
+						method: "POST",
+						headers: {
+							"Content-Type": `multipart/form-data; boundary=${boundary}`,
+						},
+						body: multipartBody,
+						isFileUpload: true,
 					},
-					body: multipartBody,
-					isFileUpload: true,
-				});
+				);
 			});
 		} catch (error) {
 			console.error("Failed to sync file change:", error);
@@ -1530,7 +1550,9 @@ export default class LettaPlugin extends Plugin {
 			}
 
 			if (!this.client) throw new Error("Client not initialized");
-			const existingFiles = await this.client.folders.files.list(this.source.id);
+			const existingFiles = await this.client.folders.files.list(
+				this.source.id,
+			);
 			const existingFile = existingFiles.find(
 				(f: any) => f.file_name === file.path,
 			);
@@ -1560,7 +1582,9 @@ export default class LettaPlugin extends Plugin {
 
 		try {
 			if (!this.client) throw new Error("Client not initialized");
-			const existingFiles = await this.client.folders.files.list(this.source.id);
+			const existingFiles = await this.client.folders.files.list(
+				this.source.id,
+			);
 			const existingFile = existingFiles.find(
 				(f: any) => f.file_name === file.path,
 			);
@@ -1622,7 +1646,9 @@ export default class LettaPlugin extends Plugin {
 
 		try {
 			if (!this.client) throw new Error("Client not initialized");
-			const existingFiles = await this.client.folders.files.list(this.source.id);
+			const existingFiles = await this.client.folders.files.list(
+				this.source.id,
+			);
 			const existingFile = existingFiles.find(
 				(f: any) => f.file_name === file.path,
 			);
@@ -1841,18 +1867,24 @@ export default class LettaPlugin extends Plugin {
 		if (!this.agent) throw new Error("Agent not connected");
 		if (!this.client) throw new Error("Client not initialized");
 
-		console.log('[Letta NonStream] Sending message to agent:', this.agent.id);
-		const response = await this.client.agents.messages.create(this.agent.id, {
-			messages: [
-				{
-					role: "user",
-					content: message,
-				},
-			],
-		});
-		
-		console.log('[Letta NonStream] Response received:', response);
-		console.log('[Letta NonStream] Messages:', response.messages);
+		console.log(
+			"[Letta NonStream] Sending message to agent:",
+			this.agent.id,
+		);
+		const response = await this.client.agents.messages.create(
+			this.agent.id,
+			{
+				messages: [
+					{
+						role: "user",
+						content: message,
+					},
+				],
+			},
+		);
+
+		console.log("[Letta NonStream] Response received:", response);
+		console.log("[Letta NonStream] Messages:", response.messages);
 		return (response.messages || []) as any;
 	}
 
@@ -1867,7 +1899,10 @@ export default class LettaPlugin extends Plugin {
 
 		try {
 			// Use the SDK's streaming API
-			console.log('[Letta Stream] Starting stream for agent:', this.agent.id);
+			console.log(
+				"[Letta Stream] Starting stream for agent:",
+				this.agent.id,
+			);
 			const stream = await this.client.agents.messages.createStream(
 				this.agent.id,
 				{
@@ -1877,37 +1912,42 @@ export default class LettaPlugin extends Plugin {
 							content: message,
 						},
 					],
-				}
+					streamTokens: true,
+				},
 			);
-			console.log('[Letta Stream] Stream created successfully:', stream);
+			console.log("[Letta Stream] Stream created successfully:", stream);
 
 			// Process the stream
 			for await (const chunk of stream) {
-				console.log('[Letta Stream] Chunk received:', chunk);
-				console.log('[Letta Stream] Chunk type:', typeof chunk);
-				
+				console.log("[Letta Stream] Chunk received:", chunk);
+				console.log("[Letta Stream] Chunk type:", typeof chunk);
+
 				// Check if this is the [DONE] signal
-				if ((chunk as any) === '[DONE]' || (typeof chunk === 'string' && (chunk as string).includes('[DONE]'))) {
-					console.log('[Letta Stream] Received DONE signal');
+				if (
+					(chunk as any) === "[DONE]" ||
+					(typeof chunk === "string" &&
+						(chunk as string).includes("[DONE]"))
+				) {
+					console.log("[Letta Stream] Received DONE signal");
 					onComplete();
 					return;
 				}
-				
+
 				onMessage(chunk);
 			}
 
 			// Stream completed successfully (if we exit loop normally)
-			console.log('[Letta Stream] Stream ended normally');
+			console.log("[Letta Stream] Stream ended normally");
 			onComplete();
 		} catch (error: any) {
-			console.error('[Letta Stream] Stream error:', error);
-			console.error('[Letta Stream] Error details:', { 
-				message: error.message, 
+			console.error("[Letta Stream] Stream error:", error);
+			console.error("[Letta Stream] Error details:", {
+				message: error.message,
 				status: error.statusCode || error.status,
 				name: error.name,
-				stack: error.stack 
+				stack: error.stack,
 			});
-			
+
 			// Check if this is a CORS-related error and create appropriate error message
 			if (
 				error instanceof TypeError &&
@@ -1925,8 +1965,11 @@ export default class LettaPlugin extends Plugin {
 				if (error.statusCode === 429) {
 					// This is a genuine rate limit error
 					onError(new Error(`HTTP 429: ${error.message}`));
-				} else if (error.statusCode === 0 || 
-						  (error.statusCode === 429 && !error.message.includes("rate"))) {
+				} else if (
+					error.statusCode === 0 ||
+					(error.statusCode === 429 &&
+						!error.message.includes("rate"))
+				) {
 					// Likely a CORS error masquerading as another error
 					const corsError = new Error(
 						"CORS_ERROR: Cross-origin request blocked. Streaming not available from this origin. Falling back to non-streaming API.",
@@ -1947,6 +1990,7 @@ class LettaChatView extends ItemView {
 	chatContainer: HTMLElement;
 	typingIndicator: HTMLElement;
 	heartbeatTimeout: NodeJS.Timeout | null = null;
+	header: HTMLElement;
 	inputContainer: HTMLElement;
 	messageInput: HTMLTextAreaElement;
 	sendButton: HTMLButtonElement;
@@ -1978,9 +2022,9 @@ class LettaChatView extends ItemView {
 		container.addClass("letta-chat-view");
 
 		// Header with connection status
-		const header = container.createEl("div", { cls: "letta-chat-header" });
+		this.header = container.createEl("div", { cls: "letta-chat-header" });
 
-		const titleSection = header.createEl("div", {
+		const titleSection = this.header.createEl("div", {
 			cls: "letta-chat-title-section",
 		});
 		const titleContainer = titleSection.createEl("div", {
@@ -2030,7 +2074,7 @@ class LettaChatView extends ItemView {
 		adeButton.addClass("letta-config-button");
 		adeButton.addEventListener("click", () => this.openInADE());
 
-		const statusIndicator = header.createEl("div", {
+		const statusIndicator = this.header.createEl("div", {
 			cls: "letta-status-indicator",
 		});
 		this.statusDot = statusIndicator.createEl("span", {
@@ -2854,7 +2898,8 @@ class LettaChatView extends ItemView {
 
 				// Check if this is a user_message containing login JSON
 				if (
-					(message.message_type === "user_message" || message.messageType === "user_message") &&
+					(message.message_type === "user_message" ||
+						message.messageType === "user_message") &&
 					message.content &&
 					typeof message.content === "string"
 				) {
@@ -3063,7 +3108,8 @@ class LettaChatView extends ItemView {
 
 		// Check if this is a user_message containing login JSON
 		if (
-			(message.message_type === "user_message" || message.messageType === "user_message") &&
+			(message.message_type === "user_message" ||
+				message.messageType === "user_message") &&
 			message.content &&
 			typeof message.content === "string"
 		) {
@@ -3249,6 +3295,14 @@ class LettaChatView extends ItemView {
 				this.updateModelButton();
 			}
 
+				// Show header and input when connected
+			if (this.header) {
+				this.header.style.display = "flex";
+			}
+			if (this.inputContainer) {
+				this.inputContainer.style.display = "flex";
+			}
+
 			// Remove disconnected/no agent messages if they exist
 			this.removeDisconnectedMessage();
 			this.removeNoAgentMessage();
@@ -3270,6 +3324,14 @@ class LettaChatView extends ItemView {
 				this.modelButton.textContent = "No Agent";
 			}
 
+			// Show header and input when connected to server
+			if (this.header) {
+				this.header.style.display = "flex";
+			}
+			if (this.inputContainer) {
+				this.inputContainer.style.display = "flex";
+			}
+
 			// Remove disconnected message but show no agent message
 			this.removeDisconnectedMessage();
 			await this.showNoAgentMessage();
@@ -3284,6 +3346,14 @@ class LettaChatView extends ItemView {
 
 			if (this.modelButton) {
 				this.modelButton.textContent = "N/A";
+			}
+
+			// Hide header and input when disconnected
+			if (this.header) {
+				this.header.style.display = "none";
+			}
+			if (this.inputContainer) {
+				this.inputContainer.style.display = "none";
 			}
 
 			// Show disconnected message in chat area
@@ -3555,7 +3625,6 @@ class LettaChatView extends ItemView {
 			}
 		}
 
-
 		// Create new agent with user configuration and corrected defaults
 		const agentBody: any = {
 			name: agentConfig.name,
@@ -3571,7 +3640,6 @@ class LettaChatView extends ItemView {
 			// Specify the correct memory tools
 			tools: ["memory_replace", "memory_insert", "memory_rethink"],
 		};
-
 
 		// Only include project for cloud instances
 		if (isCloudInstance && selectedProject) {
@@ -3831,11 +3899,13 @@ class LettaChatView extends ItemView {
 		}
 
 		if (!this.plugin.client) throw new Error("Client not initialized");
-		
+
 		// Get current agent details and blocks
 		const [agentDetails, blocks] = await Promise.all([
 			this.plugin.makeRequest(`/v1/agents/${this.plugin.agent!.id}`),
-			this.plugin.makeRequest(`/v1/agents/${this.plugin.agent!.id}/core-memory/blocks`),
+			this.plugin.makeRequest(
+				`/v1/agents/${this.plugin.agent!.id}/core-memory/blocks`,
+			),
 		]);
 
 		const modal = new AgentPropertyModal(
@@ -5048,13 +5118,18 @@ class LettaChatView extends ItemView {
 		}
 
 		// Filter out login messages - check both direct type and content containing login JSON
-		if (message.type === "login" || message.message_type === "login" || message.messageType === "login") {
+		if (
+			message.type === "login" ||
+			message.message_type === "login" ||
+			message.messageType === "login"
+		) {
 			return;
 		}
 
 		// Check if this is a user_message containing login JSON
 		if (
-			(message.message_type === "user_message" || message.messageType === "user_message") &&
+			(message.message_type === "user_message" ||
+				message.messageType === "user_message") &&
 			message.content &&
 			typeof message.content === "string"
 		) {
@@ -5069,7 +5144,10 @@ class LettaChatView extends ItemView {
 		}
 
 		// Handle usage statistics
-		if (message.message_type === "usage_statistics" || message.messageType === "usage_statistics") {
+		if (
+			message.message_type === "usage_statistics" ||
+			message.messageType === "usage_statistics"
+		) {
 			// Received usage statistics
 			this.addUsageStatistics(message);
 			return;
@@ -8028,7 +8106,11 @@ class ModelSwitcherModal extends Modal {
 			// Status (current indicator)
 			const statusCell = row.createEl("td", { cls: "model-cell-status" });
 			const currentModel = this.currentAgent.llm_config?.model;
-			if (currentModel === model.model) {
+			const currentProvider = this.currentAgent.llm_config?.provider_name;
+			const isCurrentModel =
+				currentModel === model.model &&
+				currentProvider === model.provider_name;
+			if (isCurrentModel) {
 				const currentBadge = statusCell.createEl("span", {
 					text: "✓ Current",
 					cls: "model-current-badge",
@@ -8051,7 +8133,7 @@ class ModelSwitcherModal extends Modal {
 			}
 
 			// Click handler - only for non-current models
-			if (currentModel !== model.model) {
+			if (!isCurrentModel) {
 				row.addEventListener("click", () => this.selectModel(model));
 				row.style.cursor = "pointer";
 
@@ -8094,7 +8176,9 @@ class ModelSwitcherModal extends Modal {
 				},
 			);
 
-			new Notice(`Model updated to ${model.model}`);
+			new Notice(
+				`Model updated to ${model.provider_name}/${model.model}`,
+			);
 
 			// Update the current agent data
 			this.currentAgent.llm_config = updateData.llm_config;
@@ -8650,7 +8734,6 @@ class LettaSettingTab extends PluginSettingTab {
 			);
 	}
 
-
 	async addEmbeddingModelDropdown(setting: Setting) {
 		try {
 			// Fetch available embedding models
@@ -8932,11 +9015,14 @@ class LettaSettingTab extends PluginSettingTab {
 					"A collection of markdown files from an Obsidian vault. Directory structure is preserved using folder paths.",
 			};
 
-
 			if (!this.plugin.client) throw new Error("Client not initialized");
-			const newSource = await this.plugin.client.folders.create(sourceBody);
+			const newSource =
+				await this.plugin.client.folders.create(sourceBody);
 
-			this.plugin.source = { id: newSource.id!, name: newSource.name || this.plugin.settings.sourceName };
+			this.plugin.source = {
+				id: newSource.id!,
+				name: newSource.name || this.plugin.settings.sourceName,
+			};
 
 			// Only sync if auto-sync is enabled
 			if (this.plugin.settings.autoSync) {
@@ -9053,11 +9139,14 @@ class LettaSettingTab extends PluginSettingTab {
 					"A collection of markdown files from an Obsidian vault. Directory structure is preserved using folder paths.",
 			};
 
-
 			if (!this.plugin.client) throw new Error("Client not initialized");
-			const newSource = await this.plugin.client.folders.create(sourceBody);
+			const newSource =
+				await this.plugin.client.folders.create(sourceBody);
 
-			this.plugin.source = { id: newSource.id!, name: newSource.name || this.plugin.settings.sourceName };
+			this.plugin.source = {
+				id: newSource.id!,
+				name: newSource.name || this.plugin.settings.sourceName,
+			};
 
 			new Notice(
 				"Source recreated successfully. You can now sync your vault files.",
@@ -9073,7 +9162,7 @@ class LettaSettingTab extends PluginSettingTab {
 	async showAgentSelector(): Promise<void> {
 		try {
 			if (!this.plugin.client) throw new Error("Client not initialized");
-			
+
 			// Fetch agents from server
 			const agents = await this.plugin.client.agents.list();
 
