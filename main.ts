@@ -120,6 +120,7 @@ interface LettaModel {
 	model_wrapper?: string;
 	temperature?: number;
 	max_tokens?: number;
+	handle?: string;
 }
 
 interface LettaSource {
@@ -2689,16 +2690,38 @@ class LettaChatView extends ItemView {
 			if (!filtered || filtered.length < 10) {
 				// Minimal content after filtering, using original response
 				// Return original content instead of placeholder
-				// Unescape newlines to fix markdown rendering
-				return content.replace(/\\n/g, "\n");
+				// Comprehensive escape handling
+				return this.processEscapeSequences(content);
 			}
 
-			// Unescape newlines to fix markdown rendering
-			return filtered.replace(/\\n/g, "\n");
+			// Comprehensive escape handling
+			return this.processEscapeSequences(filtered);
 		}
 
-		// Unescape newlines to fix markdown rendering
-		return content.replace(/\\n/g, "\n");
+		// Comprehensive escape handling
+		return this.processEscapeSequences(content);
+	}
+
+	// Process common escape sequences in content
+	processEscapeSequences(content: string): string {
+		if (!content) return content;
+
+		return content
+			// Handle escaped newlines
+			.replace(/\\n/g, "\n")
+			// Handle newline-dash patterns (common in lists)
+			.replace(/\\n-/g, "\n- ")
+			// Handle escaped tabs
+			.replace(/\\t/g, "\t")
+			// Handle escaped quotes
+			.replace(/\\"/g, '"')
+			.replace(/\\'/g, "'")
+			// Handle escaped backslashes
+			.replace(/\\\\/g, "\\")
+			// Handle literal \n- patterns that might appear in text
+			.replace(/\\n\s*-/g, "\n- ")
+			// Clean up any double newlines created
+			.replace(/\n{3,}/g, "\n\n");
 	}
 
 	// Format tool results with JSON pretty-printing when possible
@@ -4054,9 +4077,9 @@ class LettaChatView extends ItemView {
 
 				await this.plugin.sendMessageToAgentStream(
 					message,
-					(message) => {
+					async (message) => {
 						// Handle each streaming message
-						this.processStreamingMessage(message);
+						await this.processStreamingMessage(message);
 					},
 					async (error) => {
 						// Handle streaming error
@@ -5087,7 +5110,7 @@ class LettaChatView extends ItemView {
 		}
 	}
 
-	processStreamingMessage(message: any) {
+	async processStreamingMessage(message: any) {
 		// Handle system messages - capture system_alert for hidden viewing, skip heartbeats
 		if (
 			message.type === "system_alert" ||
@@ -5215,7 +5238,7 @@ class LettaChatView extends ItemView {
 					// Filter out system prompt content
 					const filteredContent =
 						this.filterSystemPromptContent(content);
-					this.updateOrCreateAssistantMessage(filteredContent);
+					await this.updateOrCreateAssistantMessage(filteredContent);
 				} else {
 					console.warn(
 						"[Letta Plugin] Streaming assistant message has no recognizable content field:",
@@ -5251,8 +5274,10 @@ class LettaChatView extends ItemView {
 		this.currentReasoningContent += reasoning;
 	}
 
-	updateOrCreateAssistantMessage(content: string) {
-		this.currentAssistantContent += content;
+	async updateOrCreateAssistantMessage(content: string) {
+		// Process escape sequences in the chunk before accumulating
+		const processedContent = this.processEscapeSequences(content);
+		this.currentAssistantContent += processedContent;
 
 		// Create or update assistant message
 		if (!this.currentAssistantMessageEl) {
@@ -5351,51 +5376,8 @@ class LettaChatView extends ItemView {
 			".letta-message-content",
 		);
 		if (contentEl) {
-			// Apply the same markdown formatting as in addMessage
-			let formattedContent = this.currentAssistantContent
-				.trim()
-				.replace(/\n{3,}/g, "\n\n")
-				.replace(/^### (.+)$/gm, "<h3>$1</h3>")
-				.replace(/^## (.+)$/gm, "<h2>$1</h2>")
-				.replace(/^# (.+)$/gm, "<h1>$1</h1>")
-				.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-				.replace(/\*(.*?)\*/g, "<em>$1</em>")
-				.replace(/`([^`]+)`/g, "<code>$1</code>")
-				.replace(
-					/^(\d+)\.\s+(.+)$/gm,
-					'<li class="numbered-list">$2</li>',
-				)
-				.replace(/^[•*-]\s+(.+)$/gm, "<li>$1</li>")
-				.replace(/\n\n/g, "</p><p>")
-				.replace(/\n/g, "<br>");
-
-			// Wrap consecutive numbered list items in <ol> tags
-			formattedContent = formattedContent.replace(
-				/(<li class="numbered-list">.*?<\/li>)(\s*<br>\s*<li class="numbered-list">.*?<\/li>)*/g,
-				(match) => {
-					const cleanMatch = match.replace(/<br>\s*/g, "");
-					return "<ol>" + cleanMatch + "</ol>";
-				},
-			);
-
-			// Wrap consecutive regular list items in <ul> tags
-			formattedContent = formattedContent.replace(
-				/(<li>(?!.*class="numbered-list").*?<\/li>)(\s*<br>\s*<li>(?!.*class="numbered-list").*?<\/li>)*/g,
-				(match) => {
-					const cleanMatch = match.replace(/<br>\s*/g, "");
-					return "<ul>" + cleanMatch + "</ul>";
-				},
-			);
-
-			// Wrap in paragraphs if needed
-			if (
-				formattedContent.includes("</p><p>") &&
-				!formattedContent.startsWith("<")
-			) {
-				formattedContent = "<p>" + formattedContent + "</p>";
-			}
-
-			contentEl.innerHTML = formattedContent;
+			// Use robust markdown rendering instead of manual HTML formatting
+			await this.renderMarkdownContent(contentEl as HTMLElement, this.currentAssistantContent);
 		}
 
 		// Scroll to bottom
@@ -8154,7 +8136,7 @@ class ModelSwitcherModal extends Modal {
 
 	async selectModel(model: LettaModel) {
 		try {
-			// Update the agent's LLM config
+			// Update the agent's LLM config while preserving existing values
 			const updateData = {
 				llm_config: {
 					...this.currentAgent.llm_config,
@@ -8165,6 +8147,7 @@ class ModelSwitcherModal extends Modal {
 					context_window: model.context_window,
 					model_endpoint: model.model_endpoint,
 					model_wrapper: model.model_wrapper,
+					handle: model.handle || `${model.provider_name}/${model.model}`,
 				},
 			};
 
