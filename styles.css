@@ -3388,9 +3388,13 @@
 }
 
 .letta-note-proposal-success {
-    background: var(--background-modifier-success);
-    color: var(--text-success);
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: var(--color-green);
+    color: white;
+    border-radius: 6px;
     border-left: 3px solid var(--color-green);
+    font-weight: 500;
 }
 
 .letta-note-proposal-error {
