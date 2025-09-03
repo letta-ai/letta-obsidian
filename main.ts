@@ -5499,6 +5499,11 @@ class LettaChatView extends ItemView {
 				cls: "letta-button letta-button-accept"
 			});
 			
+			const editButton = buttonContainer.createEl("button", {
+				text: "Edit",
+				cls: "letta-button letta-button-edit"
+			});
+			
 			const rejectButton = buttonContainer.createEl("button", {
 				text: "Reject", 
 				cls: "letta-button letta-button-reject"
@@ -5507,6 +5512,10 @@ class LettaChatView extends ItemView {
 			// Add button event handlers
 			acceptButton.addEventListener("click", async () => {
 				await this.acceptNoteProposal(enhancement, finalProposal, tempPath);
+			});
+
+			editButton.addEventListener("click", async () => {
+				await this.editNoteProposal(enhancement, finalProposal, tempPath);
 			});
 
 			rejectButton.addEventListener("click", async () => {
@@ -5610,6 +5619,11 @@ class LettaChatView extends ItemView {
 				cls: "letta-button letta-button-accept"
 			});
 			
+			const editButton = buttonContainer.createEl("button", {
+				text: "Edit",
+				cls: "letta-button letta-button-edit"
+			});
+			
 			const rejectButton = buttonContainer.createEl("button", {
 				text: "Reject", 
 				cls: "letta-button letta-button-reject"
@@ -5622,6 +5636,10 @@ class LettaChatView extends ItemView {
 			// Add button event handlers
 			acceptButton.addEventListener("click", async () => {
 				await this.acceptNoteProposal(container, proposal, finalTempPath);
+			});
+
+			editButton.addEventListener("click", async () => {
+				await this.editNoteProposal(container, proposal, finalTempPath);
 			});
 
 			rejectButton.addEventListener("click", async () => {
@@ -5718,6 +5736,60 @@ class LettaChatView extends ItemView {
 		} catch (error) {
 			console.error("Failed to accept note proposal:", error);
 			this.showNoteProposalError(container, `Failed to create note: ${error.message}`);
+		}
+	}
+
+	async editNoteProposal(container: HTMLElement, proposal: ObsidianNoteProposal, tempPath: string) {
+		try {
+			// Create and show the editing modal
+			const modal = new NoteProposalModal(this.app, proposal, async (accepted: boolean, editedProposal?: ObsidianNoteProposal) => {
+				if (accepted && editedProposal) {
+					// Update the temp file with the edited content
+					await this.updateTempFileWithEditedProposal(tempPath, editedProposal);
+					// Accept the edited proposal
+					await this.acceptNoteProposal(container, editedProposal, tempPath);
+				}
+				// If not accepted, modal just closes without doing anything
+			});
+			modal.open();
+		} catch (error) {
+			console.error("Failed to open edit modal:", error);
+			this.showNoteProposalError(container, `Failed to open editor: ${error.message}`);
+		}
+	}
+
+	async updateTempFileWithEditedProposal(tempPath: string, proposal: ObsidianNoteProposal) {
+		try {
+			// Create updated content with the same format as createTempNoteForProposal
+			let content = proposal.content || "";
+			
+			// Add tags as hashtags at the bottom
+			if (proposal.tags && proposal.tags.length > 0) {
+				content += "\n\n";
+				const tagString = `#letta ${proposal.tags.map(tag => `#${tag}`).join(" ")}`;
+				content += tagString;
+			} else {
+				content += "\n\n#letta";
+			}
+			
+			// Add timestamp and agent info at the bottom
+			const timestamp = new Date().toISOString();
+			const agentId = this.plugin.agent?.id || "unknown";
+			content += `\n\n<small>Created: ${timestamp} | Agent: \`${agentId}\`</small>`;
+
+			// Update the temp file
+			const tempFile = this.app.vault.getAbstractFileByPath(tempPath);
+			if (tempFile) {
+				await this.app.vault.modify(tempFile as any, content);
+				console.log("[Letta Plugin] Updated temp file with edited content");
+			} else {
+				// Create new temp file if it doesn't exist
+				await this.app.vault.create(tempPath, content);
+				console.log("[Letta Plugin] Created new temp file with edited content");
+			}
+		} catch (error) {
+			console.error("Failed to update temp file:", error);
+			throw error;
 		}
 	}
 

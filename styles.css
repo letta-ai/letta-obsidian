@@ -3368,6 +3368,18 @@
     border-color: var(--interactive-accent-hover);
 }
 
+.letta-button-edit {
+    background: transparent;
+    color: var(--text-normal);
+    border-color: var(--background-modifier-border);
+}
+
+.letta-button-edit:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+    border-color: var(--background-modifier-border-hover);
+}
+
 .letta-button-reject {
     background: transparent;
     color: var(--text-muted);
