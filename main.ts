@@ -76,6 +76,9 @@ interface LettaPluginSettings {
 	allowAgentCreation: boolean; // Control whether agent creation modal can be shown
 	askBeforeFolderCreation: boolean; // Ask for consent before creating Letta folders
 	askBeforeFolderAttachment: boolean; // Ask for consent before attaching folders to agents
+	enableCustomTools: boolean; // Control whether to register custom Obsidian tools
+	askBeforeToolRegistration: boolean; // Ask for consent before registering custom tools
+	defaultNoteFolder: string; // Default folder for new notes created via custom tools
 }
 
 const DEFAULT_SETTINGS: LettaPluginSettings = {
@@ -94,6 +97,9 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	allowAgentCreation: true, // Default to enabling agent creation modal
 	askBeforeFolderCreation: true, // Default to asking before creating folders
 	askBeforeFolderAttachment: true, // Default to asking before attaching folders to agents
+	enableCustomTools: true, // Default to enabling custom tools
+	askBeforeToolRegistration: true, // Default to asking before registering tools
+	defaultNoteFolder: "", // Default to root folder
 };
 
 interface LettaAgent {
@@ -126,6 +132,14 @@ interface LettaModel {
 interface LettaSource {
 	id: string;
 	name: string;
+}
+
+interface ObsidianNoteProposal {
+	action: "create_note";
+	title: string;
+	content: string;
+	folder?: string;
+	tags?: string[];
 }
 
 interface LettaMessage {
@@ -671,7 +685,7 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-	async connectToLetta(attempt: number = 1): Promise<boolean> {
+	async connectToLetta(attempt: number = 1, progressCallback?: (message: string) => void): Promise<boolean> {
 		const maxAttempts = 5;
 		const isCloudInstance =
 			this.settings.lettaBaseUrl.includes("api.letta.com");
@@ -708,22 +722,25 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		try {
-			this.updateStatusBar(
-				attempt === 1
-					? "Connecting..."
-					: `Retrying... (${attempt}/${maxAttempts})`,
-			);
+			const progressMessage = attempt === 1
+				? "Connecting to server..."
+				: `Retrying connection... (${attempt}/${maxAttempts})`;
+			
+			this.updateStatusBar(progressMessage);
+			progressCallback?.(progressMessage);
 
 			// Test connection by trying to list agents (this endpoint should exist)
 			if (!this.client) throw new Error("Client not initialized");
 			await this.client.agents.list();
 
 			// Setup source and agent
+			progressCallback?.("Setting up data source...");
 			await this.setupSource();
 
 			// Try to setup agent if one is configured
 			if (this.settings.agentId) {
 				try {
+					progressCallback?.("Loading agent configuration...");
 					await this.setupAgent();
 				} catch (agentError) {
 					console.error(
@@ -738,6 +755,7 @@ export default class LettaPlugin extends Plugin {
 			}
 
 			this.updateStatusBar("Connected");
+			progressCallback?.("Connection successful!");
 
 			// Only show success notice on first attempt or after retries
 			if (attempt === 1) {
@@ -748,6 +766,7 @@ export default class LettaPlugin extends Plugin {
 
 			// Sync vault on startup if configured
 			if (this.settings.syncOnStartup) {
+				progressCallback?.("Syncing vault files...");
 				await this.syncVaultToLetta();
 			}
 
@@ -795,18 +814,20 @@ export default class LettaPlugin extends Plugin {
 				); // Cap at 10 seconds
 
 				// Update status to show retry countdown
-				this.updateStatusBar(
-					`Retry in ${Math.ceil(backoffMs / 1000)}s...`,
-				);
+				const retryMessage = `Retry in ${Math.ceil(backoffMs / 1000)}s...`;
+				this.updateStatusBar(retryMessage);
+				progressCallback?.(retryMessage);
 
 				// Wait for backoff period
 				await new Promise((resolve) => setTimeout(resolve, backoffMs));
 
 				// Recursive retry
-				return await this.connectToLetta(attempt + 1);
+				return await this.connectToLetta(attempt + 1, progressCallback);
 			} else {
 				// All attempts failed
-				this.updateStatusBar("Connection failed");
+				const failureMessage = "Connection failed";
+				this.updateStatusBar(failureMessage);
+				progressCallback?.(failureMessage);
 				new Notice(
 					`Failed to connect to Letta after ${maxAttempts} attempts: ${error.message}`,
 				);
@@ -1063,6 +1084,11 @@ export default class LettaPlugin extends Plugin {
 					});
 				} else {
 					// Folder already attached to agent
+				}
+
+				// Register Obsidian tools after successful agent setup (if enabled)
+				if (this.settings.enableCustomTools) {
+					await this.registerObsidianTools();
 				}
 			} else {
 				// Agent with configured ID not found, clear the invalid ID
@@ -1982,6 +2008,210 @@ export default class LettaPlugin extends Plugin {
 			} else {
 				onError(error);
 			}
+		}
+	}
+
+	async registerObsidianTools(): Promise<boolean> {
+		if (!this.client) {
+			console.error("Cannot register tools: Letta client not initialized");
+			return false;
+		}
+		
+		const toolName = "propose_obsidian_note";
+		
+		// First check if the tool already exists
+		console.log(`[Letta Plugin] Checking if tool '${toolName}' already exists...`);
+		let existingTool: any = null;
+		try {
+			const tools = await this.client.tools.list({ name: toolName });
+			existingTool = tools.find((tool: any) => tool.name === toolName);
+			if (existingTool) {
+				console.log(`[Letta Plugin] Tool '${toolName}' already exists with ID: ${existingTool.id}`);
+			}
+		} catch (error) {
+			console.error("Failed to check existing tools:", error);
+		}
+
+		// If tool exists and we have an agent, check if it's already attached
+		if (existingTool && this.agent) {
+			console.log(`[Letta Plugin] Checking if tool is already attached to agent ${this.agent.id}...`);
+			try {
+				const agentDetails = await this.client.agents.retrieve(this.agent.id);
+				const currentTools = agentDetails.tools || [];
+				
+				const isToolAttached = currentTools.some((t: any) => 
+					t.name === toolName || t === toolName || 
+					(typeof t === 'object' && t.id === existingTool.id)
+				);
+				
+				if (isToolAttached) {
+					console.log(`[Letta Plugin] Tool '${toolName}' already exists and is attached to agent. Nothing to do.`);
+					return true; // Success - tool is already fully configured
+				} else {
+					console.log(`[Letta Plugin] Tool exists but not attached to agent. Will attach it.`);
+				}
+			} catch (error) {
+				console.error("Failed to check agent tools:", error);
+			}
+		}
+
+		const proposeNoteToolCode = `
+from typing import Optional, List
+
+def propose_obsidian_note(
+    title: str,
+    content: str,
+    folder: Optional[str] = None,
+    tags: Optional[List[str]] = None
+) -> str:
+    """
+    Propose a new Obsidian note to be created. The user will review and can accept/modify/reject.
+    
+    Args:
+        title: The title/filename for the note (without .md extension)
+        content: The markdown content of the note
+        folder: The folder path where the note should be created (e.g., 'journal/2024')
+        tags: List of tags to add to the note's frontmatter
+    
+    Returns:
+        str: JSON string with the proposed note structure for the Obsidian plugin to handle
+    """
+    import json
+    from datetime import datetime
+    
+    # Build frontmatter if tags are provided
+    frontmatter = ""
+    if tags:
+        frontmatter = "---\\n"
+        frontmatter += f"tags: {json.dumps(tags)}\\n"
+        frontmatter += f"created: {datetime.now().isoformat()}\\n"
+        frontmatter += "---\\n\\n"
+    
+    # Combine frontmatter with content
+    full_content = frontmatter + content if frontmatter else content
+    
+    # Return structured data that the plugin can parse
+    note_proposal = {
+        "action": "create_note",
+        "title": title,
+        "content": full_content,
+        "folder": folder or "",
+        "tags": tags or []
+    }
+    
+    return json.dumps(note_proposal)
+`;
+
+		// Now check if user consent is required (only if we need to create or attach the tool)
+		if (this.settings.askBeforeToolRegistration) {
+			console.log("[Letta Plugin] User consent required - showing modal...");
+			const consentModal = new ToolRegistrationConsentModal(this.app, this);
+			const userConsent = await consentModal.show();
+			if (!userConsent) {
+				console.log("[Letta Plugin] User declined tool registration");
+				return false;
+			}
+		}
+
+		let tool = existingTool;
+		
+		try {
+			if (!existingTool) {
+				// Tool doesn't exist, create it
+				console.log(`[Letta Plugin] Creating new tool '${toolName}'...`);
+				tool = await this.client.tools.upsert({
+					name: toolName,
+					sourceCode: proposeNoteToolCode,
+					description: "Propose a new Obsidian note to be created with title, content, folder, and tags",
+					tags: ["obsidian", "note-creation"]
+				} as any);
+				console.log("Successfully created Obsidian note creation tool:", tool);
+			} else {
+				console.log(`[Letta Plugin] Using existing tool '${toolName}' with ID: ${existingTool.id}`);
+			}
+
+			// Attach tool to current agent if available and not already attached
+			if (this.agent && tool && tool.id) {
+				try {
+					// If we had an existing tool that was already attached, we would have returned early
+					// So if we reach here, we need to attach the tool
+					console.log(`[Letta Plugin] Attaching tool '${toolName}' to agent ${this.agent.id}...`);
+					await this.client.agents.tools.attach(this.agent.id, tool.id);
+					console.log(`[Letta Plugin] Successfully attached '${toolName}' tool to agent`);
+				} catch (error) {
+					console.error("Failed to attach tool to agent:", error);
+					// Log more details for debugging
+					console.error("Error details:", {
+						agentId: this.agent.id,
+						toolId: tool.id,
+						errorMessage: error.message
+					});
+				}
+			}
+
+			const actionMessage = existingTool 
+				? "Obsidian note creation tool attached successfully"
+				: "Obsidian note creation tool registered successfully";
+			new Notice(actionMessage);
+			return true;
+		} catch (error) {
+			console.error("Failed to register Obsidian tools:", error);
+			new Notice("Failed to register note creation tool");
+			return false;
+		}
+	}
+
+	async createNoteFromProposal(proposal: ObsidianNoteProposal): Promise<string> {
+		// Sanitize the title to ensure it's a valid filename
+		const sanitizedTitle = proposal.title.replace(/[\\/:*?"<>|]/g, "_");
+		const fileName = `${sanitizedTitle}.md`;
+		
+		// Determine the full path
+		const folder = proposal.folder?.trim() || this.settings.defaultNoteFolder;
+		const fullPath = folder ? `${folder}/${fileName}` : fileName;
+		
+		try {
+			// Create folder if needed and it doesn't exist
+			if (folder) {
+				const folderExists = this.app.vault.getAbstractFileByPath(folder);
+				if (!folderExists) {
+					await this.app.vault.createFolder(folder);
+					console.log(`Created folder: ${folder}`);
+				}
+			}
+			
+			// Check if file already exists
+			const existingFile = this.app.vault.getAbstractFileByPath(fullPath);
+			if (existingFile) {
+				// Handle duplicate filename
+				const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
+				const duplicatePath = folder 
+					? `${folder}/${sanitizedTitle}_${timestamp}.md`
+					: `${sanitizedTitle}_${timestamp}.md`;
+				
+				const file = await this.app.vault.create(duplicatePath, proposal.content);
+				
+				// Open the note in a new tab
+				const leaf = this.app.workspace.getLeaf('tab');
+				await leaf.openFile(file);
+				
+				new Notice(`Created note with unique name: ${file.basename}`);
+				return file.path;
+			} else {
+				// Create the note
+				const file = await this.app.vault.create(fullPath, proposal.content);
+				
+				// Open the note in a new tab
+				const leaf = this.app.workspace.getLeaf('tab');
+				await leaf.openFile(file);
+				
+				new Notice(`Created note: ${file.basename}`);
+				return file.path;
+			}
+		} catch (error) {
+			console.error("Failed to create note from proposal:", error);
+			new Notice(`Failed to create note: ${error.message}`);
+			throw error;
 		}
 	}
 }
@@ -2995,7 +3225,7 @@ class LettaChatView extends ItemView {
 					case "tool_return_message":
 						if (message.tool_return && currentToolCallMessage) {
 							// Add tool result to the existing tool interaction message with tool name and data
-							this.addToolResultToMessage(
+							await this.addToolResultToMessage(
 								currentToolCallMessage,
 								JSON.stringify(message.tool_return, null, 2),
 								currentToolName,
@@ -3430,25 +3660,52 @@ class LettaChatView extends ItemView {
 			cls: "letta-connect-button",
 		});
 
+		// Progress message element
+		const progressMessage = disconnectedMessage.createEl("div", {
+			cls: "letta-connect-progress hidden",
+		});
+
 		connectButton.addEventListener("click", async () => {
 			connectButton.disabled = true;
-			connectButton.textContent = "Connecting...";
+			
+			// Clear existing content and add spinner
+			connectButton.innerHTML = "";
+			const spinner = connectButton.createEl("span", {
+				cls: "letta-connect-spinner",
+			});
+			connectButton.appendChild(document.createTextNode("Connecting..."));
+
+			// Show progress message
+			progressMessage.classList.remove("hidden");
+			progressMessage.classList.add("visible");
 
 			try {
-				const connected = await this.plugin.connectToLetta();
+				const connected = await this.plugin.connectToLetta(1, (message: string) => {
+					progressMessage.textContent = message;
+				});
+				
 				if (connected) {
 					// Connection successful - message will be removed by updateChatStatus
 				} else {
 					// Connection failed - reset button
-					connectButton.disabled = false;
-					connectButton.textContent = "Connect to Letta";
+					this.resetConnectButton(connectButton, progressMessage);
 				}
 			} catch (error) {
 				// Connection failed - reset button
-				connectButton.disabled = false;
-				connectButton.textContent = "Connect to Letta";
+				this.resetConnectButton(connectButton, progressMessage);
 			}
 		});
+	}
+
+	private resetConnectButton(connectButton: HTMLButtonElement, progressMessage: HTMLElement) {
+		// Clear button content
+		connectButton.innerHTML = "";
+		connectButton.textContent = "Connect to Letta";
+		connectButton.disabled = false;
+
+		// Hide progress message
+		progressMessage.classList.remove("visible");
+		progressMessage.classList.add("hidden");
 	}
 
 	removeDisconnectedMessage() {
@@ -4070,6 +4327,7 @@ class LettaChatView extends ItemView {
 					this.currentToolCallId = null;
 					this.currentToolCallArgs = "";
 					this.currentToolCallName = "";
+					this.currentToolCallData = null;
 				}
 
 				// Reset streaming state (now safe since we completed above)
@@ -4418,7 +4676,9 @@ class LettaChatView extends ItemView {
 			// If parsing fails, fall back to the original content
 		}
 
-		toolCallPre.createEl("code", { text: displayContent });
+		const codeEl = toolCallPre.createEl("code", { text: displayContent });
+		// Store the tool name in a data attribute for reliable parsing
+		codeEl.setAttribute("data-tool-name", toolName);
 
 		// Add click handler for tool call expand/collapse
 		toolCallHeader.addEventListener("click", () => {
@@ -4464,7 +4724,7 @@ class LettaChatView extends ItemView {
 		return messageEl;
 	}
 
-	addToolResultToMessage(
+	async addToolResultToMessage(
 		messageEl: HTMLElement,
 		toolResult: string,
 		toolName?: string,
@@ -4490,12 +4750,14 @@ class LettaChatView extends ItemView {
 		// Detect tool type - use provided toolName and toolCallData if available, otherwise parse from DOM
 		let isArchivalMemorySearch = false;
 		let isArchivalMemoryInsert = false;
+		let isObsidianNoteProposal = false;
 		let effectiveToolCallData = toolCallData;
 
 		if (toolName) {
 			// Use provided tool name (for historical messages)
 			isArchivalMemorySearch = toolName === "archival_memory_search";
 			isArchivalMemoryInsert = toolName === "archival_memory_insert";
+			isObsidianNoteProposal = toolName === "propose_obsidian_note";
 		} else {
 			// Parse from DOM (for streaming messages)
 			try {
@@ -4503,22 +4765,58 @@ class LettaChatView extends ItemView {
 					".letta-code-block code",
 				);
 				if (toolCallPre) {
-					effectiveToolCallData = JSON.parse(
-						toolCallPre.textContent || "{}",
-					);
-					const detectedToolName =
-						effectiveToolCallData.name ||
-						(effectiveToolCallData.function &&
-							effectiveToolCallData.function.name);
-					isArchivalMemorySearch =
-						detectedToolName === "archival_memory_search";
-					isArchivalMemoryInsert =
-						detectedToolName === "archival_memory_insert";
+					// First try to get tool name from data attribute (more reliable)
+					const detectedToolName = toolCallPre.getAttribute("data-tool-name");
+					console.log("[Letta Plugin] DOM parsing - data-tool-name:", detectedToolName);
+					if (detectedToolName) {
+						isArchivalMemorySearch = detectedToolName === "archival_memory_search";
+						isArchivalMemoryInsert = detectedToolName === "archival_memory_insert";
+						isObsidianNoteProposal = detectedToolName === "propose_obsidian_note";
+					} else {
+						// Fallback to parsing from content (legacy)
+						effectiveToolCallData = JSON.parse(
+							toolCallPre.textContent || "{}",
+						);
+						const fallbackToolName =
+							effectiveToolCallData.name ||
+							(effectiveToolCallData.function &&
+								effectiveToolCallData.function.name);
+						isArchivalMemorySearch =
+							fallbackToolName === "archival_memory_search";
+						isArchivalMemoryInsert =
+							fallbackToolName === "archival_memory_insert";
+						isObsidianNoteProposal =
+							fallbackToolName === "propose_obsidian_note";
+					}
 				}
 			} catch (e) {
 				// Ignore parsing errors
 			}
 		}
+
+		// Fallback detection: check tool result content for note proposals
+		if (!isObsidianNoteProposal) {
+			try {
+				const parsedResult = JSON.parse(toolResult);
+				if (parsedResult.action === "create_note" && parsedResult.title && parsedResult.content) {
+					console.log("[Letta Plugin] 🔍 Fallback detection: Found note proposal in tool result!");
+					isObsidianNoteProposal = true;
+				}
+			} catch (e) {
+				// Not JSON or not a note proposal, continue normally
+			}
+		}
+
+		// Debug logging for tool detection
+		console.log("[Letta Plugin] Tool detection results:", {
+			toolName,
+			detectedFromDOM: !toolName,
+			isArchivalMemorySearch,
+			isArchivalMemoryInsert,
+			isObsidianNoteProposal,
+			toolResultPreview: toolResult.substring(0, 100) + "..."
+		});
+
 
 		// Show the tool result section
 		const toolResultHeader = bubbleEl.querySelector(
@@ -4556,6 +4854,9 @@ class LettaChatView extends ItemView {
 					effectiveToolCallData,
 					toolResult,
 				);
+			} else if (isObsidianNoteProposal) {
+				// Show pretty note preview instead of raw JSON for note proposals
+				this.createNotePreviewDisplay(toolResultContent, toolResult);
 			} else {
 				// Add full content to expandable section for other tools
 				const toolResultDiv = toolResultContent.createEl("div", {
@@ -4580,6 +4881,18 @@ class LettaChatView extends ItemView {
 					if (toolResultChevron) toolResultChevron.textContent = "○";
 				}
 			});
+
+			// Post-processing enhancement for note proposals
+			if (isObsidianNoteProposal) {
+				console.log("[Letta Plugin] 🎯 Note proposal detected! Starting enhancement...");
+				setTimeout(async () => {
+					try {
+						await this.enhanceNoteProposalDisplay(toolResultContent, toolResult);
+					} catch (error) {
+						console.error("[Letta Plugin] ❌ Error during note proposal enhancement:", error);
+					}
+				}, 10); // Reduced delay for faster appearance
+			}
 		}
 
 		// Auto-scroll to bottom
@@ -4909,12 +5222,527 @@ class LettaChatView extends ItemView {
 		}
 	}
 
+	async createTempNoteForProposal(proposal: ObsidianNoteProposal): Promise<string> {
+		console.log("[Letta Plugin] Creating temp note for proposal:", proposal);
+		
+		// Create .letta/temp directory if it doesn't exist
+		const tempDir = ".letta/temp";
+		let tempFolder = this.app.vault.getAbstractFileByPath(tempDir);
+		console.log("[Letta Plugin] Temp folder check:", tempFolder ? "exists" : "does not exist");
+		
+		if (!tempFolder) {
+			try {
+				await this.app.vault.createFolder(tempDir);
+				console.log(`[Letta Plugin] Created temp directory: ${tempDir}`);
+			} catch (error: any) {
+				console.log("[Letta Plugin] Error creating temp directory:", error);
+				// Check if it's specifically a "folder already exists" error
+				if (error.message && error.message.includes("Folder already exists")) {
+					console.log(`[Letta Plugin] Temp directory already exists: ${tempDir}`);
+					// Don't throw the error, just continue
+				} else {
+					console.error(`[Letta Plugin] Failed to create temp directory: ${error.message}`);
+					throw error;
+				}
+			}
+		} else {
+			console.log(`[Letta Plugin] Using existing temp directory: ${tempDir}`);
+		}
+
+		// Generate unique filename with timestamp
+		const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
+		const sanitizedTitle = proposal.title.replace(/[\\/:*?"<>|]/g, "_");
+		const tempFileName = `${sanitizedTitle}_${timestamp}.md`;
+		const tempPath = `${tempDir}/${tempFileName}`;
+		console.log("[Letta Plugin] Generated temp path:", tempPath);
+
+		// Create note content with frontmatter if needed
+		let content = "";
+		if (proposal.tags && proposal.tags.length > 0) {
+			content += "---\n";
+			content += `tags: [${proposal.tags.map(tag => `"${tag}"`).join(", ")}]\n`;
+			content += "---\n\n";
+		}
+		content += proposal.content || "";
+		console.log("[Letta Plugin] Generated content length:", content.length);
+
+		// Create temp file
+		try {
+			const tempFile = await this.app.vault.create(tempPath, content);
+			console.log(`[Letta Plugin] Successfully created temp note: ${tempPath}`);
+			
+			// Verify the file was created
+			const createdFile = this.app.vault.getAbstractFileByPath(tempPath);
+			console.log("[Letta Plugin] File verification:", createdFile ? "file exists" : "FILE NOT FOUND!");
+			
+			return tempPath;
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to create temp file:", error);
+			throw error;
+		}
+	}
+
+	async createNotePreviewDisplay(container: HTMLElement, toolResult: string) {
+		try {
+			console.log("[Letta Plugin] Creating note preview, raw toolResult:", toolResult);
+			const firstParse = JSON.parse(toolResult);
+			console.log("[Letta Plugin] First parse result:", firstParse);
+			let proposal = firstParse;
+			
+			// Handle double-encoded JSON if needed (same logic as enhancement)
+			if (typeof firstParse === 'string') {
+				proposal = JSON.parse(firstParse);
+				console.log("[Letta Plugin] Double-encoded JSON detected, reparsed:", proposal);
+			} else if (firstParse.data) {
+				proposal = firstParse.data;
+				console.log("[Letta Plugin] Found data property:", proposal);
+			} else if (firstParse.result) {
+				proposal = firstParse.result;
+				console.log("[Letta Plugin] Found result property:", proposal);
+			} else if (firstParse.value) {
+				proposal = firstParse.value;
+				console.log("[Letta Plugin] Found value property:", proposal);
+			}
+			
+			const finalProposal = proposal as ObsidianNoteProposal;
+			console.log("[Letta Plugin] Final proposal object:", finalProposal);
+			console.log("[Letta Plugin] Content check - proposal.content:", finalProposal.content);
+			
+			// Create preview container
+			const preview = container.createEl("div", { cls: "letta-note-preview" });
+			
+			// Title
+			const titleEl = preview.createEl("h2", {
+				text: `📝 ${finalProposal.title}`,
+				cls: "letta-note-preview-title"
+			});
+			
+			// Tags
+			if (finalProposal.tags && finalProposal.tags.length > 0) {
+				const tagsContainer = preview.createEl("div", { cls: "letta-note-preview-tags" });
+				finalProposal.tags.forEach(tag => {
+					tagsContainer.createEl("span", {
+						text: tag,
+						cls: "letta-note-preview-tag"
+					});
+				});
+			}
+			
+			// Content preview (render markdown)
+			if (finalProposal.content) {
+				console.log("[Letta Plugin] Content found, rendering...");
+				const contentEl = preview.createEl("div", { cls: "letta-note-preview-content" });
+				
+				// Extract the main content (skip frontmatter)
+				let displayContent = finalProposal.content;
+				if (displayContent.startsWith('---')) {
+					const parts = displayContent.split('---');
+					if (parts.length >= 3) {
+						displayContent = parts.slice(2).join('---').trim();
+					}
+				}
+				console.log("[Letta Plugin] Display content after processing:", displayContent);
+				
+				// Render the markdown content
+				await this.renderMarkdownContent(contentEl, displayContent);
+			} else {
+				console.log("[Letta Plugin] No content found in proposal");
+				const noContentEl = preview.createEl("div", { 
+					cls: "letta-note-preview-content",
+					text: "⚠️ No content available for preview"
+				});
+				noContentEl.style.color = "var(--text-muted)";
+				noContentEl.style.fontStyle = "italic";
+			}
+			
+			// Folder info
+			if (finalProposal.folder) {
+				const folderEl = preview.createEl("div", {
+					text: `📁 ${finalProposal.folder}`,
+					cls: "letta-note-preview-folder"
+				});
+			}
+			
+		} catch (error) {
+			console.error("Failed to create note preview:", error);
+			// Fallback to regular text display
+			const fallback = container.createEl("div", {
+				cls: "letta-tool-result-text",
+				text: toolResult
+			});
+		}
+	}
+
+	async enhanceNoteProposalDisplay(container: HTMLElement, toolResult: string) {
+		console.log("[Letta Plugin] 🚀 enhanceNoteProposalDisplay called!");
+		console.log("[Letta Plugin] Tool result to enhance:", toolResult);
+		
+		try {
+			const firstParse = JSON.parse(toolResult);
+			console.log("[Letta Plugin] First parse result:", firstParse);
+			console.log("[Letta Plugin] First parse keys:", Object.keys(firstParse));
+			console.log("[Letta Plugin] First parse type:", typeof firstParse);
+			
+			// Handle double-encoded JSON or wrapper objects
+			let proposal = firstParse;
+			
+			// If it's still a string, parse it again
+			if (typeof firstParse === 'string') {
+				console.log("[Letta Plugin] Double-parsing JSON string...");
+				proposal = JSON.parse(firstParse);
+			} 
+			// Check for common wrapper patterns
+			else if (firstParse.data) {
+				console.log("[Letta Plugin] Found data wrapper, using firstParse.data");
+				proposal = firstParse.data;
+			} else if (firstParse.result) {
+				console.log("[Letta Plugin] Found result wrapper, using firstParse.result");
+				proposal = firstParse.result;
+			} else if (firstParse.value) {
+				console.log("[Letta Plugin] Found value wrapper, using firstParse.value");
+				proposal = firstParse.value;
+			}
+			
+			console.log("[Letta Plugin] Final proposal:", proposal);
+			console.log("[Letta Plugin] Final proposal keys:", Object.keys(proposal));
+			console.log("[Letta Plugin] Final proposal.action:", proposal.action);
+			
+			// Type assertion for the final proposal
+			const finalProposal = proposal as ObsidianNoteProposal;
+			
+			// Use more robust comparison
+			const actionValue = finalProposal.action?.trim() || "";
+			if (actionValue !== "create_note" && !actionValue.includes("create_note")) {
+				console.log("[Letta Plugin] ❌ Proposal action is not 'create_note', skipping enhancement");
+				console.log("[Letta Plugin] Expected: 'create_note', Got:", actionValue);
+				return;
+			}
+			
+			console.log("[Letta Plugin] ✅ Action check passed, continuing with enhancement...");
+
+			// Create temp file for preview
+			const tempPath = await this.createTempNoteForProposal(finalProposal);
+
+			// Create enhancement container below the existing tool result
+			const enhancement = container.createEl("div", { 
+				cls: "letta-note-proposal-enhancement" 
+			});
+
+			// Create note proposal header
+			const header = enhancement.createEl("div", { cls: "letta-note-proposal-header" });
+			const titleEl = header.createEl("h3", { 
+				text: `📝 ${finalProposal.title}`,
+				cls: "letta-note-proposal-title" 
+			});
+
+			// Add folder info if specified
+			if (finalProposal.folder) {
+				header.createEl("div", {
+					text: `📁 Folder: ${finalProposal.folder}`,
+					cls: "letta-note-proposal-folder"
+				});
+			}
+
+			// Add tags if specified
+			if (finalProposal.tags && finalProposal.tags.length > 0) {
+				const tagsEl = header.createEl("div", { cls: "letta-note-proposal-tags" });
+				tagsEl.createEl("span", { text: "🏷️ Tags: " });
+				finalProposal.tags.forEach((tag, index) => {
+					const tagSpan = tagsEl.createEl("span", { 
+						text: tag,
+						cls: "letta-note-proposal-tag" 
+					});
+					if (index < finalProposal.tags!.length - 1) {
+						tagsEl.createEl("span", { text: ", " });
+					}
+				});
+			}
+
+			// Click to open temp file  
+			titleEl.style.cursor = "pointer";
+			titleEl.addEventListener("click", async () => {
+				try {
+					const tempFile = this.app.vault.getAbstractFileByPath(tempPath);
+					if (tempFile) {
+						const leaf = this.app.workspace.getLeaf('tab');
+						await leaf.openFile(tempFile as any);
+					}
+				} catch (error) {
+					console.error("Failed to open temp file:", error);
+				}
+			});
+
+			// Action buttons
+			const buttonContainer = enhancement.createEl("div", { cls: "letta-note-proposal-buttons" });
+			
+			const acceptButton = buttonContainer.createEl("button", {
+				text: "Accept",
+				cls: "letta-button letta-button-accept"
+			});
+			
+			const rejectButton = buttonContainer.createEl("button", {
+				text: "Reject", 
+				cls: "letta-button letta-button-reject"
+			});
+
+			// Add button event handlers
+			acceptButton.addEventListener("click", async () => {
+				await this.acceptNoteProposal(enhancement, finalProposal, tempPath);
+			});
+
+			rejectButton.addEventListener("click", async () => {
+				await this.rejectNoteProposal(enhancement, tempPath);
+			});
+
+			// Auto-expand the tool result section for note proposals
+			// The container itself is the expandable content that might be collapsed
+			if (container.classList.contains("letta-expandable-collapsed")) {
+				container.removeClass("letta-expandable-collapsed");
+				console.log("[Letta Plugin] Auto-expanded tool result section for note proposal");
+				
+				// Update the chevron indicator
+				const parentBubble = container.closest(".letta-message-bubble");
+				if (parentBubble) {
+					const chevron = parentBubble.querySelector(".letta-expandable-chevron");
+					if (chevron) {
+						chevron.textContent = "●";
+					}
+				}
+			}
+			
+			console.log("[Letta Plugin] ✅ Note proposal enhancement created successfully!");
+			
+		} catch (error) {
+			console.error("[Letta Plugin] ❌ Failed to enhance note proposal display:", error);
+		}
+	}
+
+	createNoteProposalDisplay(container: HTMLElement, toolResult: string, tempPath?: string | null) {
+		try {
+			const proposal = JSON.parse(toolResult) as ObsidianNoteProposal;
+			
+			// Create note proposal header
+			const header = container.createEl("div", { cls: "letta-note-proposal-header" });
+			const titleEl = header.createEl("h3", { 
+				text: `📝 Note Proposal: ${proposal.title}`,
+				cls: "letta-note-proposal-title" 
+			});
+
+			// Add folder info if specified
+			if (proposal.folder) {
+				header.createEl("div", {
+					text: `📁 Folder: ${proposal.folder}`,
+					cls: "letta-note-proposal-folder"
+				});
+			}
+
+			// Add tags if specified
+			if (proposal.tags && proposal.tags.length > 0) {
+				const tagsEl = header.createEl("div", { cls: "letta-note-proposal-tags" });
+				tagsEl.createEl("span", { text: "🏷️ Tags: " });
+				proposal.tags.forEach((tag, index) => {
+					const tagSpan = tagsEl.createEl("span", { 
+						text: tag,
+						cls: "letta-note-proposal-tag" 
+					});
+					if (index < proposal.tags!.length - 1) {
+						tagsEl.createEl("span", { text: ", " });
+					}
+				});
+			}
+
+			// Content preview (scrollable)
+			const contentContainer = container.createEl("div", { cls: "letta-note-proposal-content" });
+			const contentHeader = contentContainer.createEl("div", { 
+				text: "Content Preview:",
+				cls: "letta-note-proposal-content-header" 
+			});
+			
+			const contentArea = contentContainer.createEl("div", { cls: "letta-note-proposal-content-area" });
+			const previewEl = contentArea.createEl("pre", { cls: "letta-note-proposal-preview" });
+			previewEl.textContent = proposal.content;
+
+			// Click to open temp file  
+			const finalTempPath = tempPath || (() => {
+				// Fallback calculation if tempPath wasn't provided
+				const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
+				const sanitizedTitle = proposal.title.replace(/[\\/:*?"<>|]/g, "_");
+				return `.letta/temp/${sanitizedTitle}_${timestamp}.md`;
+			})();
+			
+			titleEl.style.cursor = "pointer";
+			titleEl.addEventListener("click", async () => {
+				try {
+					const tempFile = this.app.vault.getAbstractFileByPath(finalTempPath);
+					if (tempFile) {
+						const leaf = this.app.workspace.getLeaf('tab');
+						await leaf.openFile(tempFile as any);
+					}
+				} catch (error) {
+					console.error("Failed to open temp file:", error);
+				}
+			});
+
+			// Action buttons
+			const buttonContainer = container.createEl("div", { cls: "letta-note-proposal-buttons" });
+			
+			const acceptButton = buttonContainer.createEl("button", {
+				text: "Accept",
+				cls: "letta-button letta-button-accept"
+			});
+			
+			const rejectButton = buttonContainer.createEl("button", {
+				text: "Reject", 
+				cls: "letta-button letta-button-reject"
+			});
+
+			// Store proposal data for button handlers
+			container.setAttribute("data-proposal", JSON.stringify(proposal));
+			container.setAttribute("data-temp-path", finalTempPath);
+
+			// Add button event handlers
+			acceptButton.addEventListener("click", async () => {
+				await this.acceptNoteProposal(container, proposal, finalTempPath);
+			});
+
+			rejectButton.addEventListener("click", async () => {
+				await this.rejectNoteProposal(container, finalTempPath);
+			});
+
+		} catch (error) {
+			console.error("Failed to parse note proposal:", error);
+			const fallback = container.createEl("div", {
+				cls: "letta-tool-result-text",
+				text: "Invalid note proposal format"
+			});
+		}
+	}
+
+	async acceptNoteProposal(container: HTMLElement, proposal: ObsidianNoteProposal, tempPath: string) {
+		try {
+			// Determine target path
+			const sanitizedTitle = proposal.title.replace(/[\\/:*?"<>|]/g, "_");
+			const fileName = `${sanitizedTitle}.md`;
+			const folder = proposal.folder?.trim() || this.plugin.settings.defaultNoteFolder;
+			const targetPath = folder ? `${folder}/${fileName}` : fileName;
+
+			// Check if target path already exists
+			const existingFile = this.app.vault.getAbstractFileByPath(targetPath);
+			if (existingFile) {
+				// Show error and keep temp file
+				this.showNoteProposalError(container, `A file already exists at: ${targetPath}. Please ask the agent to choose a different name or location.`);
+				return;
+			}
+
+			// Create target folder if needed
+			if (folder) {
+				const folderExists = this.app.vault.getAbstractFileByPath(folder);
+				if (!folderExists) {
+					await this.app.vault.createFolder(folder);
+					console.log(`[Letta Plugin] Created folder: ${folder}`);
+				}
+			}
+
+			// Get temp file and move it
+			console.log("[Letta Plugin] Looking for temp file at path:", tempPath);
+			const tempFile = this.app.vault.getAbstractFileByPath(tempPath);
+			console.log("[Letta Plugin] Temp file found:", tempFile ? "yes" : "no");
+			
+			if (tempFile) {
+				// Read content from temp file and create at target location
+				const content = await this.app.vault.read(tempFile as any);
+				console.log("[Letta Plugin] Read content from temp file, length:", content.length);
+				const newFile = await this.app.vault.create(targetPath, content);
+
+				// Delete temp file
+				await this.app.vault.delete(tempFile as any);
+
+				// Open the new file
+				const leaf = this.app.workspace.getLeaf('tab');
+				await leaf.openFile(newFile);
+
+				// Update UI to show success
+				this.showNoteProposalSuccess(container, `Note created: [[${proposal.title}]] at \`${targetPath}\``);
+
+				console.log(`[Letta Plugin] Note accepted and created: ${targetPath}`);
+			} else {
+				console.error("[Letta Plugin] Temp file not found at:", tempPath);
+				// Fallback: create the note directly from proposal content
+				console.log("[Letta Plugin] Attempting fallback creation with proposal content");
+				let content = "";
+				if (proposal.tags && proposal.tags.length > 0) {
+					content += "---\n";
+					content += `tags: [${proposal.tags.map(tag => `"${tag}"`).join(", ")}]\n`;
+					content += "---\n\n";
+				}
+				content += proposal.content || "";
+				
+				const newFile = await this.app.vault.create(targetPath, content);
+				
+				// Open the new file
+				const leaf = this.app.workspace.getLeaf('tab');
+				await leaf.openFile(newFile);
+
+				// Update UI to show success
+				this.showNoteProposalSuccess(container, `Note created: [[${proposal.title}]] at \`${targetPath}\` (fallback)`);
+
+				console.log(`[Letta Plugin] Note accepted and created via fallback: ${targetPath}`);
+			}
+		} catch (error) {
+			console.error("Failed to accept note proposal:", error);
+			this.showNoteProposalError(container, `Failed to create note: ${error.message}`);
+		}
+	}
+
+	async rejectNoteProposal(container: HTMLElement, tempPath: string) {
+		try {
+			// Delete temp file
+			const tempFile = this.app.vault.getAbstractFileByPath(tempPath);
+			if (tempFile) {
+				await this.app.vault.delete(tempFile as any);
+				console.log(`[Letta Plugin] Temp file deleted: ${tempPath}`);
+			}
+
+			// Update UI to show rejection
+			this.showNoteProposalSuccess(container, "Note proposal rejected and temp file cleaned up");
+		} catch (error) {
+			console.error("Failed to reject note proposal:", error);
+			this.showNoteProposalError(container, `Failed to clean up temp file: ${error.message}`);
+		}
+	}
+
+	showNoteProposalSuccess(container: HTMLElement, message: string) {
+		// Hide buttons and show success message
+		const buttonContainer = container.querySelector(".letta-note-proposal-buttons");
+		if (buttonContainer) {
+			buttonContainer.remove();
+		}
+
+		const successEl = container.createEl("div", {
+			cls: "letta-note-proposal-result letta-note-proposal-success",
+			text: message
+		});
+	}
+
+	showNoteProposalError(container: HTMLElement, message: string) {
+		// Show error message but keep buttons visible for retry
+		let errorContainer = container.querySelector(".letta-note-proposal-error");
+		if (!errorContainer) {
+			errorContainer = container.createEl("div", {
+				cls: "letta-note-proposal-error"
+			});
+		}
+		errorContainer.textContent = `⚠️ ${message}`;
+	}
+
 	async processNonStreamingMessages(messages: any[]) {
 		// Processing non-streaming messages
 
 		// Process response messages (fallback for when streaming fails)
 		let tempReasoning = "";
 		let tempToolMessage: HTMLElement | null = null;
+		let tempToolName = "";
+		let tempToolCallData: any = null;
 
 		for (const responseMessage of messages) {
 			// Handle system messages - capture system_alert for hidden viewing, skip heartbeats
@@ -4951,7 +5779,7 @@ class LettaChatView extends ItemView {
 				continue;
 			}
 
-			switch (responseMessage.message_type) {
+			switch (responseMessage.message_type || responseMessage.messageType) {
 				case "reasoning_message":
 					if (responseMessage.reasoning) {
 						// Accumulate reasoning for the next tool call or assistant message
@@ -4963,29 +5791,51 @@ class LettaChatView extends ItemView {
 					this.addUsageStatisticsToLastMessage(responseMessage);
 					break;
 				case "tool_call_message":
-					if (responseMessage.tool_call) {
+					const toolCallData = responseMessage.tool_call || responseMessage.toolCall;
+					if (toolCallData) {
+						// Store tool information for later use
+						tempToolName = toolCallData.name || 
+							(toolCallData.function && toolCallData.function.name) || 
+							"";
+						tempToolCallData = toolCallData;
+						
+						console.log("[Letta Plugin] Non-streaming tool call detected:", tempToolName);
+						if (tempToolName === "propose_obsidian_note") {
+							console.log("[Letta Plugin] 🔥 PROPOSE_OBSIDIAN_NOTE detected in non-streaming!");
+						}
+						
 						// Create tool interaction with reasoning
 						tempToolMessage = this.addToolInteractionMessage(
 							tempReasoning,
-							JSON.stringify(responseMessage.tool_call, null, 2),
+							JSON.stringify(toolCallData, null, 2),
 						);
 						// Clear reasoning after using it
 						tempReasoning = "";
 					}
 					break;
 				case "tool_return_message":
-					if (responseMessage.tool_return && tempToolMessage) {
+					const toolReturnData = responseMessage.tool_return || responseMessage.toolReturn;
+					if (toolReturnData && tempToolMessage) {
+						console.log("[Letta Plugin] Non-streaming tool return for tool:", tempToolName);
+						if (tempToolName === "propose_obsidian_note") {
+							console.log("[Letta Plugin] 🔥 PROPOSE_OBSIDIAN_NOTE tool return in non-streaming!", toolReturnData);
+						}
+						
 						// Add tool result to the existing tool interaction message
-						this.addToolResultToMessage(
+						await this.addToolResultToMessage(
 							tempToolMessage,
 							JSON.stringify(
-								responseMessage.tool_return,
+								toolReturnData,
 								null,
 								2,
 							),
+							tempToolName,
+							tempToolCallData,
 						);
-						// Clear the temp tool message reference
+						// Clear the temp tool message reference and data
 						tempToolMessage = null;
+						tempToolName = "";
+						tempToolCallData = null;
 					}
 					break;
 				case "assistant_message":
@@ -5184,23 +6034,28 @@ class LettaChatView extends ItemView {
 				}
 				break;
 			case "tool_call_message":
-				if (message.tool_call) {
+				const streamingToolCallData = message.tool_call || message.toolCall;
+				if (streamingToolCallData) {
 					// Handle streaming tool call chunks
-					// Received tool call message
-					this.handleStreamingToolCall(message.tool_call);
+					console.log("[Letta Plugin] Received tool_call_message:", streamingToolCallData);
+					this.handleStreamingToolCall(streamingToolCallData);
 				} else {
-					// Received tool_call_message but no tool_call field
+					console.log("[Letta Plugin] Received tool_call_message but no tool_call/toolCall field:", message);
 				}
 				break;
 			case "tool_return_message":
-				if (message.tool_return) {
+				const streamingToolReturnData = message.tool_return || message.toolReturn;
+				if (streamingToolReturnData) {
 					// Tool return received
+					console.log("[Letta Plugin] Received tool_return_message:", streamingToolReturnData);
+					console.log("[Letta Plugin] Current tool call name:", this.currentToolCallName);
 					// Update the current tool interaction with the result
-					this.updateStreamingToolResult(message.tool_return);
+					await this.updateStreamingToolResult(streamingToolReturnData);
 					// Clear the current tool call state since it's complete
 					this.currentToolCallId = null;
 					this.currentToolCallArgs = "";
 					this.currentToolCallName = "";
+					this.currentToolCallData = null;
 				}
 				break;
 			case "assistant_message":
@@ -5267,6 +6122,7 @@ class LettaChatView extends ItemView {
 	private currentToolCallId: string | null = null;
 	private currentToolCallArgs: string = "";
 	private currentToolCallName: string = "";
+	private currentToolCallData: any = null;
 
 	updateOrCreateReasoningMessage(reasoning: string) {
 		// Only accumulate reasoning content, don't create standalone messages
@@ -5404,6 +6260,8 @@ class LettaChatView extends ItemView {
 		} catch (e) {
 			// Keep default if parsing fails
 		}
+
+		console.log("[Letta Plugin] Creating tool interaction DOM element for tool:", toolName);
 
 		// Create tool interaction message
 		this.currentToolMessageEl = this.chatContainer.createEl("div", {
@@ -5570,9 +6428,11 @@ class LettaChatView extends ItemView {
 		const toolCallPre = toolCallContent.createEl("pre", {
 			cls: "letta-code-block",
 		});
-		toolCallPre.createEl("code", {
+		const streamingCodeEl = toolCallPre.createEl("code", {
 			text: JSON.stringify(toolCall, null, 2),
 		});
+		// Store the tool name in a data attribute for reliable parsing
+		streamingCodeEl.setAttribute("data-tool-name", toolName);
 
 		// Add click handler for tool call expand/collapse
 		toolCallHeader.addEventListener("click", () => {
@@ -5626,13 +6486,21 @@ class LettaChatView extends ItemView {
 		);
 	}
 
-	updateStreamingToolResult(toolReturn: any) {
-		if (!this.currentToolMessageEl) return;
+	async updateStreamingToolResult(toolReturn: any) {
+		console.log("[Letta Plugin] updateStreamingToolResult called for tool:", this.currentToolCallName);
+		console.log("[Letta Plugin] Tool return data:", toolReturn);
+		
+		if (!this.currentToolMessageEl) {
+			console.log("[Letta Plugin] ⚠️ No currentToolMessageEl found - tool message may have been removed!");
+			return;
+		}
 
 		// Use the unified addToolResultToMessage method for consistency
-		this.addToolResultToMessage(
+		await this.addToolResultToMessage(
 			this.currentToolMessageEl,
 			JSON.stringify(toolReturn, null, 2),
+			this.currentToolCallName,
+			this.currentToolCallData,
 		);
 
 		// Auto-scroll to bottom
@@ -5650,10 +6518,11 @@ class LettaChatView extends ItemView {
 			this.currentAssistantMessageEl.remove();
 		}
 
-		// Remove any existing streaming tool message from DOM
-		if (this.currentToolMessageEl) {
-			this.currentToolMessageEl.remove();
-		}
+		// DON'T remove tool messages - they should persist in the chat
+		// Just clear the reference so we don't update them anymore
+		// if (this.currentToolMessageEl) {
+		//     this.currentToolMessageEl.remove();
+		// }
 
 		this.currentReasoningContent = "";
 		this.currentAssistantContent = "";
@@ -5663,6 +6532,7 @@ class LettaChatView extends ItemView {
 		this.currentToolCallId = null;
 		this.currentToolCallArgs = "";
 		this.currentToolCallName = "";
+		this.currentToolCallData = null;
 	}
 
 	markStreamingComplete() {
@@ -5742,6 +6612,14 @@ class LettaChatView extends ItemView {
 			"Tool Call";
 		const toolArgs = toolCall.arguments || toolCall.args || "";
 
+		console.log("[Letta Plugin] handleStreamingToolCall - toolName:", toolName, "toolCallId:", toolCallId);
+		
+		// Special logging for propose_obsidian_note
+		if (toolName === "propose_obsidian_note") {
+			console.log("[Letta Plugin] 🔥 PROPOSE_OBSIDIAN_NOTE tool detected in streaming!");
+			console.log("[Letta Plugin] Tool call data:", JSON.stringify(toolCall, null, 2));
+		}
+
 		// Check if this is a new tool call or a continuation of the current one
 		if (this.currentToolCallId !== toolCallId) {
 			// New tool call - create the interaction
@@ -5752,6 +6630,7 @@ class LettaChatView extends ItemView {
 			this.currentToolCallId = toolCallId;
 			this.currentToolCallName = toolName;
 			this.currentToolCallArgs = toolArgs;
+			this.currentToolCallData = toolCall;
 			this.createStreamingToolInteraction(toolCall);
 		} else {
 			// Continuation of current tool call - accumulate arguments
@@ -7427,6 +8306,72 @@ class FolderAttachmentConsentModal extends Modal {
 	}
 }
 
+class ToolRegistrationConsentModal extends Modal {
+	plugin: LettaPlugin;
+	resolve: (consent: boolean) => void;
+	
+	constructor(app: App, plugin: LettaPlugin) {
+		super(app);
+		this.plugin = plugin;
+	}
+	
+	async show(): Promise<boolean> {
+		return new Promise<boolean>((resolve) => {
+			this.resolve = resolve;
+			this.open();
+		});
+	}
+	
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl("h2", { text: "Register Custom Tools?" });
+		
+		const description = contentEl.createEl("div", {
+			cls: "modal-description",
+		});
+		description.innerHTML = `
+			<p>Letta wants to register custom Obsidian tools that will allow your agent to:</p>
+			<ul>
+				<li><strong>Create new notes</strong> in your vault based on your conversations</li>
+				<li><strong>Propose note content</strong> for your review before creating</li>
+				<li><strong>Organize notes</strong> in folders you specify</li>
+			</ul>
+			<p><strong>Note:</strong> Tools will be installed for your entire Letta organization but will only be attached to your current agent. Each tool use requires your explicit approval.</p>
+			<p><em>You can change this preference in the plugin settings at any time.</em></p>
+		`;
+		
+		const buttonContainer = contentEl.createEl("div", {
+			cls: "modal-button-container",
+		});
+		
+		const allowButton = buttonContainer.createEl("button", {
+			text: "Register Tools",
+			cls: "mod-cta",
+		});
+		allowButton.onclick = () => {
+			this.resolve(true);
+			this.close();
+		};
+		
+		const denyButton = buttonContainer.createEl("button", {
+			text: "Not Now",
+		});
+		denyButton.onclick = () => {
+			this.resolve(false);
+			this.close();
+		};
+		
+		// Auto-focus the deny button for safety
+		denyButton.focus();
+	}
+	
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+
 class AgentConfigModal extends Modal {
 	plugin: LettaPlugin;
 	config: AgentConfig;
@@ -8460,6 +9405,162 @@ class AgentPropertyModal extends Modal {
 	}
 }
 
+class NoteProposalModal extends Modal {
+	proposal: ObsidianNoteProposal;
+	onSubmit: (accepted: boolean, proposal?: ObsidianNoteProposal) => void;
+	titleInput: HTMLInputElement;
+	folderInput: HTMLInputElement;
+	contentEl: HTMLTextAreaElement;
+
+	constructor(
+		app: App,
+		proposal: ObsidianNoteProposal,
+		onSubmit: (accepted: boolean, proposal?: ObsidianNoteProposal) => void
+	) {
+		super(app);
+		this.proposal = { ...proposal }; // Create a copy to avoid mutating original
+		this.onSubmit = onSubmit;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("note-proposal-modal");
+
+		// Header
+		contentEl.createEl("h2", { 
+			text: "Proposed Note",
+			cls: "note-proposal-title"
+		});
+
+		// Title section
+		const titleContainer = contentEl.createEl("div", { cls: "note-proposal-field" });
+		titleContainer.createEl("label", { 
+			text: "Title:",
+			cls: "note-proposal-label"
+		});
+		this.titleInput = titleContainer.createEl("input", {
+			type: "text",
+			value: this.proposal.title,
+			cls: "note-proposal-input"
+		});
+		this.titleInput.addEventListener("input", () => {
+			this.proposal.title = this.titleInput.value;
+		});
+
+		// Folder section
+		const folderContainer = contentEl.createEl("div", { cls: "note-proposal-field" });
+		folderContainer.createEl("label", { 
+			text: "Folder:",
+			cls: "note-proposal-label"
+		});
+		this.folderInput = folderContainer.createEl("input", {
+			type: "text",
+			value: this.proposal.folder || "",
+			placeholder: "Leave empty for root folder",
+			cls: "note-proposal-input"
+		});
+		this.folderInput.addEventListener("input", () => {
+			this.proposal.folder = this.folderInput.value;
+		});
+
+		// Tags section (if any)
+		if (this.proposal.tags && this.proposal.tags.length > 0) {
+			const tagsContainer = contentEl.createEl("div", { cls: "note-proposal-field" });
+			tagsContainer.createEl("label", { 
+				text: "Tags:",
+				cls: "note-proposal-label"
+			});
+			const tagsDisplay = tagsContainer.createEl("div", { cls: "note-proposal-tags" });
+			this.proposal.tags.forEach(tag => {
+				tagsDisplay.createEl("span", {
+					text: `#${tag}`,
+					cls: "note-proposal-tag"
+				});
+			});
+		}
+
+		// Content preview section
+		const previewContainer = contentEl.createEl("div", { cls: "note-proposal-preview" });
+		previewContainer.createEl("label", { 
+			text: "Content Preview:",
+			cls: "note-proposal-label"
+		});
+		
+		const contentPreview = previewContainer.createEl("div", { cls: "note-proposal-content-preview" });
+		
+		// Show a truncated version for preview, full content in textarea
+		const previewText = this.proposal.content.length > 300 
+			? this.proposal.content.substring(0, 300) + "..."
+			: this.proposal.content;
+		
+		contentPreview.createEl("pre", { 
+			text: previewText,
+			cls: "note-proposal-preview-text"
+		});
+
+		// Full content textarea (initially hidden)
+		this.contentEl = previewContainer.createEl("textarea", {
+			value: this.proposal.content,
+			cls: "note-proposal-content-full"
+		});
+		this.contentEl.style.display = "none";
+		this.contentEl.addEventListener("input", () => {
+			this.proposal.content = this.contentEl.value;
+		});
+
+		// Toggle button to show/hide full content editor
+		const toggleButton = previewContainer.createEl("button", {
+			text: "Edit Content",
+			cls: "note-proposal-toggle-btn"
+		});
+
+		let isEditing = false;
+		toggleButton.addEventListener("click", () => {
+			isEditing = !isEditing;
+			if (isEditing) {
+				contentPreview.style.display = "none";
+				this.contentEl.style.display = "block";
+				this.contentEl.style.height = "200px";
+				toggleButton.textContent = "Preview";
+			} else {
+				contentPreview.style.display = "block";
+				this.contentEl.style.display = "none";
+				toggleButton.textContent = "Edit Content";
+			}
+		});
+
+		// Action buttons
+		const buttonContainer = contentEl.createEl("div", { cls: "note-proposal-actions" });
+		
+		const createButton = buttonContainer.createEl("button", {
+			text: "Create Note",
+			cls: "mod-cta note-proposal-btn"
+		});
+		createButton.addEventListener("click", () => {
+			this.onSubmit(true, this.proposal);
+			this.close();
+		});
+
+		const cancelButton = buttonContainer.createEl("button", {
+			text: "Cancel",
+			cls: "note-proposal-btn"
+		});
+		cancelButton.addEventListener("click", () => {
+			this.onSubmit(false);
+			this.close();
+		});
+
+		// Focus the title input
+		setTimeout(() => this.titleInput.focus(), 10);
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+
 class LettaSettingTab extends PluginSettingTab {
 	plugin: LettaPlugin;
 
@@ -8646,6 +9747,67 @@ class LettaSettingTab extends PluginSettingTab {
 					}),
 			);
 
+		// Custom Tools Settings
+		containerEl.createEl("h3", { text: "Custom Tools" });
+
+		new Setting(containerEl)
+			.setName("Enable Custom Tools")
+			.setDesc(
+				"Allow the agent to use custom Obsidian tools like creating notes, searching vault, etc."
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.enableCustomTools)
+					.onChange(async (value) => {
+						this.plugin.settings.enableCustomTools = value;
+						await this.plugin.saveSettings();
+						
+						// Register tools immediately if enabled and agent is available
+						if (value && this.plugin.agent) {
+							await this.plugin.registerObsidianTools();
+						}
+						
+						new Notice(value 
+							? "Custom tools enabled - agent can now create notes and more"
+							: "Custom tools disabled"
+						);
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Ask Before Tool Registration")
+			.setDesc(
+				"Require user consent before registering custom tools with the agent"
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.askBeforeToolRegistration)
+					.onChange(async (value) => {
+						this.plugin.settings.askBeforeToolRegistration = value;
+						await this.plugin.saveSettings();
+						
+						new Notice(value 
+							? "Tool registration consent enabled - you'll be asked before tools are registered"
+							: "Tool registration consent disabled - tools will register automatically"
+						);
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Default Note Folder")
+			.setDesc(
+				"Default folder for new notes created by the agent (leave empty for root folder)"
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder("e.g., journal, notes, drafts")
+					.setValue(this.plugin.settings.defaultNoteFolder)
+					.onChange(async (value) => {
+						this.plugin.settings.defaultNoteFolder = value.trim();
+						await this.plugin.saveSettings();
+					})
+			);
+
 		// Consent Settings
 		containerEl.createEl("h3", { text: "Privacy & Consent" });
 
@@ -8680,12 +9842,13 @@ class LettaSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Reset Consent Preferences")
 			.setDesc(
-				"Reset consent settings to always ask for permission before folder operations",
+				"Reset consent settings to always ask for permission before folder operations and tool registration",
 			)
 			.addButton((button) =>
 				button.setButtonText("Reset to Defaults").onClick(async () => {
 					this.plugin.settings.askBeforeFolderCreation = true;
 					this.plugin.settings.askBeforeFolderAttachment = true;
+					this.plugin.settings.askBeforeToolRegistration = true;
 					await this.plugin.saveSettings();
 					this.display(); // Refresh the settings display
 					new Notice("Consent preferences reset to defaults");
