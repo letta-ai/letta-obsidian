@@ -5269,7 +5269,7 @@ class LettaChatView extends ItemView {
 		
 		// Add timestamp and agent info at the bottom
 		const timestamp = new Date().toISOString();
-		const agentId = this.agent?.id || "unknown";
+		const agentId = this.plugin.agent?.id || "unknown";
 		content += `\n\n<small>Created: ${timestamp} | Agent: \`${agentId}\`</small>`;
 		
 		console.log("[Letta Plugin] Generated content length:", content.length);
@@ -5701,7 +5701,7 @@ class LettaChatView extends ItemView {
 				
 				// Add timestamp and agent info at the bottom
 				const timestamp = new Date().toISOString();
-				const agentId = this.agent?.id || "unknown";
+				const agentId = this.plugin.agent?.id || "unknown";
 				content += `\n\n<small>Created: ${timestamp} | Agent: \`${agentId}\`</small>`;
 				
 				const newFile = await this.app.vault.create(targetPath, content);
