@@ -5777,16 +5777,16 @@ class LettaChatView extends ItemView {
 			const agentId = this.plugin.agent?.id || "unknown";
 			content += `\n\n<small>Created: ${timestamp} | Agent: \`${agentId}\`</small>`;
 
-			// Update the temp file
+			// Always delete the old temp file and create a new one to avoid conflicts
 			const tempFile = this.app.vault.getAbstractFileByPath(tempPath);
 			if (tempFile) {
-				await this.app.vault.modify(tempFile as any, content);
-				console.log("[Letta Plugin] Updated temp file with edited content");
-			} else {
-				// Create new temp file if it doesn't exist
-				await this.app.vault.create(tempPath, content);
-				console.log("[Letta Plugin] Created new temp file with edited content");
+				await this.app.vault.delete(tempFile as any);
+				console.log("[Letta Plugin] Deleted existing temp file");
 			}
+			
+			// Create new temp file with edited content
+			await this.app.vault.create(tempPath, content);
+			console.log("[Letta Plugin] Created updated temp file with edited content");
 		} catch (error) {
 			console.error("Failed to update temp file:", error);
 			throw error;
