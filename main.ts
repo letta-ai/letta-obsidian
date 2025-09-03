@@ -5744,10 +5744,15 @@ class LettaChatView extends ItemView {
 			// Create and show the editing modal
 			const modal = new NoteProposalModal(this.app, proposal, async (accepted: boolean, editedProposal?: ObsidianNoteProposal) => {
 				if (accepted && editedProposal) {
-					// Update the temp file with the edited content
-					await this.updateTempFileWithEditedProposal(tempPath, editedProposal);
-					// Accept the edited proposal
-					await this.acceptNoteProposal(container, editedProposal, tempPath);
+					// Generate new temp path based on edited proposal
+					const tempDir = ".letta/temp";
+					const sanitizedTitle = editedProposal.title.replace(/[\\/:*?"<>|]/g, "_");
+					const newTempPath = `${tempDir}/${sanitizedTitle}.md`;
+					
+					// Clean up original temp file and create new one
+					await this.updateTempFileWithEditedProposal(tempPath, newTempPath, editedProposal);
+					// Accept the edited proposal with new temp path
+					await this.acceptNoteProposal(container, editedProposal, newTempPath);
 				}
 				// If not accepted, modal just closes without doing anything
 			});
@@ -5758,7 +5763,7 @@ class LettaChatView extends ItemView {
 		}
 	}
 
-	async updateTempFileWithEditedProposal(tempPath: string, proposal: ObsidianNoteProposal) {
+	async updateTempFileWithEditedProposal(oldTempPath: string, newTempPath: string, proposal: ObsidianNoteProposal) {
 		try {
 			// Create updated content with the same format as createTempNoteForProposal
 			let content = proposal.content || "";
@@ -5777,15 +5782,22 @@ class LettaChatView extends ItemView {
 			const agentId = this.plugin.agent?.id || "unknown";
 			content += `\n\n<small>Created: ${timestamp} | Agent: \`${agentId}\`</small>`;
 
-			// Always delete the old temp file and create a new one to avoid conflicts
-			const tempFile = this.app.vault.getAbstractFileByPath(tempPath);
-			if (tempFile) {
-				await this.app.vault.delete(tempFile as any);
-				console.log("[Letta Plugin] Deleted existing temp file");
+			// Delete the original temp file if it exists
+			const oldTempFile = this.app.vault.getAbstractFileByPath(oldTempPath);
+			if (oldTempFile) {
+				await this.app.vault.delete(oldTempFile as any);
+				console.log("[Letta Plugin] Deleted original temp file");
+			}
+			
+			// Delete the new temp file if it exists (in case of title conflicts)
+			const newTempFile = this.app.vault.getAbstractFileByPath(newTempPath);
+			if (newTempFile) {
+				await this.app.vault.delete(newTempFile as any);
+				console.log("[Letta Plugin] Deleted conflicting temp file");
 			}
 			
 			// Create new temp file with edited content
-			await this.app.vault.create(tempPath, content);
+			await this.app.vault.create(newTempPath, content);
 			console.log("[Letta Plugin] Created updated temp file with edited content");
 		} catch (error) {
 			console.error("Failed to update temp file:", error);
