@@ -5261,10 +5261,10 @@ class LettaChatView extends ItemView {
 		// Add tags as hashtags at the bottom
 		if (proposal.tags && proposal.tags.length > 0) {
 			content += "\n\n";
-			const tagString = `#letta ${proposal.tags.map(tag => `#${tag}`).join(" ")}`;
+			const tagString = `#lettamade ${proposal.tags.map(tag => `#${tag}`).join(" ")}`;
 			content += tagString;
 		} else {
-			content += "\n\n#letta";
+			content += "\n\n#lettamade";
 		}
 		
 		// Add timestamp and agent info at the bottom
