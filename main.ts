@@ -5290,10 +5290,6 @@ class LettaChatView extends ItemView {
 				console.log(`[Letta Plugin] Successfully created new temp note: ${tempPath}`);
 			}
 			
-			// Verify the file exists
-			const createdFile = this.app.vault.getAbstractFileByPath(tempPath);
-			console.log("[Letta Plugin] File verification:", createdFile ? "file exists" : "FILE NOT FOUND!");
-			
 			return tempPath;
 		} catch (error) {
 			console.error("[Letta Plugin] Failed to create/update temp file:", error);
@@ -5789,16 +5785,41 @@ class LettaChatView extends ItemView {
 				console.log("[Letta Plugin] Deleted original temp file");
 			}
 			
-			// Delete the new temp file if it exists (in case of title conflicts)
+			// Try to modify existing file first, create if it doesn't exist
 			const newTempFile = this.app.vault.getAbstractFileByPath(newTempPath);
 			if (newTempFile) {
-				await this.app.vault.delete(newTempFile as any);
-				console.log("[Letta Plugin] Deleted conflicting temp file");
+				// File exists, modify it
+				await this.app.vault.modify(newTempFile as any, content);
+				console.log("[Letta Plugin] Modified existing temp file with edited content");
+			} else {
+				// File doesn't exist in cache, try to create it
+				try {
+					await this.app.vault.create(newTempPath, content);
+					console.log("[Letta Plugin] Created new temp file with edited content");
+				} catch (createError: any) {
+					if (createError.message && createError.message.includes("File already exists")) {
+						// File exists but not in cache - try to get it and modify
+						console.log("[Letta Plugin] File exists but not cached, attempting to modify");
+						const existingFile = this.app.vault.getAbstractFileByPath(newTempPath);
+						if (existingFile) {
+							await this.app.vault.modify(existingFile as any, content);
+							console.log("[Letta Plugin] Modified file that wasn't cached");
+						} else {
+							// Last resort - force delete and recreate
+							try {
+								await this.app.vault.adapter.remove(newTempPath);
+								await this.app.vault.create(newTempPath, content);
+								console.log("[Letta Plugin] Force deleted and recreated temp file");
+							} catch (forceError) {
+								console.error("[Letta Plugin] All recovery attempts failed:", forceError);
+								throw forceError;
+							}
+						}
+					} else {
+						throw createError;
+					}
+				}
 			}
-			
-			// Create new temp file with edited content
-			await this.app.vault.create(newTempPath, content);
-			console.log("[Letta Plugin] Created updated temp file with edited content");
 		} catch (error) {
 			console.error("Failed to update temp file:", error);
 			throw error;
