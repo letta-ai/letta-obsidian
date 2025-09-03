@@ -5255,14 +5255,23 @@ class LettaChatView extends ItemView {
 		const tempPath = `${tempDir}/${tempFileName}`;
 		console.log("[Letta Plugin] Generated temp path:", tempPath);
 
-		// Create note content with frontmatter if needed
-		let content = "";
+		// Create note content with tags as hashtags and metadata at bottom
+		let content = proposal.content || "";
+		
+		// Add tags as hashtags at the bottom
 		if (proposal.tags && proposal.tags.length > 0) {
-			content += "---\n";
-			content += `tags: [${proposal.tags.map(tag => `"${tag}"`).join(", ")}]\n`;
-			content += "---\n\n";
+			content += "\n\n";
+			const tagString = `#letta ${proposal.tags.map(tag => `#${tag}`).join(" ")}`;
+			content += tagString;
+		} else {
+			content += "\n\n#letta";
 		}
-		content += proposal.content || "";
+		
+		// Add timestamp and agent info at the bottom
+		const timestamp = new Date().toISOString();
+		const agentId = this.agent?.id || "unknown";
+		content += `\n\n<small>Created: ${timestamp} | Agent: \`${agentId}\`</small>`;
+		
 		console.log("[Letta Plugin] Generated content length:", content.length);
 
 		// Create or overwrite temp file
@@ -5679,13 +5688,21 @@ class LettaChatView extends ItemView {
 				console.error("[Letta Plugin] Temp file not found at:", tempPath);
 				// Fallback: create the note directly from proposal content
 				console.log("[Letta Plugin] Attempting fallback creation with proposal content");
-				let content = "";
+				let content = proposal.content || "";
+				
+				// Add tags as hashtags at the bottom
 				if (proposal.tags && proposal.tags.length > 0) {
-					content += "---\n";
-					content += `tags: [${proposal.tags.map(tag => `"${tag}"`).join(", ")}]\n`;
-					content += "---\n\n";
+					content += "\n\n";
+					const tagString = `#letta ${proposal.tags.map(tag => `#${tag}`).join(" ")}`;
+					content += tagString;
+				} else {
+					content += "\n\n#letta";
 				}
-				content += proposal.content || "";
+				
+				// Add timestamp and agent info at the bottom
+				const timestamp = new Date().toISOString();
+				const agentId = this.agent?.id || "unknown";
+				content += `\n\n<small>Created: ${timestamp} | Agent: \`${agentId}\`</small>`;
 				
 				const newFile = await this.app.vault.create(targetPath, content);
 				
