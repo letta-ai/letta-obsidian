@@ -5249,10 +5249,9 @@ class LettaChatView extends ItemView {
 			console.log(`[Letta Plugin] Using existing temp directory: ${tempDir}`);
 		}
 
-		// Generate unique filename with timestamp
-		const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
+		// Generate simple filename without timestamp (can overwrite existing temp files)
 		const sanitizedTitle = proposal.title.replace(/[\\/:*?"<>|]/g, "_");
-		const tempFileName = `${sanitizedTitle}_${timestamp}.md`;
+		const tempFileName = `${sanitizedTitle}.md`;
 		const tempPath = `${tempDir}/${tempFileName}`;
 		console.log("[Letta Plugin] Generated temp path:", tempPath);
 
@@ -5266,18 +5265,29 @@ class LettaChatView extends ItemView {
 		content += proposal.content || "";
 		console.log("[Letta Plugin] Generated content length:", content.length);
 
-		// Create temp file
+		// Create or overwrite temp file
 		try {
-			const tempFile = await this.app.vault.create(tempPath, content);
-			console.log(`[Letta Plugin] Successfully created temp note: ${tempPath}`);
+			const existingFile = this.app.vault.getAbstractFileByPath(tempPath);
+			let tempFile;
 			
-			// Verify the file was created
+			if (existingFile) {
+				// Overwrite existing temp file
+				await this.app.vault.modify(existingFile as any, content);
+				tempFile = existingFile;
+				console.log(`[Letta Plugin] Successfully overwritten existing temp note: ${tempPath}`);
+			} else {
+				// Create new temp file
+				tempFile = await this.app.vault.create(tempPath, content);
+				console.log(`[Letta Plugin] Successfully created new temp note: ${tempPath}`);
+			}
+			
+			// Verify the file exists
 			const createdFile = this.app.vault.getAbstractFileByPath(tempPath);
 			console.log("[Letta Plugin] File verification:", createdFile ? "file exists" : "FILE NOT FOUND!");
 			
 			return tempPath;
 		} catch (error) {
-			console.error("[Letta Plugin] Failed to create temp file:", error);
+			console.error("[Letta Plugin] Failed to create/update temp file:", error);
 			throw error;
 		}
 	}
