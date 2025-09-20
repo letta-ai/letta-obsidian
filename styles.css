@@ -22,13 +22,21 @@
 }
 
 .letta-chat-title-section {
-    margin-bottom: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
-.letta-title-container {
+.letta-name-container {
     display: flex;
     align-items: baseline;
+}
+
+.letta-buttons-container {
+    display: flex;
     gap: 8px;
+    align-items: center;
+    margin-top: 4px;
 }
 
 .letta-chat-title {
@@ -58,6 +66,7 @@
     align-items: center;
     gap: 6px;
     font-size: 0.85em;
+    margin-top: 8px;
 }
 
 .letta-status-dot {
@@ -222,12 +231,12 @@
 
 /* Chat Messages - Modern Bubble Style */
 .letta-message {
-    margin-bottom: 12px;
+    margin-bottom: 20px;
     display: flex;
     position: relative;
     word-wrap: break-word;
     line-height: 1.4;
-    
+
     /* Enable text selection */
     -webkit-user-select: text;
     -moz-user-select: text;
@@ -235,8 +244,15 @@
     user-select: text;
 }
 
+/* Add extra spacing after user messages to separate conversation turns */
 .letta-message-user {
     justify-content: flex-end;
+    margin-bottom: 24px;
+}
+
+/* Add extra spacing after assistant messages when followed by user message */
+.letta-message-assistant + .letta-message-user {
+    margin-top: 12px;
 }
 
 .letta-message-user .letta-message-bubble {
@@ -268,7 +284,7 @@
 
 .letta-message-reasoning {
     justify-content: flex-start;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
 }
 
 .letta-message-reasoning .letta-message-bubble {
@@ -284,10 +300,27 @@
     font-weight: 300;
 }
 
+.letta-message-system {
+    justify-content: center;
+    margin-bottom: 12px;
+    margin-top: -8px; /* Reduce space above system messages */
+}
+
+.letta-message-system .letta-message-bubble {
+    background: var(--background-modifier-hover);
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    max-width: 80%;
+    font-size: 0.85em;
+    padding: 8px 12px;
+    text-align: center;
+}
+
 
 .letta-message-tool-call {
     justify-content: flex-start;
-    margin-bottom: 3px;
+    margin-bottom: 6px;
 }
 
 .letta-message-tool-call .letta-message-bubble {
