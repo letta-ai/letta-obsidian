@@ -66,19 +66,20 @@ interface LettaPluginSettings {
 	lettaProjectSlug: string;
 	agentId: string;
 	agentName: string; // Keep for display purposes, but use agentId for API calls
-	sourceName: string;
-	autoSync: boolean;
 	autoConnect: boolean; // Control whether to auto-connect on startup
-	syncOnStartup: boolean; // Control whether to sync vault after connecting on startup
 	showReasoning: boolean; // Control whether reasoning messages are visible
 	enableStreaming: boolean; // Control whether to use streaming API responses
-	focusMode: boolean; // Control whether to open only the active file and close others
 	allowAgentCreation: boolean; // Control whether agent creation modal can be shown
-	askBeforeFolderCreation: boolean; // Ask for consent before creating Letta folders
-	askBeforeFolderAttachment: boolean; // Ask for consent before attaching folders to agents
 	enableCustomTools: boolean; // Control whether to register custom Obsidian tools
 	askBeforeToolRegistration: boolean; // Ask for consent before registering custom tools
 	defaultNoteFolder: string; // Default folder for new notes created via custom tools
+	// Deprecated properties (kept for compatibility)
+	sourceName?: string;
+	autoSync?: boolean;
+	syncOnStartup?: boolean;
+	focusMode?: boolean;
+	askBeforeFolderCreation?: boolean;
+	askBeforeFolderAttachment?: boolean;
 }
 
 const DEFAULT_SETTINGS: LettaPluginSettings = {
@@ -87,16 +88,10 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	lettaProjectSlug: "", // No default project - will be determined by agent selection
 	agentId: "",
 	agentName: "Obsidian Assistant",
-	sourceName: "obsidian-vault-files",
-	autoSync: false,
 	autoConnect: false, // Default to not auto-connecting to avoid startup blocking
-	syncOnStartup: false,
 	showReasoning: true, // Default to showing reasoning messages in tool interactions
 	enableStreaming: true, // Default to enabling streaming for real-time responses
-	focusMode: false, // Default to having focus mode disabled
 	allowAgentCreation: true, // Default to enabling agent creation modal
-	askBeforeFolderCreation: true, // Default to asking before creating folders
-	askBeforeFolderAttachment: true, // Default to asking before attaching folders to agents
 	enableCustomTools: true, // Default to enabling custom tools
 	askBeforeToolRegistration: true, // Default to asking before registering tools
 	defaultNoteFolder: "", // Default to root folder
@@ -179,14 +174,8 @@ interface AgentConfig {
 export default class LettaPlugin extends Plugin {
 	settings: LettaPluginSettings;
 	agent: LettaAgent | null = null;
-	source: LettaSource | null = null;
 	statusBarItem: HTMLElement | null = null;
 	client: LettaClient | null = null;
-
-	// Focus mode debouncing and sync tracking
-	private activeFileChangeTimeout: NodeJS.Timeout | null = null;
-	private lastProcessedFile: string | null = null;
-	private syncingFiles: Set<string> = new Set();
 
 	async onload() {
 		await this.loadSettings();
@@ -236,21 +225,7 @@ export default class LettaPlugin extends Plugin {
 			},
 		});
 
-		this.addCommand({
-			id: "sync-vault-to-letta",
-			name: "Sync Vault",
-			callback: async () => {
-				await this.syncVaultToLetta();
-			},
-		});
 
-		this.addCommand({
-			id: "sync-current-file-to-letta",
-			name: "Sync Current File",
-			editorCallback: async (editor: Editor, view: MarkdownView) => {
-				await this.syncCurrentFile(view.file);
-			},
-		});
 
 		this.addCommand({
 			id: "open-block-folder",
@@ -277,7 +252,7 @@ export default class LettaPlugin extends Plugin {
 			id: "connect-to-letta",
 			name: "Connect",
 			callback: async () => {
-				if (this.agent && this.source) {
+				if (this.agent) {
 					new Notice("Already connected");
 					return;
 				}
@@ -290,7 +265,6 @@ export default class LettaPlugin extends Plugin {
 			name: "Disconnect",
 			callback: () => {
 				this.agent = null;
-				this.source = null;
 				this.updateStatusBar("Disconnected");
 				new Notice("Disconnected");
 			},
@@ -311,38 +285,7 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		// Auto-sync on file changes if configured
-		if (this.settings.autoSync) {
-			this.registerEvent(
-				this.app.vault.on("create", (file) => {
-					if (file instanceof TFile) {
-						this.onFileChange(file);
-					}
-				}),
-			);
-			this.registerEvent(
-				this.app.vault.on("modify", (file) => {
-					if (file instanceof TFile) {
-						this.onFileChange(file);
-					}
-				}),
-			);
-			this.registerEvent(
-				this.app.vault.on("delete", (file) => {
-					if (file instanceof TFile) {
-						this.onFileDelete(file);
-					}
-				}),
-			);
-		}
 
-		// Track active file changes for focus mode with debouncing
-		this.registerEvent(
-			this.app.workspace.on("active-leaf-change", (leaf) => {
-				if (this.settings.focusMode) {
-					this.onActiveFileChangeDebounced();
-				}
-			}),
-		);
 
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => {
@@ -351,32 +294,11 @@ export default class LettaPlugin extends Plugin {
 			}),
 		);
 
-		// Add context menu for syncing files
-		this.registerEvent(
-			this.app.workspace.on("file-menu", (menu, file) => {
-				if (file instanceof TFile && file.path.endsWith(".md")) {
-					menu.addItem((item) => {
-						item.setTitle("Sync to Letta")
-							.setIcon("bot")
-							.onClick(async () => {
-								await this.syncCurrentFile(file);
-							});
-					});
-				}
-			}),
-		);
 	}
 
 	onunload() {
-		// Clean up any pending timeouts
-		if (this.activeFileChangeTimeout) {
-			clearTimeout(this.activeFileChangeTimeout);
-			this.activeFileChangeTimeout = null;
-		}
 
 		this.agent = null;
-		this.source = null;
-		this.syncingFiles.clear();
 	}
 
 	async loadSettings() {
@@ -690,6 +612,15 @@ export default class LettaPlugin extends Plugin {
 		const isCloudInstance =
 			this.settings.lettaBaseUrl.includes("api.letta.com");
 
+		console.log(`[Letta Plugin] connectToLetta called - attempt ${attempt}/${maxAttempts}`);
+		console.log(`[Letta Plugin] Connection details:`, {
+			baseUrl: this.settings.lettaBaseUrl,
+			isCloudInstance,
+			hasApiKey: !!this.settings.lettaApiKey,
+			hasClient: !!this.client,
+			currentAgent: this.agent
+		});
+
 		// Connection attempt ${attempt}/${maxAttempts} to ${this.settings.lettaBaseUrl}
 
 		// Validate URL format on first attempt
@@ -731,11 +662,9 @@ export default class LettaPlugin extends Plugin {
 
 			// Test connection by trying to list agents (this endpoint should exist)
 			if (!this.client) throw new Error("Client not initialized");
+			console.log("[Letta Plugin] Testing connection by listing agents...");
 			await this.client.agents.list();
-
-			// Setup source and agent
-			progressCallback?.("Setting up data source...");
-			await this.setupSource();
+			console.log("[Letta Plugin] Connection test successful");
 
 			// Try to setup agent if one is configured
 			if (this.settings.agentId) {
@@ -764,10 +693,19 @@ export default class LettaPlugin extends Plugin {
 				new Notice(`Connected to Letta after ${attempt} attempts`);
 			}
 
-			// Sync vault on startup if configured
-			if (this.settings.syncOnStartup) {
-				progressCallback?.("Syncing vault files...");
-				await this.syncVaultToLetta();
+			console.log("[Letta Plugin] connectToLetta completed successfully");
+			console.log("[Letta Plugin] Final state:", {
+				hasAgent: !!this.agent,
+				agentId: this.agent?.id,
+				agentName: this.agent?.name
+			});
+
+			// Ensure chat view UI is updated after connection, regardless of agent state
+			this.updateStatusBar("Connected");
+			const chatLeaf = this.app.workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE)[0];
+			if (chatLeaf && chatLeaf.view instanceof LettaChatView) {
+				console.log("[Letta Plugin] Forcing chat status update after connection");
+				(chatLeaf.view as LettaChatView).updateChatStatus();
 			}
 
 			return true;
@@ -836,194 +774,8 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-	async setupSource(): Promise<void> {
-		try {
-			// Try to get existing source
-			console.log(
-				`[Letta Plugin] Setting up source: ${this.settings.sourceName}`,
-			);
-			let existingSource = null;
-
-			try {
-				if (!this.client) throw new Error("Client not initialized");
-				// Use SDK's retrieveByName method to get folder by name
-				existingSource = (await this.client.folders.retrieveByName(
-					this.settings.sourceName,
-				)) as any;
-				console.log(
-					`[Letta Plugin] Existing source response:`,
-					existingSource,
-				);
-				console.log(
-					`[Letta Plugin] Existing source type:`,
-					typeof existingSource,
-				);
-			} catch (lookupError: any) {
-				console.log(
-					`[Letta Plugin] Source lookup failed:`,
-					lookupError.message,
-				);
-				console.log(
-					`[Letta Plugin] Lookup error status:`,
-					lookupError.status,
-				);
-				// If it's a 404, that's expected for non-existent sources
-				if (lookupError.status === 404) {
-					console.log(
-						`[Letta Plugin] Source does not exist (404), will create new one`,
-					);
-					existingSource = null;
-				} else {
-					// For other errors, re-throw
-					throw lookupError;
-				}
-			}
-
-			if (existingSource) {
-				// Handle different response formats from the API
-				if (typeof existingSource === "string") {
-					// API returned just the source ID as a string
-					this.source = {
-						id: existingSource,
-						name: this.settings.sourceName,
-					};
-					console.log(
-						`[Letta Plugin] Using existing source with ID: ${existingSource}`,
-					);
-				} else if (existingSource.id) {
-					// API returned a full source object
-					this.source = {
-						id: existingSource.id,
-						name: existingSource.name,
-					};
-					console.log(
-						`[Letta Plugin] Using existing source object: ${existingSource.id}`,
-					);
-				} else {
-					console.warn(
-						`[Letta Plugin] Unexpected source response format:`,
-						existingSource,
-					);
-					throw new Error(
-						"Unexpected response format from source lookup",
-					);
-				}
-			} else {
-				// Create new source
-				const isCloudInstance =
-					this.settings.lettaBaseUrl.includes("api.letta.com");
-				const sourceBody: any = {
-					name: this.settings.sourceName,
-					instructions:
-						"A collection of markdown files from an Obsidian vault. Directory structure is preserved using folder paths.",
-				};
-
-				// Check if user consent is required before creating folder
-				if (this.settings.askBeforeFolderCreation) {
-					const consentModal = new FolderCreationConsentModal(
-						this.app,
-						this,
-						this.settings.sourceName,
-					);
-					const userConsent = await consentModal.show();
-
-					if (!userConsent) {
-						throw new Error(
-							"User declined folder creation. Letta setup cancelled.",
-						);
-					}
-				}
-
-				try {
-					if (!this.client) throw new Error("Client not initialized");
-					const newSource =
-						await this.client.folders.create(sourceBody);
-
-					this.source = {
-						id: newSource.id!,
-						name: newSource.name || this.settings.sourceName,
-					};
-					console.log(
-						`[Letta Plugin] Created new source: ${newSource.id}`,
-					);
-				} catch (createError: any) {
-					// Handle 409 conflict - source was created between our check and creation attempt
-					if (
-						createError.message &&
-						createError.message.includes("409")
-					) {
-						console.log(
-							`[Letta Plugin] Source creation conflict (409), retrying lookup...`,
-						);
-
-						// Retry the source lookup since it was likely created by another process
-						let retrySource = null;
-						try {
-							if (!this.client)
-								throw new Error("Client not initialized");
-							retrySource =
-								(await this.client.folders.retrieveByName(
-									this.settings.sourceName,
-								)) as any;
-							console.log(
-								`[Letta Plugin] Retry source response:`,
-								retrySource,
-							);
-						} catch (retryError: any) {
-							console.log(
-								`[Letta Plugin] Retry source lookup failed:`,
-								retryError.message,
-							);
-							console.log(
-								`[Letta Plugin] Retry error status:`,
-								retryError.status,
-							);
-							throw new Error(
-								`Source creation failed with 409 conflict and retry lookup also failed: ${retryError.message}`,
-							);
-						}
-
-						if (retrySource) {
-							if (typeof retrySource === "string") {
-								this.source = {
-									id: retrySource,
-									name: this.settings.sourceName,
-								};
-								console.log(
-									`[Letta Plugin] Using existing source after conflict: ${retrySource}`,
-								);
-							} else if (retrySource.id) {
-								this.source = {
-									id: retrySource.id,
-									name: retrySource.name,
-								};
-								console.log(
-									`[Letta Plugin] Using existing source object after conflict: ${retrySource.id}`,
-								);
-							} else {
-								throw new Error(
-									"Source creation failed and retry lookup returned unexpected format",
-								);
-							}
-						} else {
-							throw new Error(
-								"Source creation failed with 409 conflict but retry lookup found no source",
-							);
-						}
-					} else {
-						// Re-throw non-409 errors
-						throw createError;
-					}
-				}
-			}
-		} catch (error) {
-			console.error("Failed to setup source:", error);
-			throw error;
-		}
-	}
 
 	async setupAgent(): Promise<void> {
-		if (!this.source) throw new Error("Source not set up");
 
 		// If no agent ID is configured, skip agent setup silently
 		if (!this.settings.agentId) {
@@ -1045,46 +797,6 @@ export default class LettaPlugin extends Plugin {
 				this.settings.agentName = existingAgent.name;
 				await this.saveSettings();
 
-				// Check if folder is already attached to existing agent
-				// Checking if folder is attached to existing agent
-				const agentFolders = existingAgent.sources || [];
-				const folderAttached = agentFolders.some(
-					(s: any) => s.id === this.source!.id,
-				);
-
-				if (!folderAttached) {
-					// Check if user consent is required before attaching folder to agent
-					if (this.settings.askBeforeFolderAttachment) {
-						const consentModal = new FolderAttachmentConsentModal(
-							this.app,
-							this,
-							this.settings.sourceName,
-							this.settings.agentName,
-						);
-						const userConsent = await consentModal.show();
-
-						if (!userConsent) {
-							console.log(
-								`[Letta Plugin] User declined folder attachment to agent ${this.settings.agentName}`,
-							);
-							return; // Skip attachment but continue with agent setup
-						}
-					}
-
-					// Folder not attached, updating agent
-					// Get current folder IDs and add our folder
-					const currentFolderIds = agentFolders.map((s: any) => s.id);
-					currentFolderIds.push(this.source!.id);
-
-					await this.makeRequest(`/v1/agents/${this.agent.id}`, {
-						method: "PATCH",
-						body: {
-							source_ids: currentFolderIds,
-						},
-					});
-				} else {
-					// Folder already attached to agent
-				}
 
 				// Register Obsidian tools after successful agent setup (if enabled)
 				if (this.settings.enableCustomTools) {
@@ -1109,683 +821,18 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
-	// Rate limiter for file uploads (10 files per minute)
-	private uploadQueue: Array<() => Promise<void>> = [];
-	private uploadsInLastMinute: number[] = [];
-	private isProcessingQueue: boolean = false;
 
-	private async addToUploadQueue(
-		uploadFn: () => Promise<void>,
-	): Promise<void> {
-		return new Promise((resolve, reject) => {
-			this.uploadQueue.push(async () => {
-				try {
-					await uploadFn();
-					resolve();
-				} catch (error) {
-					reject(error);
-				}
-			});
 
-			if (!this.isProcessingQueue) {
-				this.processUploadQueue();
-			}
-		});
-	}
 
-	private async processUploadQueue(): Promise<void> {
-		if (this.isProcessingQueue || this.uploadQueue.length === 0) {
-			return;
-		}
 
-		this.isProcessingQueue = true;
 
-		while (this.uploadQueue.length > 0) {
-			// Clean up old timestamps (older than 1 minute)
-			const oneMinuteAgo = Date.now() - 60000;
-			this.uploadsInLastMinute = this.uploadsInLastMinute.filter(
-				(timestamp) => timestamp > oneMinuteAgo,
-			);
 
-			// Check if we can upload (less than 10 uploads in the last minute)
-			if (this.uploadsInLastMinute.length >= 10) {
-				const oldestUpload = Math.min(...this.uploadsInLastMinute);
-				const waitTime = oldestUpload + 60000 - Date.now();
-				// Rate limit reached, waiting
-				await new Promise((resolve) => setTimeout(resolve, waitTime));
-				continue;
-			}
-
-			// Process next upload
-			const uploadFn = this.uploadQueue.shift();
-			if (uploadFn) {
-				try {
-					await uploadFn();
-					this.uploadsInLastMinute.push(Date.now());
-				} catch (error) {
-					// Check if it's a rate limit error
-					if (error.message && error.message.includes("HTTP 429")) {
-						// Hit rate limit, will retry after waiting
-						// Put the upload back at the front of the queue to retry
-						this.uploadQueue.unshift(uploadFn);
-						// Add a small delay before checking rate limits again
-						await new Promise((resolve) =>
-							setTimeout(resolve, 1000),
-						);
-						continue;
-					} else {
-						console.error(
-							"[Letta Plugin] Upload failed with non-rate-limit error:",
-							error,
-						);
-						// For other errors, don't retry and continue with next upload
-					}
-				}
-			}
-		}
-
-		this.isProcessingQueue = false;
-	}
-
-	async syncVaultToLetta(): Promise<void> {
-		// Auto-connect if not connected to server
-		if (!this.source || !this.source.id) {
-			new Notice("Connecting to Letta...");
-			const connected = await this.connectToLetta();
-			if (!connected) {
-				return;
-			}
-		}
-
-		try {
-			// Validate source ID before proceeding
-			if (!this.source || !this.source.id) {
-				throw new Error(
-					"Source not properly initialized for vault sync",
-				);
-			}
-
-			this.updateStatusBar("Syncing...");
-
-			// Get existing files from Letta
-			if (!this.client) throw new Error("Client not initialized");
-			const existingFiles = await this.client.folders.files.list(
-				this.source.id,
-			);
-			const existingFilesMap = new Map();
-			existingFiles.forEach((file: any) => {
-				existingFilesMap.set(file.file_name, file);
-			});
-
-			// Get all markdown files from vault
-			const vaultFiles = this.app.vault.getMarkdownFiles();
-			let uploadCount = 0;
-			let skipCount = 0;
-			const filesToUpload: TFile[] = [];
-
-			// First pass: determine which files need uploading
-			for (const file of vaultFiles) {
-				const existingFile = existingFilesMap.get(file.path);
-
-				let shouldUpload = true;
-
-				if (existingFile) {
-					// Compare file sizes and modification times
-					const localFileSize = file.stat.size;
-
-					if (existingFile.file_size === localFileSize) {
-						// If sizes match, compare modification times
-						const localMtime = file.stat.mtime;
-						const existingMtime = existingFile.updated_at
-							? new Date(existingFile.updated_at).getTime()
-							: 0;
-
-						if (localMtime <= existingMtime) {
-							shouldUpload = false;
-							skipCount++;
-						}
-					}
-				}
-
-				if (shouldUpload) {
-					filesToUpload.push(file);
-				}
-			}
-
-			// Second pass: upload files with rate limiting
-			if (filesToUpload.length > 0) {
-				new Notice(
-					`Uploading ${filesToUpload.length} files with rate limiting...`,
-				);
-				let processedCount = 0;
-
-				const uploadPromises = filesToUpload.map(
-					async (file, index) => {
-						const existingFile = existingFilesMap.get(file.path);
-
-						return this.addToUploadQueue(async () => {
-							// Validate source ID before starting upload
-							if (!this.source || !this.source.id) {
-								throw new Error(
-									"Source not properly initialized for upload",
-								);
-							}
-
-							// Delete existing file if it exists
-							if (existingFile) {
-								await this.makeRequest(
-									`/v1/folders/${this.source.id}/${existingFile.id}`,
-									{
-										method: "DELETE",
-									},
-								);
-							}
-
-							// Upload new file
-							const content = await this.app.vault.read(file);
-
-							// Skip files with no content
-							if (!content || content.trim().length === 0) {
-								// Skipping empty file
-								skipCount++;
-								processedCount++;
-								this.updateStatusBar(
-									`Syncing (${processedCount}/${filesToUpload.length})`,
-								);
-								return;
-							}
-
-							// Uploading file ${processedCount + 1}/${filesToUpload.length}
-
-							// Create multipart form data and query parameters for file upload
-							const boundary =
-								"----formdata-obsidian-" +
-								Math.random().toString(36).substr(2);
-							const multipartBody = [
-								`--${boundary}`,
-								`Content-Disposition: form-data; name="file"; filename="${file.path}"`,
-								"Content-Type: text/markdown",
-								"",
-								content,
-								`--${boundary}--`,
-							].join("\r\n");
-
-							const queryParams = new URLSearchParams({
-								name: file.path,
-								duplicate_handling: "replace",
-							});
-
-							await this.makeRequest(
-								`/v1/folders/${this.source.id}/upload?${queryParams}`,
-								{
-									method: "POST",
-									headers: {
-										"Content-Type": `multipart/form-data; boundary=${boundary}`,
-									},
-									body: multipartBody,
-									isFileUpload: true,
-								},
-							);
-
-							uploadCount++;
-							processedCount++;
-
-							// Update status bar with progress
-							this.updateStatusBar(
-								`Syncing (${processedCount}/${filesToUpload.length})`,
-							);
-						});
-					},
-				);
-
-				await Promise.all(uploadPromises);
-			}
-
-			this.updateStatusBar("Connected");
-			new Notice(
-				`Sync complete: ${uploadCount} files uploaded, ${skipCount} files skipped`,
-			);
-		} catch (error: any) {
-			console.error("Failed to sync vault:", error);
-			this.updateStatusBar("Error");
-			new Notice(`Sync failed: ${error.message}`);
-		}
-	}
-
-	async syncCurrentFile(file: TFile | null): Promise<void> {
-		if (!file) {
-			new Notice("No active file to sync");
-			return;
-		}
-
-		if (!file.path.endsWith(".md")) {
-			new Notice("Only markdown files can be synced to Letta");
-			return;
-		}
-
-		// Auto-connect if not connected to server
-		if (!this.source || !this.source.id) {
-			new Notice("Connecting to Letta...");
-			const connected = await this.connectToLetta();
-			if (!connected) {
-				return;
-			}
-		}
-
-		try {
-			// Only show status if called independently (not from openFileInAgent)
-			const isCalledFromOpenFile = this.syncingFiles.has(file.path);
-			if (!isCalledFromOpenFile) {
-				this.updateStatusBar(`Syncing ${file.name}...`);
-			}
-
-			// Use rate-limited upload for single files too
-			await this.addToUploadQueue(async () => {
-				// Validate source ID before starting upload
-				if (!this.source || !this.source.id) {
-					throw new Error(
-						"Source not properly initialized for upload",
-					);
-				}
-
-				const content = await this.app.vault.read(file);
-
-				// Check if file exists in Letta and get metadata
-				if (!this.client) throw new Error("Client not initialized");
-				const existingFiles = await this.client.folders.files.list(
-					this.source.id,
-				);
-				const existingFile = existingFiles.find(
-					(f: any) => f.file_name === file.path,
-				);
-
-				if (existingFile) {
-					// Delete existing file first
-					await this.makeRequest(
-						`/v1/folders/${this.source.id}/${existingFile.id}`,
-						{
-							method: "DELETE",
-						},
-					);
-				}
-
-				// Upload the file with query parameters for full path
-				const boundary =
-					"----formdata-obsidian-" +
-					Math.random().toString(36).substr(2);
-				const multipartBody = [
-					`--${boundary}`,
-					`Content-Disposition: form-data; name="file"; filename="${file.path}"`,
-					"Content-Type: text/markdown",
-					"",
-					content,
-					`--${boundary}--`,
-				].join("\r\n");
-
-				const queryParams = new URLSearchParams({
-					name: file.path,
-					duplicate_handling: "replace",
-				});
-
-				await this.makeRequest(
-					`/v1/folders/${this.source.id}/upload?${queryParams}`,
-					{
-						method: "POST",
-						headers: {
-							"Content-Type": `multipart/form-data; boundary=${boundary}`,
-						},
-						body: multipartBody,
-						isFileUpload: true,
-					},
-				);
-
-				// Only show success status if called independently
-				if (!isCalledFromOpenFile) {
-					this.updateStatusBar("Connected");
-				}
-			});
-		} catch (error: any) {
-			console.error("Failed to sync current file:", error);
-			// Only show error status if called independently
-			const isCalledFromOpenFile = this.syncingFiles.has(file.path);
-			if (!isCalledFromOpenFile) {
-				this.updateStatusBar("Error");
-				new Notice(`Failed to sync file: ${error.message}`);
-			}
-			throw error; // Re-throw for openFileInAgent to handle
-		}
-	}
-
-	async onFileChange(file: TFile): Promise<void> {
-		// Skip block files - they should not auto-sync
-		if (file.path.includes("Letta Memory Blocks/")) {
-			return;
-		}
-
-		if (!file.path.endsWith(".md")) {
-			return;
-		}
-
-		// Auto-connect if not connected to server (silently for auto-sync)
-		if (!this.source || !this.source.id) {
-			try {
-				await this.connectToLetta();
-			} catch (error) {
-				// Silent fail for auto-sync - don't spam user with notices
-				// Auto-sync failed: not connected
-				return;
-			}
-		}
-
-		try {
-			// Use rate-limited upload for auto-sync too
-			await this.addToUploadQueue(async () => {
-				// Validate source ID before starting upload
-				if (!this.source || !this.source.id) {
-					throw new Error(
-						"Source not properly initialized for upload",
-					);
-				}
-
-				const content = await this.app.vault.read(file);
-
-				// Skip files with no content (silently for auto-sync)
-				if (!content || content.trim().length === 0) {
-					// Skipping empty file in auto-sync
-					return;
-				}
-
-				// Delete existing file if it exists
-				try {
-					const existingFiles = await this.makeRequest(
-						`/v1/folders/${this.source.id}/files`,
-					);
-					const existingFile = existingFiles.find(
-						(f: any) => f.file_name === file.path,
-					);
-					if (existingFile) {
-						await this.makeRequest(
-							`/v1/folders/${this.source.id}/${existingFile.id}`,
-							{
-								method: "DELETE",
-							},
-						);
-					}
-				} catch (error) {
-					// File might not exist, continue with upload
-				}
-
-				// Auto-syncing file change as multipart
-
-				// Create multipart form data and query parameters for file upload
-				const boundary =
-					"----formdata-obsidian-" +
-					Math.random().toString(36).substr(2);
-				const multipartBody = [
-					`--${boundary}`,
-					`Content-Disposition: form-data; name="file"; filename="${file.path}"`,
-					"Content-Type: text/markdown",
-					"",
-					content,
-					`--${boundary}--`,
-				].join("\r\n");
-
-				const queryParams = new URLSearchParams({
-					name: file.path,
-					duplicate_handling: "replace",
-				});
-
-				await this.makeRequest(
-					`/v1/folders/${this.source.id}/upload?${queryParams}`,
-					{
-						method: "POST",
-						headers: {
-							"Content-Type": `multipart/form-data; boundary=${boundary}`,
-						},
-						body: multipartBody,
-						isFileUpload: true,
-					},
-				);
-			});
-		} catch (error) {
-			console.error("Failed to sync file change:", error);
-		}
-	}
-
-	async onFileDelete(file: TFile): Promise<void> {
-		if (!file.path.endsWith(".md")) {
-			return;
-		}
-
-		// Auto-connect if not connected to server (silently for auto-sync)
-		if (!this.source || !this.source.id) {
-			try {
-				await this.connectToLetta();
-			} catch (error) {
-				// Silent fail for auto-sync - don't spam user with notices
-				// Auto-delete failed: not connected
-				return;
-			}
-		}
-
-		try {
-			// Validate source ID before proceeding
-			if (!this.source || !this.source.id) {
-				throw new Error(
-					"Source not properly initialized for file deletion",
-				);
-			}
-
-			if (!this.client) throw new Error("Client not initialized");
-			const existingFiles = await this.client.folders.files.list(
-				this.source.id,
-			);
-			const existingFile = existingFiles.find(
-				(f: any) => f.file_name === file.path,
-			);
-
-			if (existingFile) {
-				await this.makeRequest(
-					`/v1/folders/${this.source.id}/${existingFile.id}`,
-					{
-						method: "DELETE",
-					},
-				);
-			}
-		} catch (error) {
-			console.error("Failed to delete file from Letta:", error);
-		}
-	}
-
-	async openFileInAgent(file: TFile): Promise<void> {
-		if (!this.agent || !this.source) {
-			return;
-		}
-
-		// Skip if file is already being synced
-		if (this.syncingFiles.has(file.path)) {
-			return;
-		}
-
-		try {
-			if (!this.client) throw new Error("Client not initialized");
-			const existingFiles = await this.client.folders.files.list(
-				this.source.id,
-			);
-			const existingFile = existingFiles.find(
-				(f: any) => f.file_name === file.path,
-			);
-
-			if (existingFile) {
-				await this.makeRequest(
-					`/v1/agents/${this.agent.id}/files/${existingFile.id}/open`,
-					{
-						method: "PATCH",
-					},
-				);
-			} else {
-				// Mark file as being synced
-				this.syncingFiles.add(file.path);
-
-				// Show simple sync status
-				this.updateStatusBar("Syncing...");
-
-				try {
-					// Auto-sync the missing file
-					await this.syncCurrentFile(file);
-
-					// Simple retry - just check once after sync
-					await new Promise((resolve) => setTimeout(resolve, 1000));
-					const updatedFiles = await this.makeRequest(
-						`/v1/folders/${this.source.id}/files`,
-					);
-					const newFile = updatedFiles.find(
-						(f: any) => f.file_name === file.path,
-					);
-
-					if (newFile) {
-						await this.makeRequest(
-							`/v1/agents/${this.agent.id}/files/${newFile.id}/open`,
-							{
-								method: "PATCH",
-							},
-						);
-						this.updateStatusBar("Connected");
-					} else {
-						this.updateStatusBar("Connected"); // Still show connected even if file not found
-					}
-				} catch (syncError) {
-					console.error("Failed to sync file:", syncError);
-					this.updateStatusBar("Connected"); // Return to connected state
-				} finally {
-					// Always remove from syncing set
-					this.syncingFiles.delete(file.path);
-				}
-			}
-		} catch (error) {
-			console.error("Failed to open file in agent:", error);
-			this.updateStatusBar("Connected"); // Return to connected state on error
-		}
-	}
-
-	async closeFileInAgent(file: TFile): Promise<void> {
-		if (!this.agent || !this.source) return;
-
-		try {
-			if (!this.client) throw new Error("Client not initialized");
-			const existingFiles = await this.client.folders.files.list(
-				this.source.id,
-			);
-			const existingFile = existingFiles.find(
-				(f: any) => f.file_name === file.path,
-			);
-
-			if (existingFile) {
-				await this.makeRequest(
-					`/v1/agents/${this.agent.id}/files/${existingFile.id}/close`,
-					{
-						method: "PATCH",
-					},
-				);
-			}
-		} catch (error) {
-			console.error("Failed to close file in agent:", error);
-		}
-	}
-
-	async closeAllFilesInAgent(): Promise<void> {
-		// console.log('[LETTA DEBUG] closeAllFilesInAgent called');
-
-		if (!this.agent) {
-			// console.log('[LETTA DEBUG] closeAllFilesInAgent - early return: no agent');
-			return;
-		}
-
-		try {
-			// console.log('[LETTA DEBUG] closeAllFilesInAgent - making API request to close all files');
-			await this.makeRequest(
-				`/v1/agents/${this.agent.id}/files/close-all`,
-				{
-					method: "PATCH",
-				},
-			);
-			// console.log('[LETTA DEBUG] closeAllFilesInAgent - successfully closed all files');
-		} catch (error) {
-			console.error("Failed to close all files in agent:", error);
-		}
-	}
-
-	async onActiveFileChange(): Promise<void> {
-		if (!this.settings.focusMode || !this.agent) {
-			return;
-		}
-
-		const activeFile = this.app.workspace.getActiveFile();
-
-		if (!activeFile || !activeFile.path.endsWith(".md")) {
-			return;
-		}
-
-		// Skip if this is the same file we just processed
-		if (this.lastProcessedFile === activeFile.path) {
-			return;
-		}
-
-		// Skip if this file is currently being synced
-		if (this.syncingFiles.has(activeFile.path)) {
-			return;
-		}
-
-		this.lastProcessedFile = activeFile.path;
-
-		try {
-			// Close all files first
-			await this.closeAllFilesInAgent();
-
-			// Open the currently active file
-			await this.openFileInAgent(activeFile);
-		} catch (error) {
-			console.error(
-				"Failed to apply focus mode on active file change:",
-				error,
-			);
-		}
-	}
-
-	onActiveFileChangeDebounced(): void {
-		// Clear existing timeout if it exists
-		if (this.activeFileChangeTimeout) {
-			clearTimeout(this.activeFileChangeTimeout);
-		}
-
-		// Set up debounced call
-		this.activeFileChangeTimeout = setTimeout(() => {
-			this.onActiveFileChange();
-		}, 500); // 500ms debounce delay
-	}
-
-	async applyFocusMode(): Promise<void> {
-		if (!this.agent) return;
-
-		try {
-			// Close all files first
-			await this.closeAllFilesInAgent();
-
-			// Open the currently active file if there is one
-			const activeFile = this.app.workspace.getActiveFile();
-			if (activeFile && activeFile.path.endsWith(".md")) {
-				await this.openFileInAgent(activeFile);
-			}
-		} catch (error) {
-			console.error("Failed to apply focus mode:", error);
-		}
-	}
 
 	async openChatView(): Promise<void> {
 		// console.log('[LETTA DEBUG] openChatView called');
 
 		// Auto-connect if not connected to server
-		if (!this.source) {
+		if (!this.agent) {
 			// console.log('[LETTA DEBUG] openChatView - connecting to Letta');
 			new Notice("Connecting to Letta...");
 			const connected = await this.connectToLetta();
@@ -1827,36 +874,11 @@ export default class LettaPlugin extends Plugin {
 			workspace.revealLeaf(leaf);
 		}
 
-		// If focus mode is enabled and we had an active file, ensure it's opened in the agent
-		if (
-			this.settings.focusMode &&
-			activeFileBeforeChat &&
-			activeFileBeforeChat.path.endsWith(".md")
-		) {
-			// console.log('[LETTA DEBUG] openChatView - applying focus mode for file:', activeFileBeforeChat.path);
-			try {
-				await this.closeAllFilesInAgent();
-				await this.openFileInAgent(activeFileBeforeChat);
-				// console.log('[LETTA DEBUG] openChatView - focus mode applied successfully');
-			} catch (error) {
-				console.error(
-					"Failed to apply focus mode after opening chat:",
-					error,
-				);
-			}
-		} else {
-			console.log(
-				"[LETTA DEBUG] openChatView - not applying focus mode: focusMode =",
-				this.settings.focusMode,
-				"activeFile =",
-				!!activeFileBeforeChat,
-			);
-		}
 	}
 
 	async openMemoryView(): Promise<void> {
 		// Auto-connect if not connected to server
-		if (!this.source) {
+		if (!this.agent) {
 			new Notice("Connecting to Letta...");
 			const connected = await this.connectToLetta();
 			if (!connected) {
@@ -3529,11 +2551,22 @@ class LettaChatView extends ItemView {
 	}
 
 	async updateChatStatus(loadHistoricalMessages = true) {
+		console.log("[Letta Plugin] updateChatStatus called with loadHistoricalMessages:", loadHistoricalMessages);
+
 		// Determine connection status based on plugin state
-		const isServerConnected = this.plugin.source;
-		const isAgentAttached = this.plugin.agent && this.plugin.source;
+		const isAgentAttached = !!this.plugin.agent;
+		const isServerConnected = !!this.plugin.client;
+
+		console.log("[Letta Plugin] updateChatStatus state check:", {
+			hasAgent: !!this.plugin.agent,
+			agentId: this.plugin.agent?.id,
+			agentName: this.plugin.agent?.name,
+			isAgentAttached,
+			isServerConnected
+		});
 
 		if (isAgentAttached) {
+			console.log("[Letta Plugin] updateChatStatus: Taking AGENT_ATTACHED branch - full connection");
 			this.statusDot.className =
 				"letta-status-dot letta-status-connected";
 
@@ -3565,30 +2598,31 @@ class LettaChatView extends ItemView {
 				this.loadHistoricalMessages();
 			}
 		} else if (isServerConnected) {
-			// Connected to server but no agent attached
-			this.statusDot.className =
-				"letta-status-dot letta-status-connected";
+			console.log("[Letta Plugin] updateChatStatus: Taking SERVER_CONNECTED branch - server connected but no agent");
+			// Connected to server but no agent selected
+			this.statusDot.className = "letta-status-dot letta-status-warning";
 			this.statusText.textContent = this.plugin.getConnectionStatusText();
 
-			// Update agent name display to show "No Agent"
+			// Update agent name display to show "No Agent Selected"
 			this.updateAgentNameDisplay();
 
 			if (this.modelButton) {
-				this.modelButton.textContent = "No Agent";
+				this.modelButton.textContent = "Select Agent";
 			}
 
-			// Show header and input when connected to server
+			// Show header but hide input when no agent
 			if (this.header) {
 				this.header.style.display = "flex";
 			}
 			if (this.inputContainer) {
-				this.inputContainer.style.display = "flex";
+				this.inputContainer.style.display = "none";
 			}
 
-			// Remove disconnected message but show no agent message
+			// Show no agent message in chat area
 			this.removeDisconnectedMessage();
-			await this.showNoAgentMessage();
+			this.showNoAgentMessage();
 		} else {
+			console.log("[Letta Plugin] updateChatStatus: Taking DISCONNECTED branch - no connection");
 			// Not connected to server
 			this.statusDot.className = "letta-status-dot";
 			this.statusDot.style.backgroundColor = "var(--text-muted)";
@@ -3616,9 +2650,14 @@ class LettaChatView extends ItemView {
 	}
 
 	updateAgentNameDisplay() {
+		const isServerConnected = !!this.plugin.client;
+
 		if (this.plugin.agent) {
 			this.agentNameElement.textContent = this.plugin.settings.agentName;
 			this.agentNameElement.className = "letta-chat-title";
+		} else if (isServerConnected) {
+			this.agentNameElement.textContent = "No Agent Selected";
+			this.agentNameElement.className = "letta-chat-title no-agent-selected";
 		} else {
 			this.agentNameElement.textContent = "No Agent";
 			this.agentNameElement.className = "letta-chat-title no-agent";
@@ -3666,8 +2705,9 @@ class LettaChatView extends ItemView {
 		});
 
 		connectButton.addEventListener("click", async () => {
+			console.log("[Letta Plugin] Connect button clicked - starting connection process");
 			connectButton.disabled = true;
-			
+
 			// Clear existing content and add spinner
 			connectButton.innerHTML = "";
 			const spinner = connectButton.createEl("span", {
@@ -3680,17 +2720,29 @@ class LettaChatView extends ItemView {
 			progressMessage.classList.add("visible");
 
 			try {
+				console.log("[Letta Plugin] Calling connectToLetta from button click handler");
 				const connected = await this.plugin.connectToLetta(1, (message: string) => {
 					progressMessage.textContent = message;
 				});
-				
+
+				console.log("[Letta Plugin] connectToLetta returned:", connected);
+
 				if (connected) {
-					// Connection successful - message will be removed by updateChatStatus
+					console.log("[Letta Plugin] Connection successful - calling updateChatStatus to refresh UI");
+					console.log("[Letta Plugin] Current plugin state before updateChatStatus:", {
+						hasAgent: !!this.plugin.agent,
+						agentId: this.plugin.agent?.id
+					});
+					// Connection successful - explicitly update chat status to refresh UI
+					await this.updateChatStatus();
+					console.log("[Letta Plugin] updateChatStatus completed");
 				} else {
+					console.log("[Letta Plugin] Connection failed - resetting connect button");
 					// Connection failed - reset button
 					this.resetConnectButton(connectButton, progressMessage);
 				}
 			} catch (error) {
+				console.log("[Letta Plugin] Exception in connect button handler:", error);
 				// Connection failed - reset button
 				this.resetConnectButton(connectButton, progressMessage);
 			}
@@ -3840,9 +2892,6 @@ class LettaChatView extends ItemView {
 	}
 
 	async createAgentFromConfig(agentConfig: AgentConfig): Promise<void> {
-		if (!this.plugin.source) {
-			throw new Error("Source not set up");
-		}
 
 		// Creating new agent
 		// console.log('[Letta Plugin] Starting agent creation with config:', agentConfig);
@@ -3916,7 +2965,7 @@ class LettaChatView extends ItemView {
 			include_default_source: agentConfig.include_default_source,
 			tags: agentConfig.tags,
 			memory_blocks: agentConfig.memory_blocks,
-			source_ids: [this.plugin.source!.id], // Attach source during creation
+			// source_ids removed - no longer using deprecated folder approach
 			// Specify the correct memory tools
 			tools: ["memory_replace", "memory_insert", "memory_rethink"],
 		};
@@ -4048,8 +3097,14 @@ class LettaChatView extends ItemView {
 
 	openModelSwitcher() {
 		if (!this.plugin.agent) {
-			new Notice("Please connect to Letta first");
-			return;
+			// If server is connected but no agent selected, open agent selector
+			if (this.plugin.client) {
+				this.openAgentSelector();
+				return;
+			} else {
+				new Notice("Please connect to Letta first");
+				return;
+			}
 		}
 
 		const modal = new ModelSwitcherModal(
@@ -4269,7 +3324,7 @@ class LettaChatView extends ItemView {
 		if (!message) return;
 
 		// Check connection and auto-connect if needed
-		if (!this.plugin.source) {
+		if (!this.plugin.agent) {
 			await this.addMessage(
 				"assistant",
 				"Connecting to Letta...",
@@ -7273,7 +6328,7 @@ class LettaMemoryView extends ItemView {
 	async loadBlocks() {
 		try {
 			// Auto-connect if not connected to server
-			if (!this.plugin.source) {
+			if (!this.plugin.agent) {
 				new Notice("Connecting to Letta...");
 				const connected = await this.plugin.connectToLetta();
 				if (!connected) {
@@ -8294,149 +7349,7 @@ class LettaMemoryView extends ItemView {
 	}
 }
 
-class FolderCreationConsentModal extends Modal {
-	plugin: LettaPlugin;
-	sourceName: string;
-	resolve: (consent: boolean) => void;
 
-	constructor(app: App, plugin: LettaPlugin, sourceName: string) {
-		super(app);
-		this.plugin = plugin;
-		this.sourceName = sourceName;
-	}
-
-	async show(): Promise<boolean> {
-		return new Promise<boolean>((resolve) => {
-			this.resolve = resolve;
-			this.open();
-		});
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.empty();
-
-		contentEl.createEl("h2", { text: "Create Letta Folder?" });
-
-		const description = contentEl.createEl("div", {
-			cls: "modal-description",
-		});
-		description.innerHTML = `
-			<p>Letta can create a folder called <strong>"${this.sourceName}"</strong> to store your vault files.</p>
-			<p>This will:</p>
-			<ul>
-				<li>Sync some of your markdown files from your vault to your Letta Server</li>
-				<li>Enable the your agent to review other notes for context</li>
-				<li>Automatically sync changes when you edit files</li>
-			</ul>
-		`;
-
-		const buttonContainer = contentEl.createEl("div", {
-			cls: "modal-button-container",
-		});
-
-		const allowButton = buttonContainer.createEl("button", {
-			text: "Create Folder",
-			cls: "mod-cta",
-		});
-		allowButton.onclick = () => {
-			this.resolve(true);
-			this.close();
-		};
-
-		const denyButton = buttonContainer.createEl("button", {
-			text: "Cancel",
-		});
-		denyButton.onclick = () => {
-			this.resolve(false);
-			this.close();
-		};
-
-		// Auto-focus the deny button for safety
-		denyButton.focus();
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
-}
-
-class FolderAttachmentConsentModal extends Modal {
-	plugin: LettaPlugin;
-	sourceName: string;
-	agentName: string;
-	resolve: (consent: boolean) => void;
-
-	constructor(
-		app: App,
-		plugin: LettaPlugin,
-		sourceName: string,
-		agentName: string,
-	) {
-		super(app);
-		this.plugin = plugin;
-		this.sourceName = sourceName;
-		this.agentName = agentName;
-	}
-
-	async show(): Promise<boolean> {
-		return new Promise<boolean>((resolve) => {
-			this.resolve = resolve;
-			this.open();
-		});
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.empty();
-
-		contentEl.createEl("h2", { text: "Attach Folder to Agent?" });
-
-		const description = contentEl.createEl("div", {
-			cls: "modal-description",
-		});
-		description.innerHTML = `
-			<p>Letta wants to attach the folder <strong>"${this.sourceName}"</strong> to your agent <strong>"${this.agentName}"</strong>.</p>
-			<p>This will:</p>
-			<ul>
-				<li>Give the agent access to all files in this folder</li>
-				<li>Allow the agent to read and reference your vault contents</li>
-				<li>Enable context-aware conversations about your notes</li>
-			</ul>
-			<p>The agent will only have read access to your files.</p>
-		`;
-
-		const buttonContainer = contentEl.createEl("div", {
-			cls: "modal-button-container",
-		});
-
-		const allowButton = buttonContainer.createEl("button", {
-			text: "Attach Folder",
-			cls: "mod-cta",
-		});
-		allowButton.onclick = () => {
-			this.resolve(true);
-			this.close();
-		};
-
-		const denyButton = buttonContainer.createEl("button", {
-			text: "Cancel",
-		});
-		denyButton.onclick = () => {
-			this.resolve(false);
-			this.close();
-		};
-
-		// Auto-focus the deny button for safety
-		denyButton.focus();
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
-}
 
 class ToolRegistrationConsentModal extends Modal {
 	plugin: LettaPlugin;
@@ -9774,35 +8687,6 @@ class LettaSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		new Setting(containerEl)
-			.setName("Source Name")
-			.setDesc("Name for the Letta source containing your vault")
-			.addText((text) =>
-				text
-					.setPlaceholder("obsidian-vault-files")
-					.setValue(this.plugin.settings.sourceName)
-					.onChange(async (value) => {
-						this.plugin.settings.sourceName = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		// Sync Configuration
-		containerEl.createEl("h3", { text: "Sync Configuration" });
-
-		new Setting(containerEl)
-			.setName("Auto Sync")
-			.setDesc(
-				"Automatically sync file changes to Letta. Note: Tracking metadata for large vaults can require significant context and may require users to increase maximum context size.",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.autoSync)
-					.onChange(async (value) => {
-						this.plugin.settings.autoSync = value;
-						await this.plugin.saveSettings();
-					}),
-			);
 
 		new Setting(containerEl)
 			.setName("Auto-Connect on Startup")
@@ -9812,20 +8696,6 @@ class LettaSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.autoConnect)
 					.onChange(async (value) => {
 						this.plugin.settings.autoConnect = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Sync on Startup")
-			.setDesc(
-				"Sync vault to Letta after connecting (requires Auto-Connect enabled)",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.syncOnStartup)
-					.onChange(async (value) => {
-						this.plugin.settings.syncOnStartup = value;
 						await this.plugin.saveSettings();
 					}),
 			);
@@ -9861,23 +8731,6 @@ class LettaSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		new Setting(containerEl)
-			.setName("Focus Mode")
-			.setDesc(
-				"When enabled, only the currently active file is opened in the agent context, all other files are closed",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.focusMode)
-					.onChange(async (value) => {
-						this.plugin.settings.focusMode = value;
-						await this.plugin.saveSettings();
-						// Apply focus mode immediately if enabled
-						if (value) {
-							await this.plugin.applyFocusMode();
-						}
-					}),
-			);
 
 		// Custom Tools Settings
 		containerEl.createEl("h3", { text: "Custom Tools" });
@@ -9940,52 +8793,6 @@ class LettaSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// Consent Settings
-		containerEl.createEl("h3", { text: "Privacy & Consent" });
-
-		new Setting(containerEl)
-			.setName("Ask Before Creating Folders")
-			.setDesc(
-				"Show confirmation dialog before creating Letta folders to store your vault files",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.askBeforeFolderCreation)
-					.onChange(async (value) => {
-						this.plugin.settings.askBeforeFolderCreation = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Ask Before Attaching Folders to Agents")
-			.setDesc(
-				"Show confirmation dialog before giving agents access to your folder contents",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.askBeforeFolderAttachment)
-					.onChange(async (value) => {
-						this.plugin.settings.askBeforeFolderAttachment = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Reset Consent Preferences")
-			.setDesc(
-				"Reset consent settings to always ask for permission before folder operations and tool registration",
-			)
-			.addButton((button) =>
-				button.setButtonText("Reset to Defaults").onClick(async () => {
-					this.plugin.settings.askBeforeFolderCreation = true;
-					this.plugin.settings.askBeforeFolderAttachment = true;
-					this.plugin.settings.askBeforeToolRegistration = true;
-					await this.plugin.saveSettings();
-					this.display(); // Refresh the settings display
-					new Notice("Consent preferences reset to defaults");
-				}),
-			);
 
 		// Actions
 		containerEl.createEl("h3", { text: "Actions" });
@@ -10002,14 +8809,6 @@ class LettaSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		new Setting(containerEl)
-			.setName("Sync Vault")
-			.setDesc("Manually sync all vault files to Letta")
-			.addButton((button) =>
-				button.setButtonText("Sync Now").onClick(async () => {
-					await this.plugin.syncVaultToLetta();
-				}),
-			);
 	}
 
 	async addEmbeddingModelDropdown(setting: Setting) {
@@ -10033,23 +8832,8 @@ class LettaSettingTab extends PluginSettingTab {
 				// Handle changes
 				dropdown.onChange(async (value) => {
 					// Check if the embedding model has actually changed
-					if (value !== "letta/letta-free") {
-						// Show confirmation dialog about re-embedding
-						const shouldProceed =
-							await this.showEmbeddingChangeConfirmation(value);
-
-						if (shouldProceed) {
-							// Update the setting
-							// Remove embedding model setting
-							await this.plugin.saveSettings();
-
-							// Delete existing source and folder to force re-embedding
-							await this.deleteSourceForReembedding();
-						} else {
-							// Revert the dropdown to the original value
-							dropdown.setValue("letta/letta-free");
-						}
-					}
+					// Remove embedding model setting
+					await this.plugin.saveSettings();
 				});
 			});
 		} catch (error) {
@@ -10067,375 +8851,11 @@ class LettaSettingTab extends PluginSettingTab {
 			);
 		}
 
-		// Advanced Actions
-		this.containerEl.createEl("h3", { text: "Advanced Actions" });
-
-		new Setting(this.containerEl)
-			.setName("Delete and Recreate Source")
-			.setDesc(
-				"Delete the current source and recreate it. This will remove all synced files and require a fresh sync.",
-			)
-			.addButton((button) =>
-				button
-					.setButtonText("Delete & Recreate Source")
-					.setClass("mod-warning")
-					.onClick(async () => {
-						const confirmed =
-							await this.showDeleteSourceConfirmation();
-						if (confirmed) {
-							await this.deleteAndRecreateSource();
-						}
-					}),
-			);
 	}
 
-	async showEmbeddingChangeConfirmation(newModel: string): Promise<boolean> {
-		return new Promise((resolve) => {
-			const modal = new Modal(this.app);
-			modal.setTitle("Change Embedding Model");
 
-			const { contentEl } = modal;
 
-			contentEl.createEl("p", {
-				text: `Changing the embedding model to "${newModel}" requires re-embedding all vault files.`,
-			});
 
-			contentEl.createEl("p", {
-				text: "This will:",
-				cls: "setting-item-description",
-			});
-
-			const warningList = contentEl.createEl("ul");
-			warningList.createEl("li", {
-				text: "Delete the existing source and all embedded content",
-			});
-			warningList.createEl("li", {
-				text: "Re-upload and re-embed all vault files",
-			});
-			warningList.createEl("li", {
-				text: "Take some time depending on vault size",
-			});
-
-			contentEl.createEl("p", {
-				text: "Do you want to proceed?",
-				cls: "mod-warning",
-			});
-
-			const buttonContainer = contentEl.createEl("div", {
-				cls: "modal-button-container",
-			});
-
-			const cancelButton = buttonContainer.createEl("button", {
-				text: "Cancel",
-			});
-			cancelButton.addEventListener("click", () => {
-				modal.close();
-				resolve(false);
-			});
-
-			const proceedButton = buttonContainer.createEl("button", {
-				text: "Proceed with Re-embedding",
-				cls: "mod-cta mod-warning",
-			});
-			proceedButton.addEventListener("click", () => {
-				modal.close();
-				resolve(true);
-			});
-
-			modal.open();
-		});
-	}
-
-	async deleteSourceForReembedding() {
-		try {
-			if (this.plugin.source) {
-				// Delete the existing source
-				await this.plugin.makeRequest(
-					`/v1/folders/${this.plugin.source.id}`,
-					{
-						method: "DELETE",
-					},
-				);
-
-				// Clear the source reference
-				this.plugin.source = null;
-
-				// Only sync if auto-sync is enabled
-				if (this.plugin.settings.autoSync) {
-					new Notice(
-						"Existing source deleted. Re-syncing vault with new embedding model...",
-					);
-
-					// Trigger a fresh sync with the new embedding model
-					setTimeout(() => {
-						this.plugin.syncVaultToLetta();
-					}, 1000);
-				} else {
-					new Notice(
-						'Existing source deleted. Use "Sync Vault to Letta" to upload files.',
-					);
-				}
-			}
-		} catch (error) {
-			console.error("Failed to delete source for re-embedding:", error);
-			new Notice(
-				"Failed to delete existing source. You may need to manually delete it.",
-			);
-		}
-	}
-
-	async showRebuildFolderConfirmation(
-		agentModel: string,
-		folderModel: string,
-	): Promise<boolean> {
-		return new Promise((resolve) => {
-			const modal = new Modal(this.app);
-			modal.setTitle("Rebuild Vault Folder with Agent Embedding");
-
-			const { contentEl } = modal;
-
-			contentEl.createEl("p", {
-				text: `This will rebuild the vault folder to use the same embedding model as your agent.`,
-			});
-
-			contentEl.createEl("p", {
-				text: "Changes:",
-				cls: "setting-item-description",
-			});
-
-			const changesList = contentEl.createEl("ul");
-			changesList.createEl("li", {
-				text: `From: "${folderModel}" → To: "${agentModel}"`,
-			});
-			changesList.createEl("li", {
-				text: "Delete existing vault folder and all embedded content",
-			});
-			changesList.createEl("li", {
-				text: "Create new folder with agent's embedding model",
-			});
-			changesList.createEl("li", {
-				text: "Re-upload and re-embed all vault files",
-			});
-			changesList.createEl("li", {
-				text: "Time required depends on vault size",
-			});
-
-			contentEl.createEl("p", {
-				text: "Do you want to proceed?",
-				cls: "mod-warning",
-			});
-
-			const buttonContainer = contentEl.createEl("div", {
-				cls: "modal-button-container",
-			});
-
-			const cancelButton = buttonContainer.createEl("button", {
-				text: "Cancel",
-			});
-			cancelButton.addEventListener("click", () => {
-				modal.close();
-				resolve(false);
-			});
-
-			const proceedButton = buttonContainer.createEl("button", {
-				text: "Rebuild Folder",
-				cls: "mod-cta mod-warning",
-			});
-			proceedButton.addEventListener("click", () => {
-				modal.close();
-				resolve(true);
-			});
-
-			modal.open();
-		});
-	}
-
-	async rebuildFolderWithAgentEmbedding() {
-		try {
-			if (!this.plugin.agent || !this.plugin.source) {
-				new Notice("Agent or source not available");
-				return;
-			}
-
-			// Get agent's embedding config
-			const agentData = await this.plugin.makeRequest(
-				`/v1/agents/${this.plugin.agent.id}`,
-			);
-
-			if (!agentData) {
-				new Notice("Could not retrieve agent configuration");
-				return;
-			}
-
-			new Notice("Deleting existing vault folder...");
-
-			// Delete the existing source
-			await this.plugin.makeRequest(
-				`/v1/folders/${this.plugin.source.id}`,
-				{
-					method: "DELETE",
-				},
-			);
-
-			// Clear the source reference
-			this.plugin.source = null;
-
-			new Notice(
-				"Creating new vault folder with agent embedding model...",
-			);
-
-			// Create new source with agent's embedding config
-			const isCloudInstance =
-				this.plugin.settings.lettaBaseUrl.includes("api.letta.com");
-			const sourceBody: any = {
-				name: this.plugin.settings.sourceName,
-				instructions:
-					"A collection of markdown files from an Obsidian vault. Directory structure is preserved using folder paths.",
-			};
-
-			if (!this.plugin.client) throw new Error("Client not initialized");
-			const newSource =
-				await this.plugin.client.folders.create(sourceBody);
-
-			this.plugin.source = {
-				id: newSource.id!,
-				name: newSource.name || this.plugin.settings.sourceName,
-			};
-
-			// Only sync if auto-sync is enabled
-			if (this.plugin.settings.autoSync) {
-				new Notice(
-					"Vault folder rebuilt successfully. Re-syncing files...",
-				);
-
-				// Trigger a fresh sync
-				setTimeout(() => {
-					this.plugin.syncVaultToLetta();
-				}, 1000);
-			} else {
-				new Notice(
-					'Vault folder rebuilt successfully. Use "Sync Vault to Letta" to upload files.',
-				);
-			}
-
-			// Refresh the settings display
-			setTimeout(() => {
-				this.display();
-			}, 2000);
-		} catch (error) {
-			console.error(
-				"Failed to rebuild folder with agent embedding:",
-				error,
-			);
-			new Notice(
-				"Failed to rebuild vault folder. Check console for details.",
-			);
-		}
-	}
-
-	async showDeleteSourceConfirmation(): Promise<boolean> {
-		return new Promise((resolve) => {
-			const modal = new Modal(this.app);
-			modal.setTitle("Delete and Recreate Source");
-
-			const { contentEl } = modal;
-
-			contentEl.createEl("p", {
-				text: "This will permanently delete the current source and all synced files from Letta.",
-			});
-
-			contentEl.createEl("p", {
-				text: "This action will:",
-				cls: "setting-item-description",
-			});
-
-			const warningList = contentEl.createEl("ul");
-			warningList.createEl("li", {
-				text: "Delete the existing source and all embedded content",
-			});
-			warningList.createEl("li", { text: "Create a new empty source" });
-			warningList.createEl("li", {
-				text: "Require a fresh sync of all vault files",
-			});
-			warningList.createEl("li", {
-				text: "Remove all existing file associations",
-			});
-
-			contentEl.createEl("p", {
-				text: "This action cannot be undone. Are you sure you want to proceed?",
-				cls: "mod-warning",
-			});
-
-			const buttonContainer = contentEl.createEl("div", {
-				cls: "modal-button-container",
-			});
-
-			const cancelButton = buttonContainer.createEl("button", {
-				text: "Cancel",
-			});
-			cancelButton.addEventListener("click", () => {
-				modal.close();
-				resolve(false);
-			});
-
-			const deleteButton = buttonContainer.createEl("button", {
-				text: "Delete & Recreate",
-				cls: "mod-cta mod-warning",
-			});
-			deleteButton.addEventListener("click", () => {
-				modal.close();
-				resolve(true);
-			});
-
-			modal.open();
-		});
-	}
-
-	async deleteAndRecreateSource() {
-		try {
-			new Notice("Deleting existing source...");
-
-			if (this.plugin.source) {
-				// Delete the existing source
-				await this.plugin.makeRequest(
-					`/v1/folders/${this.plugin.source.id}`,
-					{
-						method: "DELETE",
-					},
-				);
-			}
-
-			// Clear the source reference
-			this.plugin.source = null;
-
-			new Notice("Creating new source...");
-			const isCloudInstance =
-				this.plugin.settings.lettaBaseUrl.includes("api.letta.com");
-			const sourceBody: any = {
-				name: this.plugin.settings.sourceName,
-				instructions:
-					"A collection of markdown files from an Obsidian vault. Directory structure is preserved using folder paths.",
-			};
-
-			if (!this.plugin.client) throw new Error("Client not initialized");
-			const newSource =
-				await this.plugin.client.folders.create(sourceBody);
-
-			this.plugin.source = {
-				id: newSource.id!,
-				name: newSource.name || this.plugin.settings.sourceName,
-			};
-
-			new Notice(
-				"Source recreated successfully. You can now sync your vault files.",
-			);
-		} catch (error) {
-			console.error("Failed to delete and recreate source:", error);
-			new Notice(
-				"Failed to delete and recreate source. Please check your connection and try again.",
-			);
-		}
-	}
 
 	async showAgentSelector(): Promise<void> {
 		try {

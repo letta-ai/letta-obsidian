@@ -81,6 +81,11 @@
     box-shadow: 0 0 6px var(--color-green);
 }
 
+.letta-status-warning {
+    background-color: var(--color-orange);
+    box-shadow: 0 0 6px var(--color-orange);
+}
+
 .letta-status-text {
     color: var(--text-muted);
     font-weight: 500;
