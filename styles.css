@@ -3582,4 +3582,49 @@
     border-left: 3px solid var(--interactive-accent);
 }
 
+/* Size limit warning styles */
+.letta-size-limit-warning {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 12px;
+    padding: 12px;
+    background: var(--background-modifier-warning);
+    border: 1px solid var(--background-modifier-border-focus);
+    border-radius: 8px;
+    animation: slideDown 0.3s ease;
+}
+
+.letta-size-warning-icon {
+    font-size: 1.5em;
+    flex-shrink: 0;
+}
+
+.letta-size-warning-text {
+    flex: 1;
+    color: var(--text-normal);
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+.letta-size-warning-text strong {
+    color: var(--text-normal);
+    font-weight: 600;
+}
+
+.letta-size-warning-text small {
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
 

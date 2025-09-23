@@ -73,11 +73,12 @@ interface LettaPluginSettings {
 	enableCustomTools: boolean; // Control whether to register custom Obsidian tools
 	askBeforeToolRegistration: boolean; // Ask for consent before registering custom tools
 	defaultNoteFolder: string; // Default folder for new notes created via custom tools
+	focusMode: boolean; // Control whether to track and share the currently viewed note
+	focusBlockCharLimit: number; // Character limit for the focus mode memory block
 	// Deprecated properties (kept for compatibility)
 	sourceName?: string;
 	autoSync?: boolean;
 	syncOnStartup?: boolean;
-	focusMode?: boolean;
 	askBeforeFolderCreation?: boolean;
 	askBeforeFolderAttachment?: boolean;
 }
@@ -95,6 +96,8 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	enableCustomTools: true, // Default to enabling custom tools
 	askBeforeToolRegistration: true, // Default to asking before registering tools
 	defaultNoteFolder: "", // Default to root folder
+	focusMode: true, // Default to enabling focus mode
+	focusBlockCharLimit: 4000, // Default character limit for focus block
 };
 
 interface LettaAgent {
@@ -177,6 +180,9 @@ export default class LettaPlugin extends Plugin {
 	statusBarItem: HTMLElement | null = null;
 	client: LettaClient | null = null;
 	lastAuthError: string | null = null;
+	focusBlockId: string | null = null;
+	focusUpdateTimer: NodeJS.Timeout | null = null;
+	lastFocusedFile: TFile | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -285,20 +291,25 @@ export default class LettaPlugin extends Plugin {
 			});
 		}
 
-		// Auto-sync on file changes if configured
-
-
+		// Track active file changes for focus mode
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => {
-				const activeFile = this.app.workspace.getActiveFile();
-				// console.log('[LETTA DEBUG] layout-change event, active file:', activeFile?.path || 'null');
+				if (this.settings.focusMode && this.agent) {
+					const activeFile = this.app.workspace.getActiveFile();
+					if (activeFile !== this.lastFocusedFile) {
+						this.lastFocusedFile = activeFile;
+						this.scheduleFocusUpdate();
+					}
+				}
 			}),
 		);
 
 	}
 
 	onunload() {
-
+		if (this.focusUpdateTimer) {
+			clearTimeout(this.focusUpdateTimer);
+		}
 		this.agent = null;
 	}
 
@@ -672,6 +683,11 @@ export default class LettaPlugin extends Plugin {
 				try {
 					progressCallback?.("Loading agent configuration...");
 					await this.setupAgent();
+
+					// Setup focus block after agent is ready
+					if (this.agent) {
+						await this.ensureFocusBlock();
+					}
 				} catch (agentError) {
 					console.error(
 						"[Letta Plugin] Agent setup failed:",
@@ -847,12 +863,146 @@ export default class LettaPlugin extends Plugin {
 		}
 	}
 
+	// Focus Mode Methods
+	async ensureFocusBlock(): Promise<void> {
+		if (!this.agent || !this.client) return;
 
+		const focusBlockLabel = `obsidian-${this.agent.id}-focused-note`;
 
+		try {
+			// Check if block exists
+			const blocks = await this.client.blocks.list({ label: focusBlockLabel });
 
+			if (blocks && blocks.length > 0) {
+				// Block exists, store its ID
+				this.focusBlockId = blocks[0].id || null;
 
+				// Attach if focus mode is enabled
+				if (this.settings.focusMode) {
+					await this.attachFocusBlock();
+				}
+			} else {
+				// Create the block
+				const block = await this.client.blocks.create({
+					label: focusBlockLabel,
+					description: "The content of the Obsidian file that the user is currently viewing.",
+					value: "The user is not currently viewing a note.",
+					limit: this.settings.focusBlockCharLimit,
+				});
+				this.focusBlockId = block.id || null;
 
+				// Attach if focus mode is enabled
+				if (this.settings.focusMode) {
+					await this.attachFocusBlock();
+				}
+			}
 
+			// Update with current file if any
+			if (this.settings.focusMode) {
+				const activeFile = this.app.workspace.getActiveFile();
+				if (activeFile) {
+					await this.updateFocusBlock(activeFile);
+				}
+			}
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to ensure focus block:", error);
+		}
+	}
+
+	async attachFocusBlock(): Promise<void> {
+		if (!this.agent || !this.client || !this.focusBlockId) return;
+
+		try {
+			await this.client.agents.blocks.attach(this.agent.id, this.focusBlockId);
+			console.log("[Letta Plugin] Focus block attached successfully");
+		} catch (error) {
+			// Block might already be attached, that's okay
+			console.log("[Letta Plugin] Focus block attach result:", error);
+		}
+	}
+
+	async detachFocusBlock(): Promise<void> {
+		if (!this.agent || !this.client || !this.focusBlockId) return;
+
+		try {
+			await this.client.agents.blocks.detach(this.agent.id, this.focusBlockId);
+			console.log("[Letta Plugin] Focus block detached successfully");
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to detach focus block:", error);
+		}
+	}
+
+	async updateFocusBlock(file: TFile | null): Promise<void> {
+		if (!this.agent || !this.client || !this.focusBlockId) return;
+
+		try {
+			let value: string;
+
+			if (!file) {
+				value = "The user is not currently viewing a note.";
+			} else {
+				const content = await this.app.vault.read(file);
+				const title = file.basename;
+				const path = file.path;
+
+				// Format the content
+				const formattedContent = `NOTE TITLE: ${title}
+NOTE PATH: ${path}
+
+${content}`;
+
+				// Check size limit
+				if (formattedContent.length > this.settings.focusBlockCharLimit) {
+					// Truncate content but keep header
+					const header = `NOTE TITLE: ${title}
+NOTE PATH: ${path}
+
+`;
+					const availableSpace = this.settings.focusBlockCharLimit - header.length - 50; // Leave some space for ellipsis
+					const truncatedContent = content.substring(0, availableSpace) + "\n\n[Note truncated - exceeds character limit]";
+					value = header + truncatedContent;
+
+					// Show warning in chat view if it's open
+					this.showSizeLimitWarning(file, content.length);
+				} else {
+					value = formattedContent;
+				}
+			}
+
+			const focusBlockLabel = `obsidian-${this.agent.id}-focused-note`;
+			await this.client.agents.blocks.modify(this.agent.id, focusBlockLabel, {
+				value: value,
+				limit: this.settings.focusBlockCharLimit,
+			});
+
+			console.log("[Letta Plugin] Focus block updated");
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to update focus block:", error);
+		}
+	}
+
+	scheduleFocusUpdate(): void {
+		// Clear existing timer
+		if (this.focusUpdateTimer) {
+			clearTimeout(this.focusUpdateTimer);
+		}
+
+		// Schedule update in 5 seconds
+		this.focusUpdateTimer = setTimeout(() => {
+			this.updateFocusBlock(this.lastFocusedFile);
+		}, 5000);
+	}
+
+	showSizeLimitWarning(file: TFile, actualSize: number): void {
+		// Find open chat views and show warning
+		const leaves = this.app.workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE);
+		leaves.forEach(leaf => {
+			const view = leaf.view as LettaChatView;
+			if (view && view.showSizeLimitWarning) {
+				view.showSizeLimitWarning(file, actualSize, this.settings.focusBlockCharLimit);
+			}
+		});
+	}
 
 	async openChatView(): Promise<void> {
 		// console.log('[LETTA DEBUG] openChatView called');
@@ -1268,6 +1418,7 @@ class LettaChatView extends ItemView {
 	plugin: LettaPlugin;
 	chatContainer: HTMLElement;
 	typingIndicator: HTMLElement;
+	sizeLimitWarning: HTMLElement;
 	heartbeatTimeout: NodeJS.Timeout | null = null;
 	header: HTMLElement;
 	inputContainer: HTMLElement;
@@ -1370,6 +1521,12 @@ class LettaChatView extends ItemView {
 		this.chatContainer = container.createEl("div", {
 			cls: "letta-chat-container",
 		});
+
+		// Size limit warning (hidden by default)
+		this.sizeLimitWarning = this.chatContainer.createEl("div", {
+			cls: "letta-size-limit-warning",
+		});
+		this.sizeLimitWarning.style.display = "none";
 
 		// Typing indicator
 		this.typingIndicator = this.chatContainer.createEl("div", {
@@ -3351,6 +3508,30 @@ class LettaChatView extends ItemView {
 		);
 
 		modal.open();
+	}
+
+	showSizeLimitWarning(file: TFile, actualSize: number, limit: number): void {
+		if (!this.sizeLimitWarning) return;
+
+		const warningContent = `
+			<div class="letta-size-warning-icon">⚠️</div>
+			<div class="letta-size-warning-text">
+				<strong>Note too large for agent to view</strong><br>
+				File: ${file.basename}<br>
+				Size: ${actualSize.toLocaleString()} characters (limit: ${limit.toLocaleString()})<br>
+				<small>Increase the character limit in settings to view larger files</small>
+			</div>
+		`;
+
+		this.sizeLimitWarning.innerHTML = warningContent;
+		this.sizeLimitWarning.style.display = "block";
+
+		// Auto-hide after 10 seconds
+		setTimeout(() => {
+			if (this.sizeLimitWarning) {
+				this.sizeLimitWarning.style.display = "none";
+			}
+		}, 10000);
 	}
 
 	async sendMessage() {
@@ -8731,6 +8912,77 @@ class LettaSettingTab extends PluginSettingTab {
 					}),
 			);
 
+		// Focus Mode Settings
+		containerEl.createEl("h3", { text: "Focus Mode" });
+
+		new Setting(containerEl)
+			.setName("Enable Focus Mode")
+			.setDesc(
+				"Track and share the currently viewed note with the agent via a special memory block",
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.focusMode)
+					.onChange(async (value) => {
+						this.plugin.settings.focusMode = value;
+						await this.plugin.saveSettings();
+
+						// Enable or disable focus block based on setting
+						if (this.plugin.agent) {
+							if (value) {
+								await this.plugin.ensureFocusBlock();
+								await this.plugin.attachFocusBlock();
+								// Update with current file
+								const activeFile = this.plugin.app.workspace.getActiveFile();
+								if (activeFile) {
+									await this.plugin.updateFocusBlock(activeFile);
+								}
+							} else {
+								await this.plugin.detachFocusBlock();
+							}
+						}
+
+						new Notice(value
+							? "Focus mode enabled - agent can now see your current note"
+							: "Focus mode disabled"
+						);
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Focus Block Character Limit")
+			.setDesc(
+				"Maximum number of characters to include in the focus block (default: 4000)",
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder("4000")
+					.setValue(this.plugin.settings.focusBlockCharLimit.toString())
+					.onChange(async (value) => {
+						const numValue = parseInt(value, 10);
+						if (!isNaN(numValue) && numValue > 0) {
+							this.plugin.settings.focusBlockCharLimit = numValue;
+							await this.plugin.saveSettings();
+
+							// Update the block limit if it exists
+							if (this.plugin.agent && this.plugin.focusBlockId) {
+								const focusBlockLabel = `obsidian-${this.plugin.agent.id}-focused-note`;
+								try {
+									await this.plugin.client?.agents.blocks.modify(
+										this.plugin.agent.id,
+										focusBlockLabel,
+										{
+											limit: numValue,
+										}
+									);
+									new Notice(`Focus block character limit updated to ${numValue}`);
+								} catch (error) {
+									console.error("[Letta Plugin] Failed to update block limit:", error);
+								}
+							}
+						}
+					}),
+			);
 
 		// Custom Tools Settings
 		containerEl.createEl("h3", { text: "Custom Tools" });
