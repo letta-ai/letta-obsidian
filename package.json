@@ -28,6 +28,6 @@
 		"typescript": "^4.9.5"
 	},
 	"dependencies": {
-		"@letta-ai/letta-client": "^0.1.193"
+		"@letta-ai/letta-client": "^0.0.68660"
 	}
 }

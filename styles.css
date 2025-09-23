@@ -16,7 +16,7 @@
 .letta-chat-header {
     display: flex;
     flex-direction: column;
-    padding: 12px 16px;
+    padding: 12px 16px 12px 8px;
     border-bottom: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
 }
@@ -2141,6 +2141,14 @@
     color: var(--text-muted);
     font-size: 0.95em;
     line-height: 1.6;
+    text-align: center;
+}
+
+.letta-auth-error-text {
+    margin: 8px 0;
+    color: var(--text-error);
+    font-size: 0.9em;
+    line-height: 1.5;
     text-align: center;
 }
 
