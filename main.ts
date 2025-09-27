@@ -403,7 +403,7 @@ export default class LettaPlugin extends Plugin {
 
 			// Initialize with token and base URL from settings
 			const config: any = {
-				baseURL: this.settings.lettaBaseUrl,
+				baseUrl: this.settings.lettaBaseUrl,
 			};
 
 			// Only add token if API key is provided (for self-hosted without auth)
