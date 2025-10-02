@@ -95,7 +95,7 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	allowAgentCreation: true, // Default to enabling agent creation modal
 	enableCustomTools: true, // Default to enabling custom tools
 	askBeforeToolRegistration: true, // Default to asking before registering tools
-	defaultNoteFolder: "", // Default to root folder
+	defaultNoteFolder: "lettamade", // Default folder for agent-created notes
 	focusMode: true, // Default to enabling focus mode
 	focusBlockCharLimit: 4000, // Default character limit for focus block
 };
@@ -183,6 +183,7 @@ export default class LettaPlugin extends Plugin {
 	focusBlockId: string | null = null;
 	focusUpdateTimer: NodeJS.Timeout | null = null;
 	lastFocusedFile: TFile | null = null;
+	isConnecting: boolean = false;
 
 	async onload() {
 		await this.loadSettings();
@@ -624,6 +625,11 @@ export default class LettaPlugin extends Plugin {
 		const isCloudInstance =
 			this.settings.lettaBaseUrl.includes("api.letta.com");
 
+		// Set connecting flag on first attempt
+		if (attempt === 1) {
+			this.isConnecting = true;
+		}
+
 		console.log(`[Letta Plugin] connectToLetta called - attempt ${attempt}/${maxAttempts}`);
 		console.log(`[Letta Plugin] Connection details:`, {
 			baseUrl: this.settings.lettaBaseUrl,
@@ -644,6 +650,7 @@ export default class LettaPlugin extends Plugin {
 					`Invalid Base URL format: ${this.settings.lettaBaseUrl}. Please check your settings.`,
 				);
 				this.updateStatusBar("Invalid URL");
+				this.isConnecting = false;
 				return false;
 			}
 
@@ -653,6 +660,7 @@ export default class LettaPlugin extends Plugin {
 					`Potential typo in Base URL: Did you mean "localhost"? Current: ${this.settings.lettaBaseUrl}`,
 				);
 				this.updateStatusBar("URL typo detected");
+				this.isConnecting = false;
 				return false;
 			}
 		}
@@ -661,6 +669,7 @@ export default class LettaPlugin extends Plugin {
 			new Notice(
 				"API key required for Letta Cloud. Please configure it in settings.",
 			);
+			this.isConnecting = false;
 			return false;
 		}
 
@@ -722,6 +731,7 @@ export default class LettaPlugin extends Plugin {
 
 			// Ensure chat view UI is updated after connection, regardless of agent state
 			this.updateStatusBar("Connected");
+			this.isConnecting = false;
 			const chatLeaf = this.app.workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE)[0];
 			if (chatLeaf && chatLeaf.view instanceof LettaChatView) {
 				console.log("[Letta Plugin] Forcing chat status update after connection");
@@ -756,6 +766,7 @@ export default class LettaPlugin extends Plugin {
 				const failureMessage = "Authentication failed";
 				this.updateStatusBar(failureMessage);
 				progressCallback?.(failureMessage);
+				this.isConnecting = false;
 				return false;
 			} else {
 				// Clear auth error for other types of errors
@@ -808,6 +819,7 @@ export default class LettaPlugin extends Plugin {
 				const failureMessage = "Connection failed";
 				this.updateStatusBar(failureMessage);
 				progressCallback?.(failureMessage);
+				this.isConnecting = false;
 				new Notice(
 					`Failed to connect to Letta after ${maxAttempts} attempts: ${error.message}`,
 				);
@@ -1102,7 +1114,7 @@ NOTE PATH: ${path}
 				messages: [
 					{
 						role: "user",
-						content: message,
+						content: `[Message from Obsidian chat interface]\n\n${message}`,
 					},
 				],
 			},
@@ -1134,7 +1146,7 @@ NOTE PATH: ${path}
 					messages: [
 						{
 							role: "user",
-							content: message,
+							content: `[Message from Obsidian chat interface]\n\n${message}`,
 						},
 					],
 					streamTokens: true,
@@ -1210,13 +1222,19 @@ NOTE PATH: ${path}
 	}
 
 	async registerObsidianTools(): Promise<boolean> {
+		// DISABLED: Approval-based tool registration is currently disabled due to upstream Letta API issues
+		// with streaming approval flow. Re-enable once the API properly supports approval_request_message
+		// during streaming (currently only sends stop_reason).
+		return true;
+
+		/* COMMENTED OUT - DO NOT USE UNTIL UPSTREAM ISSUES RESOLVED
 		if (!this.client) {
 			console.error("Cannot register tools: Letta client not initialized");
 			return false;
 		}
-		
-		const toolName = "propose_obsidian_note";
-		
+
+		const toolName = "write_obsidian_note";
+
 		// First check if the tool already exists
 		console.log(`[Letta Plugin] Checking if tool '${toolName}' already exists...`);
 		let existingTool: any = null;
@@ -1236,14 +1254,42 @@ NOTE PATH: ${path}
 			try {
 				const agentDetails = await this.client.agents.retrieve(this.agent.id);
 				const currentTools = agentDetails.tools || [];
-				
-				const isToolAttached = currentTools.some((t: any) => 
-					t.name === toolName || t === toolName || 
+
+				const isToolAttached = currentTools.some((t: any) =>
+					t.name === toolName || t === toolName ||
 					(typeof t === 'object' && t.id === existingTool.id)
 				);
-				
+
 				if (isToolAttached) {
-					console.log(`[Letta Plugin] Tool '${toolName}' already exists and is attached to agent. Nothing to do.`);
+					console.log(`[Letta Plugin] Tool '${toolName}' already exists and is attached to agent. Ensuring approval requirement is set...`);
+
+					// Even if tool is attached, ensure approval requirement is set (Method 3)
+					try {
+						console.log(`[Letta Plugin] Calling modifyApproval with agentId: ${this.agent.id}, toolName: ${toolName}, requiresApproval: true`);
+						const approvalResult = await this.client.agents.tools.modifyApproval(
+							this.agent.id,
+							toolName,
+							{ requiresApproval: true }
+						);
+						console.log(`[Letta Plugin] modifyApproval response:`, approvalResult);
+
+						// Check tool rules in the agent state
+						const toolRules = (approvalResult as any).toolRules || (approvalResult as any).tool_rules;
+						console.log(`[Letta Plugin] Agent toolRules after modifyApproval:`, toolRules);
+						const approvalRule = toolRules?.find((rule: any) =>
+							rule.toolName === toolName || rule.tool_name === toolName
+						);
+						console.log(`[Letta Plugin] Approval rule for '${toolName}':`, approvalRule);
+
+						// Verify the tool's approval status after setting it
+						const agentTools = await this.client.agents.tools.list(this.agent.id);
+						const toolInfo = agentTools.find((t: any) => t.name === toolName);
+						console.log(`[Letta Plugin] Tool '${toolName}' info from tools list:`, toolInfo);
+					} catch (approvalError: any) {
+						console.error("Failed to set approval requirement:", approvalError);
+						console.error("Error details:", approvalError.message, approvalError.stack);
+					}
+
 					return true; // Success - tool is already fully configured
 				} else {
 					console.log(`[Letta Plugin] Tool exists but not attached to agent. Will attach it.`);
@@ -1253,51 +1299,28 @@ NOTE PATH: ${path}
 			}
 		}
 
-		const proposeNoteToolCode = `
-from typing import Optional, List
-
-def propose_obsidian_note(
-    title: str,
-    content: str,
-    folder: Optional[str] = None,
-    tags: Optional[List[str]] = None
+		const writeNoteToolCode = `
+def write_obsidian_note(
+    block_label: str,
+    file_path: str
 ) -> str:
     """
-    Propose a new Obsidian note to be created. The user will review and can accept/modify/reject.
-    
+    Request approval to write a memory block's content to an Obsidian note file.
+    This tool requires human approval before execution.
+
     Args:
-        title: The title/filename for the note (without .md extension)
-        content: The markdown content of the note
-        folder: The folder path where the note should be created (e.g., 'journal/2024')
-        tags: List of tags to add to the note's frontmatter
-    
+        block_label: The label of the memory block containing the content to write
+        file_path: The path where the note should be created (e.g., 'journal/2024-10-01.md' or 'projects/my-project.md')
+                  If a default note folder is configured, it will be automatically prepended to this path.
+
     Returns:
-        str: JSON string with the proposed note structure for the Obsidian plugin to handle
+        str: Success message if approved and executed
+
+    Note:
+        This tool will pause and request approval from the user.
+        The user can approve to create the note or deny with guidance.
     """
-    import json
-    from datetime import datetime
-    
-    # Build frontmatter if tags are provided
-    frontmatter = ""
-    if tags:
-        frontmatter = "---\\n"
-        frontmatter += f"tags: {json.dumps(tags)}\\n"
-        frontmatter += f"created: {datetime.now().isoformat()}\\n"
-        frontmatter += "---\\n\\n"
-    
-    # Combine frontmatter with content
-    full_content = frontmatter + content if frontmatter else content
-    
-    # Return structured data that the plugin can parse
-    note_proposal = {
-        "action": "create_note",
-        "title": title,
-        "content": full_content,
-        "folder": folder or "",
-        "tags": tags or []
-    }
-    
-    return json.dumps(note_proposal)
+    return f"Requesting approval to write block '{block_label}' to {file_path}"
 `;
 
 		// Now check if user consent is required (only if we need to create or attach the tool)
@@ -1315,15 +1338,16 @@ def propose_obsidian_note(
 		
 		try {
 			if (!existingTool) {
-				// Tool doesn't exist, create it
-				console.log(`[Letta Plugin] Creating new tool '${toolName}'...`);
+				// Tool doesn't exist, create it with approval requirement
+				console.log(`[Letta Plugin] Creating new tool '${toolName}' with approval requirement...`);
 				tool = await this.client.tools.upsert({
 					name: toolName,
-					sourceCode: proposeNoteToolCode,
-					description: "Propose a new Obsidian note to be created with title, content, folder, and tags",
-					tags: ["obsidian", "note-creation"]
+					sourceCode: writeNoteToolCode,
+					description: "Write a memory block's content to an Obsidian note file (requires approval)",
+					tags: ["obsidian", "note-creation", "requires-approval"],
+					default_requires_approval: true
 				} as any);
-				console.log("Successfully created Obsidian note creation tool:", tool);
+				console.log("Successfully created Obsidian note creation tool with approval requirement:", tool);
 			} else {
 				console.log(`[Letta Plugin] Using existing tool '${toolName}' with ID: ${existingTool.id}`);
 			}
@@ -1336,6 +1360,35 @@ def propose_obsidian_note(
 					console.log(`[Letta Plugin] Attaching tool '${toolName}' to agent ${this.agent.id}...`);
 					await this.client.agents.tools.attach(this.agent.id, tool.id);
 					console.log(`[Letta Plugin] Successfully attached '${toolName}' tool to agent`);
+
+					// Set approval requirement for this agent-tool relationship (Method 3)
+					console.log(`[Letta Plugin] Setting approval requirement for '${toolName}' on agent ${this.agent.id}...`);
+					try {
+						console.log(`[Letta Plugin] Calling modifyApproval with agentId: ${this.agent.id}, toolName: ${toolName}, requiresApproval: true`);
+						const approvalResult = await this.client.agents.tools.modifyApproval(
+							this.agent.id,
+							toolName,
+							{ requiresApproval: true }
+						);
+						console.log(`[Letta Plugin] modifyApproval response:`, approvalResult);
+
+						// Check tool rules in the agent state
+						const toolRules = (approvalResult as any).toolRules || (approvalResult as any).tool_rules;
+						console.log(`[Letta Plugin] Agent toolRules after modifyApproval:`, toolRules);
+						const approvalRule = toolRules?.find((rule: any) =>
+							rule.toolName === toolName || rule.tool_name === toolName
+						);
+						console.log(`[Letta Plugin] Approval rule for '${toolName}':`, approvalRule);
+
+						// Verify the tool's approval status after setting it
+						const agentTools = await this.client.agents.tools.list(this.agent.id);
+						const toolInfo = agentTools.find((t: any) => t.name === toolName);
+						console.log(`[Letta Plugin] Tool '${toolName}' info from tools list:`, toolInfo);
+					} catch (approvalError: any) {
+						console.error("Failed to set approval requirement:", approvalError);
+						console.error("Error details:", approvalError.message, approvalError.stack);
+						// Don't fail the whole operation if this fails
+					}
 				} catch (error) {
 					console.error("Failed to attach tool to agent:", error);
 					// Log more details for debugging
@@ -1357,6 +1410,7 @@ def propose_obsidian_note(
 			new Notice("Failed to register note creation tool");
 			return false;
 		}
+		END COMMENTED OUT SECTION */
 	}
 
 	async createNoteFromProposal(proposal: ObsidianNoteProposal): Promise<string> {
@@ -1427,7 +1481,6 @@ class LettaChatView extends ItemView {
 	agentNameElement: HTMLElement;
 	statusDot: HTMLElement;
 	statusText: HTMLElement;
-	modelButton: HTMLElement;
 
 	constructor(leaf: WorkspaceLeaf, plugin: LettaPlugin) {
 		super(leaf);
@@ -1457,10 +1510,8 @@ class LettaChatView extends ItemView {
 		const titleSection = this.header.createEl("div", {
 			cls: "letta-chat-title-section",
 		});
-		const titleContainer = titleSection.createEl("div", {
-			cls: "letta-title-container",
-		});
-		this.agentNameElement = titleContainer.createEl("h3", {
+
+		this.agentNameElement = titleSection.createEl("h3", {
 			text: this.plugin.agent
 				? this.plugin.settings.agentName
 				: "No Agent",
@@ -1474,14 +1525,18 @@ class LettaChatView extends ItemView {
 			this.editAgentName(),
 		);
 
-		const configButton = titleContainer.createEl("span", {
+		const headerButtonContainer = titleSection.createEl("div", {
+			cls: "letta-button-container",
+		});
+
+		const configButton = headerButtonContainer.createEl("span", {
 			text: "Config",
 		});
 		configButton.title = "Configure agent properties";
 		configButton.addClass("letta-config-button");
 		configButton.addEventListener("click", () => this.openAgentConfig());
 
-		const memoryButton = titleContainer.createEl("span", {
+		const memoryButton = headerButtonContainer.createEl("span", {
 			text: "Memory",
 		});
 		memoryButton.title = "Open memory blocks panel";
@@ -1490,7 +1545,7 @@ class LettaChatView extends ItemView {
 			this.plugin.openMemoryView(),
 		);
 
-		const switchAgentButton = titleContainer.createEl("span", {
+		const switchAgentButton = headerButtonContainer.createEl("span", {
 			text: "Agent",
 		});
 		switchAgentButton.title = "Switch to different agent";
@@ -1499,7 +1554,7 @@ class LettaChatView extends ItemView {
 			this.openAgentSwitcher(),
 		);
 
-		const adeButton = titleContainer.createEl("span", { text: "ADE" });
+		const adeButton = headerButtonContainer.createEl("span", { text: "ADE" });
 		adeButton.title = "Open in Letta Agent Development Environment";
 		adeButton.addClass("letta-config-button");
 		adeButton.addEventListener("click", () => this.openInADE());
@@ -1513,9 +1568,6 @@ class LettaChatView extends ItemView {
 		this.statusText = statusIndicator.createEl("span", {
 			cls: "letta-status-text",
 		});
-
-		// Set initial status based on current connection state
-		this.updateChatStatus();
 
 		// Chat container
 		this.chatContainer = container.createEl("div", {
@@ -1566,22 +1618,7 @@ class LettaChatView extends ItemView {
 			cls: "letta-button-container",
 		});
 
-		// Model switcher button on the left
-		this.modelButton = buttonContainer.createEl("button", {
-			text: "Loading...",
-			cls: "letta-model-button",
-			attr: { "aria-label": "Switch model" },
-		});
-		this.modelButton.addEventListener("click", () =>
-			this.openModelSwitcher(),
-		);
-
-		// Button group on the right
-		const rightButtons = buttonContainer.createEl("div", {
-			cls: "letta-button-group-right",
-		});
-
-		this.sendButton = rightButtons.createEl("button", {
+		this.sendButton = buttonContainer.createEl("button", {
 			cls: "letta-send-button",
 			attr: { "aria-label": "Send message" },
 		});
@@ -2461,6 +2498,12 @@ class LettaChatView extends ItemView {
 						}
 						break;
 
+					case "approval_request_message":
+						// DISABLED: Approval handling commented out due to upstream API issues
+						// console.log("[Letta Plugin] Found historical approval_request_message:", message);
+						// await this.handleApprovalRequest(message);
+						break;
+
 					default:
 					// Unknown historical message type
 				}
@@ -2733,20 +2776,61 @@ class LettaChatView extends ItemView {
 		}, 3000);
 	}
 
-	async updateChatStatus(loadHistoricalMessages = true) {
-		console.log("[Letta Plugin] updateChatStatus called with loadHistoricalMessages:", loadHistoricalMessages);
+	async updateChatStatus(loadHistoricalMessages = true, connectingMessage?: string) {
+		console.log("[Letta Plugin] updateChatStatus called with loadHistoricalMessages:", loadHistoricalMessages, "connectingMessage:", connectingMessage);
+
+		// If we have a connecting message, show connecting state
+		if (connectingMessage) {
+			console.log("[Letta Plugin] updateChatStatus: Taking CONNECTING branch -", connectingMessage);
+			this.statusDot.className = "letta-status-dot letta-status-warning";
+			this.statusText.textContent = connectingMessage;
+			// Update agent name display to show "Connecting..."
+			this.updateAgentNameDisplay(connectingMessage);
+			// Show header but hide input when connecting
+			if (this.header) {
+				this.header.style.display = "flex";
+			}
+			if (this.inputContainer) {
+				this.inputContainer.style.display = "none";
+			}
+			// Show connecting message in chat area
+			this.removeDisconnectedMessage();
+			this.removeNoAgentMessage();
+			this.showConnectingMessage(connectingMessage);
+			return;
+		}
 
 		// Determine connection status based on plugin state
 		const isAgentAttached = !!this.plugin.agent;
 		const isServerConnected = !!this.plugin.client;
+		const isConnecting = this.plugin.isConnecting;
 
 		console.log("[Letta Plugin] updateChatStatus state check:", {
 			hasAgent: !!this.plugin.agent,
 			agentId: this.plugin.agent?.id,
 			agentName: this.plugin.agent?.name,
 			isAgentAttached,
-			isServerConnected
+			isServerConnected,
+			isConnecting
 		});
+
+		// If we're in the middle of connecting, show connecting state
+		if (isConnecting) {
+			console.log("[Letta Plugin] updateChatStatus: Taking CONNECTING branch - plugin is connecting");
+			this.statusDot.className = "letta-status-dot letta-status-warning";
+			this.statusText.textContent = "Connecting...";
+			this.updateAgentNameDisplay("Connecting...");
+			if (this.header) {
+				this.header.style.display = "flex";
+			}
+			if (this.inputContainer) {
+				this.inputContainer.style.display = "none";
+			}
+			this.removeDisconnectedMessage();
+			this.removeNoAgentMessage();
+			this.showConnectingMessage("Connecting to Letta...");
+			return;
+		}
 
 		if (isAgentAttached) {
 			console.log("[Letta Plugin] updateChatStatus: Taking AGENT_ATTACHED branch - full connection");
@@ -2759,12 +2843,7 @@ class LettaChatView extends ItemView {
 			// Update agent name display
 			this.updateAgentNameDisplay();
 
-			// Update model button if it exists
-			if (this.modelButton) {
-				this.updateModelButton();
-			}
-
-				// Show header and input when connected
+			// Show header and input when connected
 			if (this.header) {
 				this.header.style.display = "flex";
 			}
@@ -2772,9 +2851,10 @@ class LettaChatView extends ItemView {
 				this.inputContainer.style.display = "flex";
 			}
 
-			// Remove disconnected/no agent messages if they exist
+			// Remove disconnected/no agent/connecting messages if they exist
 			this.removeDisconnectedMessage();
 			this.removeNoAgentMessage();
+			this.removeConnectingMessage();
 
 			// Conditionally load historical messages
 			if (loadHistoricalMessages) {
@@ -2789,10 +2869,6 @@ class LettaChatView extends ItemView {
 			// Update agent name display to show "No Agent Selected"
 			this.updateAgentNameDisplay();
 
-			if (this.modelButton) {
-				this.modelButton.textContent = "Select Agent";
-			}
-
 			// Show header but hide input when no agent
 			if (this.header) {
 				this.header.style.display = "flex";
@@ -2803,6 +2879,7 @@ class LettaChatView extends ItemView {
 
 			// Show no agent message in chat area
 			this.removeDisconnectedMessage();
+			this.removeConnectingMessage();
 			this.showNoAgentMessage();
 		} else {
 			console.log("[Letta Plugin] updateChatStatus: Taking DISCONNECTED branch - no connection");
@@ -2814,10 +2891,6 @@ class LettaChatView extends ItemView {
 			// Update agent name display to show "No Agent"
 			this.updateAgentNameDisplay();
 
-			if (this.modelButton) {
-				this.modelButton.textContent = "N/A";
-			}
-
 			// Hide header and input when disconnected
 			if (this.header) {
 				this.header.style.display = "none";
@@ -2828,11 +2901,18 @@ class LettaChatView extends ItemView {
 
 			// Show disconnected message in chat area
 			this.removeNoAgentMessage();
+			this.removeConnectingMessage();
 			this.showDisconnectedMessage();
 		}
 	}
 
-	updateAgentNameDisplay() {
+	updateAgentNameDisplay(connectingMessage?: string) {
+		if (connectingMessage) {
+			this.agentNameElement.textContent = "Connecting...";
+			this.agentNameElement.className = "letta-chat-title connecting";
+			return;
+		}
+
 		const isServerConnected = !!this.plugin.client;
 
 		if (this.plugin.agent) {
@@ -2958,6 +3038,57 @@ class LettaChatView extends ItemView {
 
 		const existingMessage = this.chatContainer.querySelector(
 			".letta-disconnected-container",
+		);
+		if (existingMessage) {
+			existingMessage.remove();
+		}
+	}
+
+	showConnectingMessage(message: string) {
+		// Only show if chat container exists
+		if (!this.chatContainer) {
+			return;
+		}
+
+		// Remove any existing connecting message
+		this.removeConnectingMessage();
+
+		// Create connecting message container
+		const connectingContainer = this.chatContainer.createEl("div", {
+			cls: "letta-connecting-container",
+		});
+
+		// Large connecting message
+		const connectingMessage = connectingContainer.createEl("div", {
+			cls: "letta-connecting-message",
+		});
+
+		connectingMessage.createEl("h2", {
+			text: message,
+			cls: "letta-connecting-title",
+		});
+
+		connectingMessage.createEl("p", {
+			text: "Establishing connection to Letta service...",
+			cls: "letta-connecting-subtitle",
+		});
+
+		// Add animated dots
+		const dots = connectingMessage.createEl("div", {
+			cls: "letta-connecting-dots",
+		});
+		dots.createEl("span");
+		dots.createEl("span");
+		dots.createEl("span");
+	}
+
+	removeConnectingMessage() {
+		if (!this.chatContainer) {
+			return;
+		}
+
+		const existingMessage = this.chatContainer.querySelector(
+			".letta-connecting-container",
 		);
 		if (existingMessage) {
 			existingMessage.remove();
@@ -3252,59 +3383,6 @@ class LettaChatView extends ItemView {
 		new Notice("Opening agent in Letta ADE...");
 	}
 
-	async updateModelButton() {
-		if (!this.plugin.agent) {
-			this.modelButton.textContent = "N/A";
-			return;
-		}
-
-		try {
-			// Fetch the current agent details to get model info
-			const agent = await this.plugin.makeRequest(
-				`/v1/agents/${this.plugin.agent?.id}`,
-			);
-
-			if (agent && agent.llm_config && agent.llm_config.model) {
-				// Display model with provider and category info
-				const modelName = agent.llm_config.model;
-				const providerName =
-					agent.llm_config.provider_name || "Unknown";
-				const providerCategory =
-					agent.llm_config.provider_category || "Unknown";
-
-				// Show provider/model format with category indicator
-				const categoryIndicator =
-					providerCategory === "byok" ? " (BYOK)" : "";
-				this.modelButton.textContent = `${providerName}/${modelName}${categoryIndicator}`;
-				this.modelButton.title = `Current model: ${modelName}\nProvider: ${providerName}\nCategory: ${providerCategory}\nClick to change model`;
-			} else {
-				this.modelButton.textContent = "Unknown";
-			}
-		} catch (error) {
-			console.error("Error fetching agent model info:", error);
-			this.modelButton.textContent = "Error";
-		}
-	}
-
-	openModelSwitcher() {
-		if (!this.plugin.agent) {
-			// If server is connected but no agent selected, open agent selector
-			if (this.plugin.client) {
-				this.openAgentSelector();
-				return;
-			} else {
-				new Notice("Please connect to Letta first");
-				return;
-			}
-		}
-
-		const modal = new ModelSwitcherModal(
-			this.app,
-			this.plugin,
-			this.plugin.agent,
-		);
-		modal.open();
-	}
 
 	async editAgentName() {
 		if (!this.plugin.agent) {
@@ -3540,19 +3618,26 @@ class LettaChatView extends ItemView {
 
 		// Check connection and auto-connect if needed
 		if (!this.plugin.agent) {
-			await this.addMessage(
-				"assistant",
-				"Connecting to Letta...",
-				"System",
-			);
-			const connected = await this.plugin.connectToLetta();
+			// Show connecting status in the chat view
+			await this.updateChatStatus(false, "Connecting to Letta...");
+
+			const connected = await this.plugin.connectToLetta(1, (progressMessage) => {
+				// Update the connecting status with progress messages
+				this.updateChatStatus(false, progressMessage);
+			});
+
 			if (!connected) {
+				// Connection failed, show no agent/disconnected state
+				await this.updateChatStatus(false);
 				await this.addMessage(
 					"assistant",
 					"**Connection failed**. Please check your settings and try again.",
 					"Error",
 				);
 				return;
+			} else {
+				// Connection succeeded, update status to reflect current state
+				await this.updateChatStatus(false);
 			}
 		}
 
@@ -3599,6 +3684,10 @@ class LettaChatView extends ItemView {
 					this.currentToolCallArgs = "";
 					this.currentToolCallName = "";
 					this.currentToolCallData = null;
+					this.currentApprovalRequestId = null;
+					this.currentApprovalArgs = "";
+					this.currentApprovalToolName = "";
+					this.hasCreatedApprovalUI = false;
 				}
 
 				// Reset streaming state (now safe since we completed above)
@@ -5223,7 +5312,7 @@ class LettaChatView extends ItemView {
 						if (tempToolName === "propose_obsidian_note") {
 							console.log("[Letta Plugin] 🔥 PROPOSE_OBSIDIAN_NOTE tool return in non-streaming!", toolReturnData);
 						}
-						
+
 						// Add tool result to the existing tool interaction message
 						await this.addToolResultToMessage(
 							tempToolMessage,
@@ -5240,6 +5329,10 @@ class LettaChatView extends ItemView {
 						tempToolName = "";
 						tempToolCallData = null;
 					}
+					break;
+				case "approval_request_message":
+					console.log("[Letta Plugin] Non-streaming approval request:", responseMessage);
+					await this.handleApprovalRequest(responseMessage);
 					break;
 				case "assistant_message":
 					// Processing assistant message
@@ -5446,6 +5539,12 @@ class LettaChatView extends ItemView {
 					console.log("[Letta Plugin] Received tool_call_message but no tool_call/toolCall field:", message);
 				}
 				break;
+			case "stop_reason":
+				// DISABLED: Approval handling commented out due to upstream API issues
+				// if (message.stopReason === "requires_approval" || message.stop_reason === "requires_approval") {
+				// 	console.log("[Letta Plugin] Stream stopped for approval");
+				// }
+				break;
 			case "tool_return_message":
 				const streamingToolReturnData = message.tool_return || message.toolReturn;
 				if (streamingToolReturnData) {
@@ -5460,6 +5559,11 @@ class LettaChatView extends ItemView {
 					this.currentToolCallName = "";
 					this.currentToolCallData = null;
 				}
+				break;
+			case "approval_request_message":
+				// DISABLED: Approval handling commented out due to upstream API issues
+				// console.log("[Letta Plugin] Received approval_request_message:", message);
+				// await this.handleApprovalRequest(message);
 				break;
 			case "assistant_message":
 				// Processing streaming assistant message
@@ -5527,6 +5631,10 @@ class LettaChatView extends ItemView {
 	private currentToolCallArgs: string = "";
 	private currentToolCallName: string = "";
 	private currentToolCallData: any = null;
+	private currentApprovalRequestId: string | null = null;
+	private currentApprovalArgs: string = "";
+	private currentApprovalToolName: string = "";
+	private hasCreatedApprovalUI: boolean = false;
 
 	updateOrCreateReasoningMessage(reasoning: string) {
 		// Accumulate reasoning content for both tool interactions and assistant messages
@@ -5836,6 +5944,310 @@ class LettaChatView extends ItemView {
 		);
 	}
 
+	async handleApprovalRequest(message: any) {
+		console.log("[Letta Plugin] handleApprovalRequest called with message:", message);
+
+		const approvalRequestId = message.id;
+		const toolCall = message.tool_call || message.toolCall;
+
+		if (!toolCall) {
+			console.error("[Letta Plugin] Approval request missing tool_call data");
+			return;
+		}
+
+		const toolName = toolCall.name || (toolCall.function && toolCall.function.name);
+		const toolArgsChunk = toolCall.arguments || "";
+
+		console.log("[Letta Plugin] Approval request - ID:", approvalRequestId, "Tool:", toolName, "Args chunk:", toolArgsChunk);
+
+		// Check if this is a new approval request or a continuation
+		if (this.currentApprovalRequestId !== approvalRequestId) {
+			// New approval request - initialize accumulation
+			console.log("[Letta Plugin] New approval request detected");
+			this.currentApprovalRequestId = approvalRequestId;
+			this.currentApprovalToolName = toolName;
+			this.currentApprovalArgs = toolArgsChunk;
+			this.hasCreatedApprovalUI = false;
+		} else {
+			// Continuation - accumulate arguments
+			console.log("[Letta Plugin] Accumulating approval request arguments");
+			this.currentApprovalArgs += toolArgsChunk;
+		}
+
+		console.log("[Letta Plugin] Accumulated args so far:", this.currentApprovalArgs);
+
+		// Try to parse the accumulated arguments - if it fails, we're still streaming
+		let toolArgs: any;
+		try {
+			toolArgs = typeof this.currentApprovalArgs === 'string'
+				? JSON.parse(this.currentApprovalArgs)
+				: this.currentApprovalArgs;
+			console.log("[Letta Plugin] Successfully parsed accumulated arguments:", toolArgs);
+		} catch (parseError) {
+			console.log("[Letta Plugin] Arguments not yet complete, waiting for more chunks...");
+			return; // Wait for more chunks
+		}
+
+		// If we've already created the UI for this request, don't create it again
+		if (this.hasCreatedApprovalUI) {
+			console.log("[Letta Plugin] Approval UI already created for this request");
+			return;
+		}
+
+		// Mark that we're creating the UI
+		this.hasCreatedApprovalUI = true;
+
+		console.log("[Letta Plugin] Creating approval UI for tool:", toolName);
+		console.log("[Letta Plugin] Final tool arguments:", toolArgs);
+
+		// Create approval request UI
+		const approvalEl = this.chatContainer.createEl("div", {
+			cls: "letta-approval-request",
+		});
+
+		// Header
+		const headerEl = approvalEl.createEl("div", {
+			cls: "letta-approval-header",
+		});
+		headerEl.createEl("span", {
+			text: "🔐 Approval Required",
+			cls: "letta-approval-title",
+		});
+
+		// Tool info
+		const infoEl = approvalEl.createEl("div", {
+			cls: "letta-approval-info",
+		});
+		infoEl.createEl("div", {
+			text: `Tool: ${toolName}`,
+			cls: "letta-approval-tool-name",
+		});
+
+		// Show tool arguments in a formatted way
+		const argsEl = infoEl.createEl("div", {
+			cls: "letta-approval-args",
+		});
+
+		if (toolName === "write_obsidian_note") {
+			argsEl.createEl("div", {
+				text: `Block Label: ${toolArgs.block_label || 'N/A'}`,
+			});
+			argsEl.createEl("div", {
+				text: `File Path: ${toolArgs.file_path || 'N/A'}`,
+			});
+		} else {
+			argsEl.createEl("pre", {
+				text: JSON.stringify(toolArgs, null, 2),
+			});
+		}
+
+		// Buttons container
+		const buttonsEl = approvalEl.createEl("div", {
+			cls: "letta-approval-buttons",
+		});
+
+		const approveBtn = buttonsEl.createEl("button", {
+			text: "Approve",
+			cls: "letta-approval-approve-btn",
+		});
+
+		const denyBtn = buttonsEl.createEl("button", {
+			text: "Deny",
+			cls: "letta-approval-deny-btn",
+		});
+
+		// Handle approval
+		approveBtn.addEventListener("click", async () => {
+			console.log("[Letta Plugin] User approved tool call");
+			approvalEl.addClass("letta-approval-processing");
+			approveBtn.disabled = true;
+			denyBtn.disabled = true;
+			approveBtn.textContent = "Approving...";
+
+			await this.sendApprovalResponse(approvalRequestId, true, toolArgs);
+
+			// Remove the approval UI after a short delay
+			setTimeout(() => {
+				approvalEl.remove();
+			}, 500);
+		});
+
+		// Handle denial
+		denyBtn.addEventListener("click", async () => {
+			console.log("[Letta Plugin] User denied tool call");
+
+			// Show reason input
+			const reasonInput = approvalEl.createEl("textarea", {
+				cls: "letta-approval-reason-input",
+				attr: {
+					placeholder: "Optional: Provide feedback for the agent...",
+					rows: "3",
+				},
+			});
+
+			approveBtn.disabled = true;
+			denyBtn.textContent = "Submit Denial";
+
+			// Change deny button to submit the denial
+			denyBtn.removeEventListener("click", arguments.callee as any);
+			denyBtn.addEventListener("click", async () => {
+				const reason = reasonInput.value || "Request denied";
+				approvalEl.addClass("letta-approval-processing");
+				denyBtn.disabled = true;
+				denyBtn.textContent = "Denying...";
+
+				await this.sendApprovalResponse(approvalRequestId, false, toolArgs, reason);
+
+				// Remove the approval UI after a short delay
+				setTimeout(() => {
+					approvalEl.remove();
+				}, 500);
+			});
+		});
+
+		// Auto-scroll to approval request
+		setTimeout(() => {
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: "smooth",
+			});
+		}, 10);
+	}
+
+	async sendApprovalResponse(approvalRequestId: string, approve: boolean, toolArgs: any, reason?: string) {
+		console.log("[Letta Plugin] sendApprovalResponse:", { approvalRequestId, approve, reason });
+
+		let finalApprove = approve;
+		let finalReason = reason;
+
+		try {
+			// If approved and it's a write_obsidian_note call, execute the write
+			if (approve && toolArgs.block_label && toolArgs.file_path) {
+				console.log("[Letta Plugin] Executing note write...");
+				try {
+					await this.executeNoteWrite(toolArgs.block_label, toolArgs.file_path);
+				} catch (writeError: any) {
+					// If the write fails, convert approval to denial with error message
+					console.error("[Letta Plugin] Note write failed, converting to denial:", writeError);
+					finalApprove = false;
+					finalReason = `Failed to write note: ${writeError.message}`;
+					new Notice(`Failed to write note: ${writeError.message}`);
+				}
+			}
+
+			// Send approval/denial message to agent
+			const approvalMessage = {
+				id: `approval-response-${Date.now()}`,
+				date: new Date().toISOString(),
+				messageType: "approval_response_message",
+				approve: finalApprove,
+				approvalRequestId: approvalRequestId,
+				...(finalReason && !finalApprove ? { reason: finalReason } : {})
+			};
+
+			console.log("[Letta Plugin] Sending approval response:", approvalMessage);
+
+			// Send the approval message using the streaming API
+			if (!this.plugin.agent || !this.plugin.client) {
+				throw new Error("Agent or client not initialized");
+			}
+
+			const stream = await this.plugin.client.agents.messages.createStream(
+				this.plugin.agent.id,
+				{
+					messages: [approvalMessage as any],
+					streamTokens: true,
+				},
+			);
+
+			// Process the stream responses
+			for await (const chunk of stream) {
+				if (chunk && typeof chunk === "object") {
+					await this.processStreamingMessage(chunk);
+				}
+			}
+
+			// Re-enable input after response is processed
+			this.messageInput.disabled = false;
+			this.sendButton.disabled = false;
+			this.sendButton.textContent = "Send";
+			this.sendButton.removeClass("letta-button-loading");
+
+			// Reset approval state after completion
+			this.currentApprovalRequestId = null;
+			this.currentApprovalArgs = "";
+			this.currentApprovalToolName = "";
+			this.hasCreatedApprovalUI = false;
+
+		} catch (error: any) {
+			console.error("[Letta Plugin] Error sending approval response:", error);
+			new Notice(`Failed to send approval response: ${error.message}`);
+
+			// Re-enable input on error
+			this.messageInput.disabled = false;
+			this.sendButton.disabled = false;
+			this.sendButton.textContent = "Send";
+			this.sendButton.removeClass("letta-button-loading");
+		}
+	}
+
+	async executeNoteWrite(blockLabel: string, filePath: string) {
+		console.log("[Letta Plugin] executeNoteWrite:", { blockLabel, filePath });
+
+		try {
+			if (!this.plugin.client) {
+				throw new Error("Letta client not initialized");
+			}
+
+			// Fetch the block content
+			const blocks = await this.plugin.client.blocks.list({ label: blockLabel });
+			if (!blocks || blocks.length === 0) {
+				throw new Error(`Memory block with label '${blockLabel}' not found`);
+			}
+
+			const block = blocks[0];
+			const content = block.value || "";
+
+			// Sanitize the file path
+			let sanitizedPath = filePath.replace(/[\\:*?"<>|]/g, "_");
+
+			// Prepend default note folder if configured and path doesn't already start with it
+			const defaultFolder = this.plugin.settings.defaultNoteFolder?.trim();
+			if (defaultFolder && !sanitizedPath.startsWith(defaultFolder + '/')) {
+				sanitizedPath = `${defaultFolder}/${sanitizedPath}`;
+			}
+
+			// Ensure .md extension
+			const fullPath = sanitizedPath.endsWith('.md') ? sanitizedPath : `${sanitizedPath}.md`;
+
+			// Create parent directories if they don't exist
+			const pathParts = fullPath.split('/');
+			if (pathParts.length > 1) {
+				const folderPath = pathParts.slice(0, -1).join('/');
+				const folder = this.app.vault.getAbstractFileByPath(folderPath);
+				if (!folder) {
+					await this.app.vault.createFolder(folderPath);
+				}
+			}
+
+			// Create or overwrite the file
+			const existingFile = this.app.vault.getAbstractFileByPath(fullPath);
+			if (existingFile instanceof TFile) {
+				await this.app.vault.modify(existingFile, content);
+				new Notice(`Updated note: ${fullPath}`);
+			} else {
+				await this.app.vault.create(fullPath, content);
+				new Notice(`Created note: ${fullPath}`);
+			}
+
+			console.log("[Letta Plugin] Note written successfully:", fullPath);
+
+		} catch (error) {
+			console.error("[Letta Plugin] Error writing note:", error);
+			throw error;
+		}
+	}
+
 	async updateStreamingToolResult(toolReturn: any) {
 		console.log("[Letta Plugin] updateStreamingToolResult called for tool:", this.currentToolCallName);
 		console.log("[Letta Plugin] Tool return data:", toolReturn);
@@ -5884,6 +6296,10 @@ class LettaChatView extends ItemView {
 		this.currentToolCallArgs = "";
 		this.currentToolCallName = "";
 		this.currentToolCallData = null;
+		this.currentApprovalRequestId = null;
+		this.currentApprovalArgs = "";
+		this.currentApprovalToolName = "";
+		this.hasCreatedApprovalUI = false;
 	}
 
 	markStreamingComplete() {
@@ -6390,6 +6806,9 @@ class LettaChatView extends ItemView {
 			console.log(
 				`[Letta Plugin] Successfully verified agent access: ${verifyAgent.name}`,
 			);
+
+			// Ensure Obsidian tools are registered and configured for this agent
+			await this.plugin.registerObsidianTools();
 
 			// Update UI - agent name
 			this.updateAgentNameDisplay();
@@ -7557,13 +7976,11 @@ class ToolRegistrationConsentModal extends Modal {
 			cls: "modal-description",
 		});
 		description.innerHTML = `
-			<p>Letta wants to register custom Obsidian tools that will allow your agent to:</p>
+			<p>Letta wants to register the following custom Obsidian tool:</p>
 			<ul>
-				<li><strong>Create new notes</strong> in your vault based on your conversations</li>
-				<li><strong>Propose note content</strong> for your review before creating</li>
-				<li><strong>Organize notes</strong> in folders you specify</li>
+				<li><code>write_obsidian_note</code> - Write a memory block's content to a specified file path in your vault</li>
 			</ul>
-			<p><strong>Note:</strong> Tools will be installed for your entire Letta organization but will only be attached to your current agent. Each tool use requires your explicit approval.</p>
+			<p><strong>Note:</strong> Tools will be installed for your entire Letta organization but will only be attached to your current agent. Each tool use requires your explicit approval before execution.</p>
 			<p><em>You can change this preference in the plugin settings at any time.</em></p>
 		`;
 		
@@ -7886,474 +8303,6 @@ class AgentConfigModal extends Modal {
 		if (this.resolve) {
 			this.resolve(null);
 		}
-	}
-}
-
-class ModelSwitcherModal extends Modal {
-	plugin: LettaPlugin;
-	currentAgent: LettaAgent;
-	models: LettaModel[] = [];
-	filteredModels: LettaModel[] = [];
-
-	// Filter controls
-	providerCategorySelect: HTMLSelectElement;
-	providerNameSelect: HTMLSelectElement;
-	searchInput: HTMLInputElement;
-
-	// Model list
-	modelList: HTMLElement;
-	resultsCounter: HTMLElement;
-
-	constructor(app: App, plugin: LettaPlugin, currentAgent: LettaAgent) {
-		super(app);
-		this.plugin = plugin;
-		this.currentAgent = currentAgent;
-	}
-
-	async onOpen() {
-		const { contentEl } = this;
-		contentEl.empty();
-		contentEl.addClass("model-switcher-modal");
-
-		// Header
-		const header = contentEl.createEl("div", {
-			cls: "agent-config-header",
-		});
-		header.createEl("h2", { text: "Select Model" });
-		header.createEl("p", {
-			text: `Choose a model for agent: ${this.currentAgent.name}`,
-			cls: "agent-config-subtitle",
-		});
-
-		// Content area
-		const content = contentEl.createEl("div", { cls: "agent-config-form" });
-
-		// Current model info
-		const currentSection = content.createEl("div", {
-			cls: "config-section",
-		});
-		currentSection.createEl("h3", { text: "Current Model" });
-
-		const currentModel = this.currentAgent.llm_config?.model || "Unknown";
-		const currentProvider =
-			this.currentAgent.llm_config?.provider_name || "Unknown";
-		const currentCategory =
-			this.currentAgent.llm_config?.provider_category || "Unknown";
-
-		currentSection.createEl("p", {
-			text: `Model: ${currentModel}`,
-			cls: "config-help",
-		});
-		currentSection.createEl("p", {
-			text: `Provider: ${currentProvider} (${currentCategory})`,
-			cls: "config-help",
-		});
-
-		// Filters section
-		const filtersSection = content.createEl("div", {
-			cls: "config-section",
-		});
-		const filtersHeader = filtersSection.createEl("div", {
-			cls: "filters-header",
-		});
-		filtersHeader.createEl("h3", { text: "Filter Models" });
-
-		// Add clear filters button
-		const clearFiltersBtn = filtersHeader.createEl("button", {
-			text: "Clear Filters",
-			cls: "clear-filters-btn",
-		});
-		clearFiltersBtn.addEventListener("click", () => this.clearFilters());
-
-		// Filters grid container
-		const filtersGrid = filtersSection.createEl("div", {
-			cls: "filters-grid",
-		});
-
-		// Provider category filter
-		const categoryGroup = filtersGrid.createEl("div", {
-			cls: "config-group",
-		});
-		categoryGroup.createEl("label", {
-			text: "Provider Category:",
-			cls: "config-label",
-		});
-		this.providerCategorySelect = categoryGroup.createEl("select", {
-			cls: "config-select",
-		});
-		this.providerCategorySelect.createEl("option", {
-			text: "All Categories",
-			value: "",
-		});
-		this.providerCategorySelect.createEl("option", {
-			text: "Base (Letta-hosted)",
-			value: "base",
-		});
-		this.providerCategorySelect.createEl("option", {
-			text: "BYOK (Bring Your Own Key)",
-			value: "byok",
-		});
-
-		// Provider name filter
-		const providerGroup = filtersGrid.createEl("div", {
-			cls: "config-group",
-		});
-		providerGroup.createEl("label", {
-			text: "Provider:",
-			cls: "config-label",
-		});
-		this.providerNameSelect = providerGroup.createEl("select", {
-			cls: "config-select",
-		});
-		this.providerNameSelect.createEl("option", {
-			text: "All Providers",
-			value: "",
-		});
-
-		// Search filter
-		const searchGroup = filtersGrid.createEl("div", {
-			cls: "config-group",
-		});
-		const searchLabel = searchGroup.createEl("label", {
-			text: "Search Models:",
-			cls: "config-label",
-		});
-		const searchContainer = searchGroup.createEl("div", {
-			cls: "search-input-container",
-		});
-		this.searchInput = searchContainer.createEl("input", {
-			cls: "config-input search-input",
-			attr: { type: "text", placeholder: "Search models..." },
-		});
-
-		// Add search clear button
-		const searchClearBtn = searchContainer.createEl("button", {
-			cls: "search-clear-btn",
-			attr: { type: "button", title: "Clear search" },
-		});
-		searchClearBtn.textContent = "×";
-		searchClearBtn.addEventListener("click", () => {
-			this.searchInput.value = "";
-			this.filterModels();
-		});
-
-		// Models section
-		const modelsSection = content.createEl("div", {
-			cls: "config-section",
-		});
-		const modelsHeader = modelsSection.createEl("div", {
-			cls: "models-header",
-		});
-		modelsHeader.createEl("h3", { text: "Available Models" });
-
-		// Add results counter
-		const resultsCounter = modelsHeader.createEl("span", {
-			cls: "results-counter",
-			text: "Loading...",
-		});
-		this.resultsCounter = resultsCounter;
-
-		this.modelList = modelsSection.createEl("div", {
-			cls: "block-search-list",
-		});
-		this.modelList.createEl("div", {
-			text: "Loading models...",
-			cls: "block-search-empty",
-		});
-
-		// Buttons
-		const buttons = contentEl.createEl("div", {
-			cls: "agent-config-buttons",
-		});
-
-		const cancelBtn = buttons.createEl("button", {
-			text: "Cancel",
-			cls: "agent-config-cancel-btn",
-		});
-		cancelBtn.addEventListener("click", () => this.close());
-
-		// Load models and setup event listeners
-		await this.loadModels();
-		this.setupEventListeners();
-	}
-
-	async loadModels() {
-		try {
-			const response = await this.plugin.makeRequest("/v1/models/");
-			this.models = response || [];
-			this.updateProviderOptions();
-			this.filterModels();
-		} catch (error) {
-			console.error("Error loading models:", error);
-			this.modelList.empty();
-			this.modelList.createEl("div", {
-				text: "Error loading models. Please try again.",
-				cls: "block-search-empty",
-			});
-		}
-	}
-
-	updateProviderOptions() {
-		// Get unique provider names
-		const providers = [
-			...new Set(this.models.map((m) => m.provider_name).filter(Boolean)),
-		];
-
-		// Clear existing options (keep the "All Providers" option)
-		while (this.providerNameSelect.children.length > 1) {
-			this.providerNameSelect.removeChild(
-				this.providerNameSelect.lastChild!,
-			);
-		}
-
-		// Add provider options
-		providers.sort().forEach((provider) => {
-			this.providerNameSelect.createEl("option", {
-				text: provider,
-				value: provider,
-			});
-		});
-	}
-
-	setupEventListeners() {
-		this.providerCategorySelect.addEventListener("change", () =>
-			this.filterModels(),
-		);
-		this.providerNameSelect.addEventListener("change", () =>
-			this.filterModels(),
-		);
-		this.searchInput.addEventListener("input", () => this.filterModels());
-
-		// Add keyboard shortcuts
-		this.searchInput.addEventListener("keydown", (e) => {
-			if (e.key === "Escape") {
-				this.searchInput.value = "";
-				this.filterModels();
-			} else if (e.key === "Enter" && this.filteredModels.length === 1) {
-				// Select the only filtered model on Enter
-				this.selectModel(this.filteredModels[0]);
-			}
-		});
-
-		// Auto-focus search input
-		setTimeout(() => this.searchInput.focus(), 100);
-	}
-
-	clearFilters() {
-		this.providerCategorySelect.value = "";
-		this.providerNameSelect.value = "";
-		this.searchInput.value = "";
-		this.filterModels();
-	}
-
-	highlightSearchTerm(text: string, searchTerm: string): string {
-		if (!searchTerm) return text;
-
-		const regex = new RegExp(
-			`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`,
-			"gi",
-		);
-		return text.replace(regex, '<mark class="search-highlight">$1</mark>');
-	}
-
-	filterModels() {
-		const categoryFilter = this.providerCategorySelect.value;
-		const providerFilter = this.providerNameSelect.value;
-		const searchFilter = this.searchInput.value.toLowerCase();
-
-		this.filteredModels = this.models.filter((model) => {
-			const matchesCategory =
-				!categoryFilter || model.provider_category === categoryFilter;
-			const matchesProvider =
-				!providerFilter || model.provider_name === providerFilter;
-			const matchesSearch =
-				!searchFilter ||
-				model.model.toLowerCase().includes(searchFilter);
-
-			return matchesCategory && matchesProvider && matchesSearch;
-		});
-
-		this.renderModels();
-	}
-
-	renderModels() {
-		this.modelList.empty();
-
-		// Update results counter
-		const totalModels = this.models.length;
-		const filteredCount = this.filteredModels.length;
-		this.resultsCounter.textContent = `${filteredCount} of ${totalModels} models`;
-
-		if (this.filteredModels.length === 0) {
-			this.modelList.createEl("div", {
-				text: "No models found matching the current filters.",
-				cls: "block-search-empty",
-			});
-			return;
-		}
-
-		// Create table structure
-		const table = this.modelList.createEl("table", { cls: "model-table" });
-
-		// Table header
-		const thead = table.createEl("thead");
-		const headerRow = thead.createEl("tr");
-		headerRow.createEl("th", { text: "Model" });
-		headerRow.createEl("th", { text: "Provider" });
-		headerRow.createEl("th", { text: "Category" });
-		headerRow.createEl("th", { text: "Context Window" });
-		headerRow.createEl("th", { text: "Status" });
-
-		// Table body
-		const tbody = table.createEl("tbody");
-
-		this.filteredModels.forEach((model) => {
-			const row = tbody.createEl("tr", { cls: "model-table-row" });
-
-			// Model name with search highlighting
-			const modelCell = row.createEl("td", { cls: "model-cell-name" });
-			const modelNameSpan = modelCell.createEl("span", {
-				cls: "model-name",
-			});
-			const searchTerm = this.searchInput.value.toLowerCase();
-			modelNameSpan.innerHTML = this.highlightSearchTerm(
-				model.model,
-				searchTerm,
-			);
-
-			// Add model details as tooltip
-			const modelDetails = [
-				`Provider: ${model.provider_name || "Unknown"}`,
-				`Category: ${model.provider_category || "Unknown"}`,
-				`Context: ${model.context_window?.toLocaleString() || "Unknown"} tokens`,
-				model.model_endpoint
-					? `Endpoint: ${model.model_endpoint}`
-					: null,
-			]
-				.filter(Boolean)
-				.join("\n");
-
-			modelCell.setAttribute("title", modelDetails);
-
-			// Provider
-			row.createEl("td", {
-				text: model.provider_name || "Unknown",
-				cls: "model-cell-provider",
-			});
-
-			// Category
-			const categoryCell = row.createEl("td", {
-				cls: "model-cell-category",
-			});
-			const categoryBadge = categoryCell.createEl("span", {
-				text: model.provider_category || "Unknown",
-				cls: `model-category-badge model-category-${model.provider_category || "unknown"}`,
-			});
-
-			// Context window
-			row.createEl("td", {
-				text: model.context_window?.toLocaleString() || "Unknown",
-				cls: "model-cell-context",
-			});
-
-			// Status (current indicator)
-			const statusCell = row.createEl("td", { cls: "model-cell-status" });
-			const currentModel = this.currentAgent.llm_config?.model;
-			const currentProvider = this.currentAgent.llm_config?.provider_name;
-			const isCurrentModel =
-				currentModel === model.model &&
-				currentProvider === model.provider_name;
-			if (isCurrentModel) {
-				const currentBadge = statusCell.createEl("span", {
-					text: "✓ Current",
-					cls: "model-current-badge",
-				});
-				currentBadge.setAttribute(
-					"title",
-					"This model is currently selected for your agent",
-				);
-				// Disable clicking on current model
-				row.classList.add("model-current-row");
-			} else {
-				const availableBadge = statusCell.createEl("span", {
-					text: "Select",
-					cls: "model-available-badge",
-				});
-				availableBadge.setAttribute(
-					"title",
-					"Click to select this model",
-				);
-			}
-
-			// Click handler - only for non-current models
-			if (!isCurrentModel) {
-				row.addEventListener("click", () => this.selectModel(model));
-				row.style.cursor = "pointer";
-
-				// Hover effect
-				row.addEventListener("mouseenter", () => {
-					row.style.backgroundColor =
-						"var(--background-modifier-hover)";
-				});
-				row.addEventListener("mouseleave", () => {
-					row.style.backgroundColor = "";
-				});
-			} else {
-				row.style.cursor = "default";
-				row.style.opacity = "0.7";
-			}
-		});
-	}
-
-	async selectModel(model: LettaModel) {
-		try {
-			// Update the agent's LLM config while preserving existing values
-			const updateData = {
-				llm_config: {
-					...this.currentAgent.llm_config,
-					model: model.model,
-					model_endpoint_type: model.model_endpoint_type,
-					provider_name: model.provider_name,
-					provider_category: model.provider_category,
-					context_window: model.context_window,
-					model_endpoint: model.model_endpoint,
-					model_wrapper: model.model_wrapper,
-					handle: model.handle || `${model.provider_name}/${model.model}`,
-				},
-			};
-
-			await this.plugin.makeRequest(
-				`/v1/agents/${this.currentAgent.id}`,
-				{
-					method: "PATCH",
-					body: updateData,
-				},
-			);
-
-			new Notice(
-				`Model updated to ${model.provider_name}/${model.model}`,
-			);
-
-			// Update the current agent data
-			this.currentAgent.llm_config = updateData.llm_config;
-
-			// Refresh the model button in the chat view
-			const chatLeaf =
-				this.app.workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE)[0];
-			if (chatLeaf && chatLeaf.view instanceof LettaChatView) {
-				(chatLeaf.view as LettaChatView).updateModelButton();
-			}
-
-			this.close();
-		} catch (error) {
-			console.error("Error updating model:", error);
-			new Notice("Failed to update model. Please try again.");
-		}
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
 	}
 }
 

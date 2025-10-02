@@ -27,6 +27,13 @@
     gap: 6px;
 }
 
+.letta-button-container {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding-left: 0;
+}
+
 .letta-name-container {
     display: flex;
     align-items: baseline;
@@ -58,6 +65,15 @@
 
 .letta-chat-title.no-agent:hover {
     color: var(--text-muted);
+}
+
+.letta-chat-title.connecting {
+    color: var(--text-accent);
+    opacity: 0.8;
+}
+
+.letta-chat-title.connecting:hover {
+    color: var(--text-accent);
 }
 
 
@@ -152,36 +168,8 @@
 .letta-button-container {
     display: flex;
     gap: 6px;
-    justify-content: space-between;
+    justify-content: flex-end;
     align-items: center;
-}
-
-.letta-button-group-right {
-    display: flex;
-    gap: 6px;
-}
-
-.letta-model-button {
-    padding: 0 !important;
-    background: none !important;
-    color: var(--text-faint);
-    border: none !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-    font-weight: 400;
-    font-size: 0.8em;
-    cursor: pointer;
-    transition: color 0.15s ease;
-    font-family: var(--font-monospace);
-}
-
-.letta-model-button:hover {
-    color: var(--text-normal);
-}
-
-.letta-model-button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
 }
 
 .letta-send-button {
@@ -958,26 +946,11 @@
     .letta-input-container {
         padding: 6px 8px;
     }
-    
-    .letta-button-container {
-        flex-direction: column;
-        gap: 4px;
-    }
-    
-    .letta-button-group-right {
-        width: 100%;
-    }
-    
+
     .letta-send-button {
         width: 100%;
         justify-content: center;
         padding: 6px 12px !important;
-    }
-    
-    .letta-model-button {
-        width: 100%;
-        justify-content: center;
-        padding: 6px 0 !important;
     }
 }
 
@@ -996,8 +969,7 @@
 
 /* Agent Configuration Modal */
 .agent-config-modal .modal,
-.agent-property-modal .modal,
-.model-switcher-modal .modal {
+.agent-property-modal .modal {
     width: 90vw;
     height: 90vh;
     max-width: 1000px;
@@ -1006,21 +978,13 @@
 }
 
 .agent-config-modal,
-.agent-property-modal,
-.model-switcher-modal {
+.agent-property-modal {
     display: flex;
     flex-direction: column;
     height: 100%;
     padding: 0;
 }
 
-.model-switcher-modal .modal-content {
-    padding: 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-}
 
 .agent-config-header {
     padding: 24px;
@@ -1065,17 +1029,6 @@
     margin-bottom: 0;
 }
 
-.model-switcher-modal .config-section:nth-child(2) {
-    background: var(--background-secondary);
-}
-
-.model-switcher-modal .config-section:last-child {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    padding-bottom: 20px;
-}
 
 .config-section h3 {
     margin: 0 0 16px 0;
@@ -1115,9 +1068,6 @@
     gap: 6px;
 }
 
-.model-switcher-modal .config-section:nth-child(2) .config-group {
-    margin-bottom: 12px;
-}
 
 .filters-grid {
     display: grid;
@@ -2017,15 +1967,6 @@
     box-shadow: none !important;
 }
 
-/* Make the table container scrollable */
-.model-switcher-modal .block-search-list {
-    flex: 1;
-    overflow-y: auto;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
-    background: var(--background-primary);
-    min-height: 300px;
-}
 
 /* Responsive table design */
 @media (max-width: 900px) {
@@ -2107,7 +2048,8 @@
 }
 
 /* Disconnected State Message */
-.letta-disconnected-container {
+.letta-disconnected-container,
+.letta-connecting-container {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -2117,7 +2059,8 @@
     padding: 40px 20px;
 }
 
-.letta-disconnected-message {
+.letta-disconnected-message,
+.letta-connecting-message {
     text-align: center;
     max-width: 450px;
     display: flex;
@@ -2127,7 +2070,8 @@
 }
 
 
-.letta-disconnected-title {
+.letta-disconnected-title,
+.letta-connecting-title {
     margin: 0;
     color: var(--text-normal);
     font-size: 1.6em;
@@ -2136,12 +2080,54 @@
     letter-spacing: -0.02em;
 }
 
-.letta-disconnected-subtitle {
+.letta-connecting-title {
+    color: var(--text-accent);
+}
+
+.letta-disconnected-subtitle,
+.letta-connecting-subtitle {
     margin: 0;
     color: var(--text-muted);
     font-size: 0.95em;
     line-height: 1.6;
     text-align: center;
+}
+
+/* Animated dots for connecting state */
+.letta-connecting-dots {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+    margin-top: 10px;
+}
+
+.letta-connecting-dots span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--text-accent);
+    animation: letta-pulse 1.4s infinite ease-in-out both;
+}
+
+.letta-connecting-dots span:nth-child(1) {
+    animation-delay: -0.32s;
+}
+
+.letta-connecting-dots span:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+.letta-connecting-dots span:nth-child(3) {
+    animation-delay: 0s;
+}
+
+@keyframes letta-pulse {
+    0%, 80%, 100% {
+        transform: scale(0);
+    }
+    40% {
+        transform: scale(1);
+    }
 }
 
 .letta-auth-error-text {
@@ -3057,8 +3043,8 @@
 .letta-config-button {
     cursor: pointer;
     opacity: 0.7;
-    padding: 2px 6px;
-    margin: 0 4px;
+    padding: 2px 12px 2px 0;
+    margin: 0;
     font-size: 0.8em;
     transition: opacity 0.2s ease;
 }
@@ -3628,3 +3614,116 @@
     }
 }
 
+
+/* Approval Request Styles */
+.letta-approval-request {
+    background: var(--background-modifier-form-field);
+    border: 2px solid var(--interactive-accent);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 12px 0;
+    animation: slideDown 0.3s ease-out;
+}
+
+.letta-approval-request.letta-approval-processing {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.letta-approval-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.letta-approval-title {
+    font-weight: 600;
+    color: var(--text-accent);
+    font-size: 1.1em;
+}
+
+.letta-approval-info {
+    margin-bottom: 16px;
+}
+
+.letta-approval-tool-name {
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--text-normal);
+}
+
+.letta-approval-args {
+    background: var(--background-primary);
+    border-radius: 4px;
+    padding: 12px;
+    margin-top: 8px;
+    font-size: 0.9em;
+    line-height: 1.6;
+}
+
+.letta-approval-args > div {
+    margin: 4px 0;
+    color: var(--text-muted);
+}
+
+.letta-approval-args pre {
+    margin: 0;
+    padding: 0;
+    background: none;
+    font-family: var(--font-monospace);
+}
+
+.letta-approval-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.letta-approval-approve-btn,
+.letta-approval-deny-btn {
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+}
+
+.letta-approval-approve-btn {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+.letta-approval-approve-btn:hover:not(:disabled) {
+    background: var(--interactive-accent-hover);
+}
+
+.letta-approval-deny-btn {
+    background: var(--background-modifier-error);
+    color: var(--text-on-accent);
+}
+
+.letta-approval-deny-btn:hover:not(:disabled) {
+    opacity: 0.9;
+}
+
+.letta-approval-approve-btn:disabled,
+.letta-approval-deny-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.letta-approval-reason-input {
+    width: 100%;
+    padding: 8px;
+    margin: 12px 0;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-family: var(--font-interface);
+    resize: vertical;
+}
