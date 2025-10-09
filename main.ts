@@ -1481,6 +1481,9 @@ class LettaChatView extends ItemView {
 	agentNameElement: HTMLElement;
 	statusDot: HTMLElement;
 	statusText: HTMLElement;
+	autocompleteDropdown: HTMLElement | null = null;
+	mentionedFiles: Set<string> = new Set();
+	selectedSuggestionIndex: number = -1;
 
 	constructor(leaf: WorkspaceLeaf, plugin: LettaPlugin) {
 		super(leaf);
@@ -1631,17 +1634,40 @@ class LettaChatView extends ItemView {
 		this.updateChatStatus();
 
 		this.messageInput.addEventListener("keydown", (evt) => {
+			// Handle autocomplete navigation
+			if (this.autocompleteDropdown && this.autocompleteDropdown.style.display !== "none") {
+				if (evt.key === "ArrowDown") {
+					evt.preventDefault();
+					this.navigateAutocomplete(1);
+					return;
+				} else if (evt.key === "ArrowUp") {
+					evt.preventDefault();
+					this.navigateAutocomplete(-1);
+					return;
+				} else if (evt.key === "Enter" && this.selectedSuggestionIndex >= 0) {
+					evt.preventDefault();
+					this.selectCurrentSuggestion();
+					return;
+				} else if (evt.key === "Escape") {
+					evt.preventDefault();
+					this.hideAutocomplete();
+					return;
+				}
+			}
+
 			if (evt.key === "Enter" && !evt.shiftKey) {
 				evt.preventDefault();
 				this.sendMessage();
 			}
 		});
 
-		// Auto-resize textarea
+		// Auto-resize textarea and handle @-mentions
 		this.messageInput.addEventListener("input", () => {
 			this.messageInput.style.height = "auto";
 			this.messageInput.style.height =
 				Math.min(this.messageInput.scrollHeight, 80) + "px";
+
+			this.handleMentionInput();
 		});
 
 		// Start with empty chat
@@ -3613,8 +3639,33 @@ class LettaChatView extends ItemView {
 	}
 
 	async sendMessage() {
-		const message = this.messageInput.value.trim();
+		let message = this.messageInput.value.trim();
 		if (!message) return;
+
+		// Extract mentioned files and include their content
+		const mentionedFiles = this.extractMentionedFiles();
+		if (mentionedFiles.length > 0) {
+			const contextParts: string[] = [];
+
+			for (const filePath of mentionedFiles) {
+				const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
+				if (file && file instanceof TFile) {
+					try {
+						const content = await this.plugin.app.vault.read(file);
+						contextParts.push(`\n\n---\n**Context from ${file.path}:**\n\`\`\`\n${content}\n\`\`\``);
+					} catch (error) {
+						console.error(`Failed to read mentioned file ${filePath}:`, error);
+					}
+				}
+			}
+
+			if (contextParts.length > 0) {
+				// Remove the @[[...]] mentions from the display message
+				const cleanMessage = message.replace(/@\[\[([^\]]+)\]\]/g, '');
+				// Append context to the actual message sent to the agent
+				message = cleanMessage + contextParts.join('');
+			}
+		}
 
 		// Check connection and auto-connect if needed
 		if (!this.plugin.agent) {
@@ -3830,6 +3881,167 @@ class LettaChatView extends ItemView {
 			this.sendButton.removeClass("letta-button-loading");
 			this.messageInput.focus();
 		}
+	}
+
+	handleMentionInput() {
+		const cursorPos = this.messageInput.selectionStart;
+		const textBeforeCursor = this.messageInput.value.substring(0, cursorPos);
+
+		// Find the last @ symbol before cursor
+		const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+
+		if (lastAtIndex === -1) {
+			this.hideAutocomplete();
+			return;
+		}
+
+		// Check if there's a space between @ and cursor (means we're not in a mention anymore)
+		const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
+		if (textAfterAt.includes(" ") || textAfterAt.includes("\n")) {
+			this.hideAutocomplete();
+			return;
+		}
+
+		// Get the search query
+		const searchQuery = textAfterAt.toLowerCase();
+
+		// Search for matching files
+		const files = this.plugin.app.vault.getMarkdownFiles();
+		const matches = files
+			.filter(file => {
+				const fileName = file.basename.toLowerCase();
+				const filePath = file.path.toLowerCase();
+				return fileName.includes(searchQuery) || filePath.includes(searchQuery);
+			})
+			.slice(0, 10); // Limit to 10 results
+
+		if (matches.length > 0) {
+			this.showAutocomplete(matches, lastAtIndex);
+		} else {
+			this.hideAutocomplete();
+		}
+	}
+
+	showAutocomplete(files: any[], atPosition: number) {
+		// Create dropdown if it doesn't exist
+		if (!this.autocompleteDropdown) {
+			this.autocompleteDropdown = this.inputContainer.createEl("div", {
+				cls: "letta-autocomplete-dropdown"
+			});
+		}
+
+		// Clear and populate dropdown
+		this.autocompleteDropdown.empty();
+		this.selectedSuggestionIndex = -1;
+
+		files.forEach((file, index) => {
+			const item = this.autocompleteDropdown!.createEl("div", {
+				cls: "letta-autocomplete-item",
+				attr: { "data-index": index.toString() }
+			});
+
+			const fileName = item.createEl("div", {
+				cls: "letta-autocomplete-filename",
+				text: file.basename
+			});
+
+			const filePath = item.createEl("div", {
+				cls: "letta-autocomplete-path",
+				text: file.path
+			});
+
+			item.addEventListener("click", () => {
+				this.insertMention(file, atPosition);
+			});
+		});
+
+		this.autocompleteDropdown.style.display = "block";
+	}
+
+	hideAutocomplete() {
+		if (this.autocompleteDropdown) {
+			this.autocompleteDropdown.style.display = "none";
+			this.selectedSuggestionIndex = -1;
+		}
+	}
+
+	navigateAutocomplete(direction: number) {
+		if (!this.autocompleteDropdown) return;
+
+		const items = this.autocompleteDropdown.querySelectorAll(".letta-autocomplete-item");
+		if (items.length === 0) return;
+
+		// Remove previous selection
+		if (this.selectedSuggestionIndex >= 0) {
+			items[this.selectedSuggestionIndex].removeClass("selected");
+		}
+
+		// Calculate new index
+		this.selectedSuggestionIndex += direction;
+		if (this.selectedSuggestionIndex < 0) {
+			this.selectedSuggestionIndex = items.length - 1;
+		} else if (this.selectedSuggestionIndex >= items.length) {
+			this.selectedSuggestionIndex = 0;
+		}
+
+		// Add new selection
+		items[this.selectedSuggestionIndex].addClass("selected");
+		items[this.selectedSuggestionIndex].scrollIntoView({ block: "nearest" });
+	}
+
+	selectCurrentSuggestion() {
+		if (!this.autocompleteDropdown || this.selectedSuggestionIndex < 0) return;
+
+		const selectedItem = this.autocompleteDropdown.querySelector(
+			`.letta-autocomplete-item[data-index="${this.selectedSuggestionIndex}"]`
+		);
+
+		if (selectedItem) {
+			(selectedItem as HTMLElement).click();
+		}
+	}
+
+	insertMention(file: any, atPosition: number) {
+		const cursorPos = this.messageInput.selectionStart;
+		const textBeforeCursor = this.messageInput.value.substring(0, cursorPos);
+		const textAfterCursor = this.messageInput.value.substring(cursorPos);
+
+		// Find where the @ mention started
+		const mentionStart = atPosition;
+		const beforeMention = this.messageInput.value.substring(0, mentionStart);
+
+		// Insert the mention
+		const mention = `@[[${file.path}]]`;
+		this.messageInput.value = beforeMention + mention + " " + textAfterCursor;
+
+		// Track the mentioned file
+		this.mentionedFiles.add(file.path);
+
+		// Set cursor position after the mention
+		const newCursorPos = beforeMention.length + mention.length + 1;
+		this.messageInput.setSelectionRange(newCursorPos, newCursorPos);
+
+		// Hide autocomplete
+		this.hideAutocomplete();
+
+		// Trigger resize
+		this.messageInput.style.height = "auto";
+		this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 80) + "px";
+
+		// Focus back on input
+		this.messageInput.focus();
+	}
+
+	extractMentionedFiles(): string[] {
+		const mentionPattern = /@\[\[([^\]]+)\]\]/g;
+		const mentions: string[] = [];
+		let match;
+
+		while ((match = mentionPattern.exec(this.messageInput.value)) !== null) {
+			mentions.push(match[1]);
+		}
+
+		return mentions;
 	}
 
 	// Clean up wavy lines and prominent styling from previous tool calls
@@ -6677,94 +6889,137 @@ class LettaChatView extends ItemView {
 			});
 		}
 
-		const loadingEl = contentEl.createEl("div", {
-			text: "Loading agents...",
-			cls: "letta-memory-empty",
+		// Add search input
+		const searchContainer = contentEl.createEl("div", {
+			attr: { style: "margin-bottom: 16px;" },
 		});
 
-		try {
-			const params = new URLSearchParams();
-			if (project) {
-				params.append("project_id", project.id);
-			}
+		const searchInput = searchContainer.createEl("input", {
+			type: "text",
+			placeholder: "Search agents...",
+			attr: {
+				style: "width: 100%; padding: 8px; border: 1px solid var(--background-modifier-border); border-radius: 4px;",
+			},
+		});
 
-			const queryString = params.toString();
-			const endpoint = `/v1/agents${queryString ? "?" + queryString : ""}`;
+		// Container for agents list
+		const agentsContainer = contentEl.createEl("div");
 
-			const agents = await this.plugin.makeRequest(endpoint);
-			loadingEl.remove();
+		let currentSearch = "";
 
-			if (!agents || agents.length === 0) {
-				const emptyDiv = contentEl.createEl("div", {
-					text: project
-						? `No agents found in "${project.name}"`
-						: "No agents found",
-					attr: { style: "text-align: center; padding: 40px;" },
-				});
+		const loadAgents = async () => {
+			agentsContainer.empty();
 
-				if (project && !isCurrentProject) {
-					const backButton = emptyDiv.createEl("button", {
-						text: "← Back to Projects",
-						attr: { style: "margin-top: 16px;" },
-					});
-					backButton.addEventListener("click", () => {
-						modal.close();
-						this.openProjectSelector();
-					});
+			const loadingEl = agentsContainer.createEl("div", {
+				text: "Loading agents...",
+				cls: "letta-memory-empty",
+			});
+
+			try {
+				const params = new URLSearchParams();
+				if (project) {
+					params.append("project_id", project.id);
 				}
-				return;
-			}
-
-			for (const agent of agents) {
-				const agentEl = contentEl.createEl("div");
-				agentEl.style.padding = "12px";
-				agentEl.style.borderBottom =
-					"1px solid var(--background-modifier-border)";
-				agentEl.style.cursor = "pointer";
-
-				const isCurrentAgent = agent.id === this.plugin.agent?.id;
-
-				const nameEl = agentEl.createEl("div", {
-					text: agent.name,
-					attr: { style: "font-weight: 500; margin-bottom: 4px;" },
-				});
-
-				const infoEl = agentEl.createEl("div", {
-					text: `${agent.id.substring(0, 8)}... ${isCurrentAgent ? "(Current)" : ""}`,
-					attr: {
-						style: "color: var(--text-muted); font-size: 0.9em;",
-					},
-				});
-
-				if (isCurrentAgent) {
-					agentEl.style.backgroundColor =
-						"var(--background-modifier-border-hover)";
+				if (currentSearch) {
+					params.append("name", currentSearch);
 				}
 
-				agentEl.addEventListener("click", () => {
-					modal.close();
-					this.switchToAgent(agent, project);
-				});
+				const queryString = params.toString();
+				const endpoint = `/v1/agents${queryString ? "?" + queryString : ""}`;
 
-				agentEl.addEventListener("mouseenter", () => {
-					agentEl.style.backgroundColor =
-						"var(--background-modifier-hover)";
-				});
+				const agents = await this.plugin.makeRequest(endpoint);
+				loadingEl.remove();
 
-				agentEl.addEventListener("mouseleave", () => {
-					if (!isCurrentAgent) {
-						agentEl.style.backgroundColor = "";
-					} else {
+				if (!agents || agents.length === 0) {
+					const emptyDiv = agentsContainer.createEl("div", {
+						text: currentSearch
+							? "No agents found matching your search"
+							: project
+								? `No agents found in "${project.name}"`
+								: "No agents found",
+						attr: { style: "text-align: center; padding: 40px;" },
+					});
+
+					if (project && !isCurrentProject && !currentSearch) {
+						const backButton = emptyDiv.createEl("button", {
+							text: "← Back to Projects",
+							attr: { style: "margin-top: 16px;" },
+						});
+						backButton.addEventListener("click", () => {
+							modal.close();
+							this.openProjectSelector();
+						});
+					}
+					return;
+				}
+
+				for (const agent of agents) {
+					const agentEl = agentsContainer.createEl("div");
+					agentEl.style.padding = "12px";
+					agentEl.style.borderBottom =
+						"1px solid var(--background-modifier-border)";
+					agentEl.style.cursor = "pointer";
+
+					const isCurrentAgent = agent.id === this.plugin.agent?.id;
+
+					const nameEl = agentEl.createEl("div", {
+						text: agent.name,
+						attr: { style: "font-weight: 500; margin-bottom: 4px;" },
+					});
+
+					const infoEl = agentEl.createEl("div", {
+						text: `${agent.id.substring(0, 8)}... ${isCurrentAgent ? "(Current)" : ""}`,
+						attr: {
+							style: "color: var(--text-muted); font-size: 0.9em;",
+						},
+					});
+
+					if (isCurrentAgent) {
 						agentEl.style.backgroundColor =
 							"var(--background-modifier-border-hover)";
 					}
-				});
+
+					agentEl.addEventListener("click", () => {
+						modal.close();
+						this.switchToAgent(agent, project);
+					});
+
+					agentEl.addEventListener("mouseenter", () => {
+						agentEl.style.backgroundColor =
+							"var(--background-modifier-hover)";
+					});
+
+					agentEl.addEventListener("mouseleave", () => {
+						if (!isCurrentAgent) {
+							agentEl.style.backgroundColor = "";
+						} else {
+							agentEl.style.backgroundColor =
+								"var(--background-modifier-border-hover)";
+						}
+					});
+				}
+			} catch (error: any) {
+				loadingEl.textContent = `Failed to load agents: ${error.message}`;
 			}
-		} catch (error: any) {
-			loadingEl.textContent = `Failed to load agents: ${error.message}`;
-		}
+		};
+
+		// Search debouncing
+		let searchTimeout: NodeJS.Timeout;
+		searchInput.addEventListener("input", () => {
+			clearTimeout(searchTimeout);
+			searchTimeout = setTimeout(() => {
+				currentSearch = searchInput.value.trim();
+				loadAgents();
+			}, 300);
+		});
+
+		// Initial load
+		loadAgents();
 
 		modal.open();
+
+		// Focus search input after modal opens
+		setTimeout(() => searchInput.focus(), 100);
 	}
 
 	async switchToAgent(agent: any, project?: any) {
