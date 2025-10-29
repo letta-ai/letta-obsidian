@@ -957,24 +957,64 @@ export default class LettaPlugin extends Plugin {
 				const title = file.basename;
 				const path = file.path;
 
-				// Format the content
-				const formattedContent = `NOTE TITLE: ${title}
-NOTE PATH: ${path}
+				// Extract metadata
+				const metadata = this.extractNoteMetadata(file, content);
+				
+				// Build enhanced header with metadata
+				let header = `NOTE TITLE: ${title}\nNOTE PATH: ${path}\n`;
+				
+				// Add file stats
+				header += `CREATED: ${new Date(file.stat.ctime).toLocaleString()}\n`;
+				header += `MODIFIED: ${new Date(file.stat.mtime).toLocaleString()}\n`;
+				header += `SIZE: ${this.formatFileSize(file.stat.size)}\n`;
+				
+				// Add frontmatter properties if any
+				if (metadata.frontmatter && Object.keys(metadata.frontmatter).length > 0) {
+					header += `FRONTMATTER:\n`;
+					for (const [key, value] of Object.entries(metadata.frontmatter)) {
+						const valueStr = Array.isArray(value) ? value.join(', ') : String(value);
+						header += `  ${key}: ${valueStr}\n`;
+					}
+				}
+				
+				// Add tags
+				if (metadata.tags.length > 0) {
+					header += `TAGS: ${metadata.tags.join(', ')}\n`;
+				}
+				
+				// Add graph context
+				const cache = this.app.metadataCache.getFileCache(file);
+				const outlinks = cache?.links || [];
+				const backlinksData = (this.app.metadataCache as any).getBacklinksForFile?.(file);
+				const backlinksCount = backlinksData?.count?.() || 0;
+				header += `BACKLINKS: ${backlinksCount} notes link to this\n`;
+				header += `OUTLINKS: ${outlinks.length} links in this note\n`;
+				
+				// Add linked files (limit to 5 for brevity)
+				if (outlinks.length > 0) {
+					const linkedFiles = outlinks
+						.map(link => link.link)
+						.filter((link, index, self) => self.indexOf(link) === index)
+						.slice(0, 5);
+					header += `LINKED TO: ${linkedFiles.join(', ')}${outlinks.length > 5 ? ', ...' : ''}\n`;
+				}
+				
+				// Add headings outline
+				if (metadata.headings.length > 0) {
+					header += `HEADINGS: ${metadata.headings.join(', ')}\n`;
+				}
+				
+				header += `\nCONTENT:\n`;
 
-${content}`;
+				// Format the full content with enhanced metadata
+				const formattedContent = header + content;
 
 				// Check size limit
 				if (formattedContent.length > this.settings.focusBlockCharLimit) {
-					// Truncate content but keep header
-					const header = `NOTE TITLE: ${title}
-NOTE PATH: ${path}
-
-`;
-					const availableSpace = this.settings.focusBlockCharLimit - header.length - 50; // Leave some space for ellipsis
+					const availableSpace = this.settings.focusBlockCharLimit - header.length - 50;
 					const truncatedContent = content.substring(0, availableSpace) + "\n\n[Note truncated - exceeds character limit]";
 					value = header + truncatedContent;
 
-					// Show warning in chat view if it's open
 					this.showSizeLimitWarning(file, content.length);
 				} else {
 					value = formattedContent;
@@ -988,9 +1028,66 @@ NOTE PATH: ${path}
 			});
 
 			console.log("[Letta Plugin] Focus block updated");
+			
+			this.refreshFocusIndicator();
 		} catch (error) {
 			console.error("[Letta Plugin] Failed to update focus block:", error);
 		}
+	}
+
+	extractNoteMetadata(file: TFile, content: string): {
+		frontmatter: Record<string, any>;
+		tags: string[];
+		headings: string[];
+	} {
+		const cache = this.app.metadataCache.getFileCache(file);
+		
+		const frontmatter: Record<string, any> = {};
+		if (cache?.frontmatter) {
+			for (const [key, value] of Object.entries(cache.frontmatter)) {
+				if (key !== 'position') {
+					frontmatter[key] = value;
+				}
+			}
+		}
+		
+		const tags = new Set<string>();
+		if (cache?.frontmatter?.tags) {
+			const fmTags = Array.isArray(cache.frontmatter.tags) 
+				? cache.frontmatter.tags 
+				: [cache.frontmatter.tags];
+			fmTags.forEach(tag => tags.add(String(tag)));
+		}
+		if (cache?.tags) {
+			cache.tags.forEach(tagCache => tags.add(tagCache.tag));
+		}
+		
+		const headings: string[] = [];
+		if (cache?.headings) {
+			headings.push(...cache.headings.map(h => h.heading));
+		}
+		
+		return {
+			frontmatter,
+			tags: Array.from(tags),
+			headings
+		};
+	}
+
+	formatFileSize(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	refreshFocusIndicator(): void {
+		const leaves = this.app.workspace.getLeavesOfType(LETTA_CHAT_VIEW_TYPE);
+		leaves.forEach(leaf => {
+			const view = leaf.view as LettaChatView;
+			if (view && view.updateFocusIndicator) {
+				view.updateFocusIndicator();
+			}
+		});
 	}
 
 	scheduleFocusUpdate(): void {
@@ -1481,6 +1578,7 @@ class LettaChatView extends ItemView {
 	agentNameElement: HTMLElement;
 	statusDot: HTMLElement;
 	statusText: HTMLElement;
+	focusIndicator: HTMLElement | null = null;
 	autocompleteDropdown: HTMLElement | null = null;
 	mentionedFiles: Set<string> = new Set();
 	selectedSuggestionIndex: number = -1;
@@ -1571,6 +1669,14 @@ class LettaChatView extends ItemView {
 		this.statusText = statusIndicator.createEl("span", {
 			cls: "letta-status-text",
 		});
+
+		// Focus mode indicator
+		if (this.plugin.settings.focusMode) {
+			this.focusIndicator = this.header.createEl("div", {
+				cls: "letta-focus-indicator",
+			});
+			this.updateFocusIndicator();
+		}
 
 		// Chat container
 		this.chatContainer = container.createEl("div", {
@@ -2950,6 +3056,36 @@ class LettaChatView extends ItemView {
 		} else {
 			this.agentNameElement.textContent = "No Agent";
 			this.agentNameElement.className = "letta-chat-title no-agent";
+		}
+	}
+
+	updateFocusIndicator() {
+		if (!this.focusIndicator) return;
+
+		if (!this.plugin.settings.focusMode || !this.plugin.agent) {
+			this.focusIndicator.style.display = "none";
+			return;
+		}
+
+		const activeFile = this.plugin.app.workspace.getActiveFile();
+		
+		if (activeFile) {
+			this.focusIndicator.style.display = "flex";
+			this.focusIndicator.empty();
+			
+			const icon = this.focusIndicator.createEl("span", {
+				cls: "letta-focus-icon",
+				text: "👁️"
+			});
+			
+			const fileInfo = this.focusIndicator.createEl("span", {
+				cls: "letta-focus-text",
+				text: `Focused: ${activeFile.basename}`
+			});
+			
+			fileInfo.title = `Currently focused on: ${activeFile.path}`;
+		} else {
+			this.focusIndicator.style.display = "none";
 		}
 	}
 

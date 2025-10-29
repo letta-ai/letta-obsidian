@@ -107,6 +107,30 @@
     font-weight: 500;
 }
 
+.letta-focus-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8em;
+    margin-top: 6px;
+    padding: 4px 8px;
+    background: var(--background-secondary);
+    border-radius: 4px;
+    color: var(--text-muted);
+}
+
+.letta-focus-icon {
+    font-size: 0.9em;
+}
+
+.letta-focus-text {
+    font-weight: 500;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .letta-chat-subtitle {
     margin: 0;
     color: var(--text-muted);
