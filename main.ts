@@ -5168,9 +5168,21 @@ class LettaChatView extends ItemView {
 		
 		try {
 			const proposal = JSON.parse(toolResult) as ObsidianProposal;
-			const command = proposal.command || (proposal.action ? proposal.action.replace("obsidian_", "") : "unknown");
 			
-			console.log("[Letta Plugin] Obsidian command:", command);
+			console.log("[Letta Plugin] Parsed proposal:", proposal);
+			console.log("[Letta Plugin] proposal.command:", proposal.command);
+			console.log("[Letta Plugin] proposal.action:", proposal.action);
+			console.log("[Letta Plugin] typeof proposal.command:", typeof proposal.command);
+			
+			let command = proposal.command;
+			if (!command && proposal.action) {
+				command = proposal.action.replace("obsidian_", "");
+			}
+			if (!command) {
+				command = "unknown";
+			}
+			
+			console.log("[Letta Plugin] Final command:", command);
 			console.log("[Letta Plugin] Proposal:", proposal);
 			
 			switch(command) {
