@@ -178,6 +178,19 @@ interface ObsidianNoteProposal {
 	tags?: string[];
 }
 
+interface ObsidianProposal {
+	action: "obsidian_view" | "obsidian_create" | "obsidian_str_replace" | "obsidian_insert" | "obsidian_delete" | "obsidian_attach" | "obsidian_detach" | "obsidian_search" | "obsidian_list";
+	command: string;
+	path?: string;
+	content?: string;
+	old_str?: string;
+	new_str?: string;
+	block_label?: string;
+	query?: string;
+	line_number?: number;
+	text?: string;
+}
+
 interface LettaMessage {
 	message_type: string;
 	content?: string;
@@ -4451,6 +4464,7 @@ class LettaChatView extends ItemView {
 		let isArchivalMemorySearch = false;
 		let isArchivalMemoryInsert = false;
 		let isObsidianNoteProposal = false;
+		let isObsidianProposal = false;
 		let effectiveToolCallData = toolCallData;
 
 		if (toolName) {
@@ -4458,6 +4472,7 @@ class LettaChatView extends ItemView {
 			isArchivalMemorySearch = toolName === "archival_memory_search";
 			isArchivalMemoryInsert = toolName === "archival_memory_insert";
 			isObsidianNoteProposal = toolName === "propose_obsidian_note";
+			isObsidianProposal = toolName === "obsidian";
 		} else {
 			// Parse from DOM (for streaming messages)
 			try {
@@ -4472,6 +4487,7 @@ class LettaChatView extends ItemView {
 						isArchivalMemorySearch = detectedToolName === "archival_memory_search";
 						isArchivalMemoryInsert = detectedToolName === "archival_memory_insert";
 						isObsidianNoteProposal = detectedToolName === "propose_obsidian_note";
+						isObsidianProposal = detectedToolName === "obsidian";
 					} else {
 						// Fallback to parsing from content (legacy)
 						effectiveToolCallData = JSON.parse(
@@ -4487,6 +4503,8 @@ class LettaChatView extends ItemView {
 							fallbackToolName === "archival_memory_insert";
 						isObsidianNoteProposal =
 							fallbackToolName === "propose_obsidian_note";
+						isObsidianProposal =
+							fallbackToolName === "obsidian";
 					}
 				}
 			} catch (e) {
@@ -4504,6 +4522,18 @@ class LettaChatView extends ItemView {
 				}
 			} catch (e) {
 				// Not JSON or not a note proposal, continue normally
+			}
+		}
+
+		if (!isObsidianProposal) {
+			try {
+				const parsedResult = JSON.parse(toolResult);
+				if (parsedResult.action && parsedResult.action.startsWith("obsidian_")) {
+					console.log("[Letta Plugin] 🔍 Fallback detection: Found obsidian tool proposal in tool result!");
+					isObsidianProposal = true;
+				}
+			} catch (e) {
+				// Not JSON or not an obsidian proposal, continue normally
 			}
 		}
 
@@ -4554,6 +4584,9 @@ class LettaChatView extends ItemView {
 					effectiveToolCallData,
 					toolResult,
 				);
+			} else if (isObsidianProposal) {
+				// Show enhanced UI for obsidian tool proposals
+				this.createObsidianProposalPreview(toolResultContent, toolResult);
 			} else if (isObsidianNoteProposal) {
 				// Show pretty note preview instead of raw JSON for note proposals
 				this.createNotePreviewDisplay(toolResultContent, toolResult);
@@ -4581,6 +4614,18 @@ class LettaChatView extends ItemView {
 					if (toolResultChevron) toolResultChevron.textContent = "○";
 				}
 			});
+
+			// Post-processing enhancement for obsidian tool proposals
+			if (isObsidianProposal) {
+				console.log("[Letta Plugin] 🎯 Obsidian tool proposal detected! Starting enhancement...");
+				setTimeout(async () => {
+					try {
+						await this.enhanceObsidianProposalDisplay(toolResultContent, toolResult);
+					} catch (error) {
+						console.error("[Letta Plugin] ❌ Error during obsidian proposal enhancement:", error);
+					}
+				}, 10);
+			}
 
 			// Post-processing enhancement for note proposals
 			if (isObsidianNoteProposal) {
@@ -5086,6 +5131,131 @@ class LettaChatView extends ItemView {
 				text: toolResult
 			});
 		}
+	}
+
+	async createObsidianProposalPreview(container: HTMLElement, toolResult: string) {
+		try {
+			const proposal = JSON.parse(toolResult) as ObsidianProposal;
+			const preview = container.createEl("div", { cls: "letta-obsidian-preview" });
+			
+			const commandName = proposal.command || proposal.action.replace("obsidian_", "");
+			preview.createEl("h3", {
+				text: `🔧 Obsidian: ${commandName}`,
+				cls: "letta-obsidian-preview-title"
+			});
+			
+			if (proposal.path) {
+				preview.createEl("div", {
+					text: `📁 ${proposal.path}`,
+					cls: "letta-obsidian-preview-path"
+				});
+			}
+			
+			if (proposal.query) {
+				preview.createEl("div", {
+					text: `🔍 Search: ${proposal.query}`,
+					cls: "letta-obsidian-preview-query"
+				});
+			}
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to create obsidian proposal preview:", error);
+		}
+	}
+
+	async enhanceObsidianProposalDisplay(container: HTMLElement, toolResult: string) {
+		console.log("[Letta Plugin] 🚀 enhanceObsidianProposalDisplay called!");
+		console.log("[Letta Plugin] Tool result:", toolResult);
+		
+		try {
+			const proposal = JSON.parse(toolResult) as ObsidianProposal;
+			const command = proposal.command || proposal.action.replace("obsidian_", "");
+			
+			console.log("[Letta Plugin] Obsidian command:", command);
+			console.log("[Letta Plugin] Proposal:", proposal);
+			
+			switch(command) {
+				case "view":
+					await this.enhanceViewProposal(container, proposal);
+					break;
+				case "create":
+					await this.enhanceCreateProposal(container, proposal);
+					break;
+				case "str_replace":
+					await this.enhanceStrReplaceProposal(container, proposal);
+					break;
+				case "insert":
+					await this.enhanceInsertProposal(container, proposal);
+					break;
+				case "delete":
+					await this.enhanceDeleteProposal(container, proposal);
+					break;
+				case "attach":
+					await this.enhanceAttachProposal(container, proposal);
+					break;
+				case "detach":
+					await this.enhanceDetachProposal(container, proposal);
+					break;
+				case "search":
+					await this.enhanceSearchProposal(container, proposal);
+					break;
+				case "list":
+					await this.enhanceListProposal(container, proposal);
+					break;
+				default:
+					console.error("[Letta Plugin] Unknown obsidian command:", command);
+					container.createEl("div", {
+						text: `Unknown command: ${command}`,
+						cls: "letta-error"
+					});
+			}
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to enhance obsidian proposal display:", error);
+		}
+	}
+
+	async enhanceViewProposal(container: HTMLElement, proposal: ObsidianProposal) {
+		console.log("[Letta Plugin] TODO: Implement view proposal enhancement");
+		container.createEl("div", { text: "View command - Coming soon", cls: "letta-placeholder" });
+	}
+
+	async enhanceCreateProposal(container: HTMLElement, proposal: ObsidianProposal) {
+		console.log("[Letta Plugin] TODO: Implement create proposal enhancement");
+		container.createEl("div", { text: "Create command - Coming soon", cls: "letta-placeholder" });
+	}
+
+	async enhanceStrReplaceProposal(container: HTMLElement, proposal: ObsidianProposal) {
+		console.log("[Letta Plugin] TODO: Implement str_replace proposal enhancement");
+		container.createEl("div", { text: "String replace command - Coming soon", cls: "letta-placeholder" });
+	}
+
+	async enhanceInsertProposal(container: HTMLElement, proposal: ObsidianProposal) {
+		console.log("[Letta Plugin] TODO: Implement insert proposal enhancement");
+		container.createEl("div", { text: "Insert command - Coming soon", cls: "letta-placeholder" });
+	}
+
+	async enhanceDeleteProposal(container: HTMLElement, proposal: ObsidianProposal) {
+		console.log("[Letta Plugin] TODO: Implement delete proposal enhancement");
+		container.createEl("div", { text: "Delete command - Coming soon", cls: "letta-placeholder" });
+	}
+
+	async enhanceAttachProposal(container: HTMLElement, proposal: ObsidianProposal) {
+		console.log("[Letta Plugin] TODO: Implement attach proposal enhancement");
+		container.createEl("div", { text: "Attach command - Coming soon", cls: "letta-placeholder" });
+	}
+
+	async enhanceDetachProposal(container: HTMLElement, proposal: ObsidianProposal) {
+		console.log("[Letta Plugin] TODO: Implement detach proposal enhancement");
+		container.createEl("div", { text: "Detach command - Coming soon", cls: "letta-placeholder" });
+	}
+
+	async enhanceSearchProposal(container: HTMLElement, proposal: ObsidianProposal) {
+		console.log("[Letta Plugin] TODO: Implement search proposal enhancement");
+		container.createEl("div", { text: "Search command - Coming soon", cls: "letta-placeholder" });
+	}
+
+	async enhanceListProposal(container: HTMLElement, proposal: ObsidianProposal) {
+		console.log("[Letta Plugin] TODO: Implement list proposal enhancement");
+		container.createEl("div", { text: "List command - Coming soon", cls: "letta-placeholder" });
 	}
 
 	async enhanceNoteProposalDisplay(container: HTMLElement, toolResult: string) {
