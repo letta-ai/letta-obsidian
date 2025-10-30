@@ -5480,8 +5480,151 @@ class LettaChatView extends ItemView {
 	}
 
 	async enhanceStrReplaceProposal(container: HTMLElement, proposal: ObsidianProposal) {
-		console.log("[Letta Plugin] TODO: Implement str_replace proposal enhancement");
-		container.createEl("div", { text: "String replace command - Coming soon", cls: "letta-placeholder" });
+		console.log("[Letta Plugin] Enhancing str_replace proposal for:", proposal.path);
+		
+		if (!proposal.path || !proposal.old_str || !proposal.new_str) {
+			this.showProposalError(container, "Missing required parameters (path, old_str, new_str)");
+			return;
+		}
+		
+		if (this.plugin.settings.obsidianToolPermissions.autoApproveStrReplace) {
+			console.log("[Letta Plugin] Auto-approving str_replace command");
+			await this.approveStrReplace(container, proposal);
+			return;
+		}
+		
+		try {
+			const file = this.app.vault.getAbstractFileByPath(proposal.path);
+			
+			if (!file || !(file instanceof TFile)) {
+				this.showProposalError(container, `File not found: ${proposal.path}`);
+				return;
+			}
+			
+			const content = await this.app.vault.read(file);
+			
+			if (!content.includes(proposal.old_str)) {
+				this.showProposalError(container, `String not found in file: "${proposal.old_str.substring(0, 50)}..."`);
+				return;
+			}
+			
+			const occurrences = (content.match(new RegExp(proposal.old_str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+			
+			const enhancement = container.createEl("div", { 
+				cls: "letta-obsidian-str-replace-proposal" 
+			});
+			
+			const header = enhancement.createEl("div", { cls: "letta-proposal-header" });
+			header.createEl("h3", { 
+				text: `✏️ Replace Text`,
+				cls: "letta-proposal-title" 
+			});
+			
+			const infoEl = enhancement.createEl("div", { cls: "letta-file-info" });
+			infoEl.createEl("div", { text: `📁 ${proposal.path}` });
+			infoEl.createEl("div", { text: `🔢 ${occurrences} occurrence${occurrences > 1 ? 's' : ''} found` });
+			
+			if (occurrences > 1) {
+				const warning = infoEl.createEl("div", { 
+					cls: "letta-replace-warning",
+					text: `⚠️ Will replace ALL ${occurrences} occurrences`
+				});
+			}
+			
+			const diffEl = enhancement.createEl("div", { cls: "letta-diff-preview" });
+			
+			const oldEl = diffEl.createEl("div", { cls: "letta-diff-section" });
+			oldEl.createEl("h4", { text: "Remove:" });
+			const oldPre = oldEl.createEl("pre", { cls: "letta-diff-old" });
+			oldPre.textContent = proposal.old_str.length > 500 
+				? proposal.old_str.substring(0, 500) + "\n[... truncated ...]"
+				: proposal.old_str;
+			
+			const newEl = diffEl.createEl("div", { cls: "letta-diff-section" });
+			newEl.createEl("h4", { text: "Add:" });
+			const newPre = newEl.createEl("pre", { cls: "letta-diff-new" });
+			newPre.textContent = proposal.new_str.length > 500 
+				? proposal.new_str.substring(0, 500) + "\n[... truncated ...]"
+				: proposal.new_str;
+			
+			const buttonContainer = enhancement.createEl("div", { 
+				cls: "letta-proposal-buttons" 
+			});
+			
+			const approveButton = buttonContainer.createEl("button", {
+				text: `Approve & Replace${occurrences > 1 ? ` (${occurrences}x)` : ''}`,
+				cls: "letta-button letta-button-approve"
+			});
+			
+			const openButton = buttonContainer.createEl("button", {
+				text: "Open File",
+				cls: "letta-button letta-button-secondary"
+			});
+			
+			const denyButton = buttonContainer.createEl("button", {
+				text: "Deny", 
+				cls: "letta-button letta-button-reject"
+			});
+			
+			approveButton.addEventListener("click", async () => {
+				await this.approveStrReplace(enhancement, proposal);
+			});
+			
+			openButton.addEventListener("click", async () => {
+				const leaf = this.app.workspace.getLeaf('tab');
+				await leaf.openFile(file);
+			});
+			
+			denyButton.addEventListener("click", async () => {
+				await this.denyStrReplace(enhancement, proposal);
+			});
+			
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to enhance str_replace proposal:", error);
+			this.showProposalError(container, `Failed to prepare replacement: ${error.message}`);
+		}
+	}
+
+	async approveStrReplace(container: HTMLElement, proposal: ObsidianProposal) {
+		try {
+			if (!proposal.path || !proposal.old_str || proposal.new_str === undefined) {
+				this.showProposalError(container, "Missing required parameters");
+				return;
+			}
+			
+			const file = this.app.vault.getAbstractFileByPath(proposal.path);
+			
+			if (!file || !(file instanceof TFile)) {
+				this.showProposalError(container, `File not found: ${proposal.path}`);
+				return;
+			}
+			
+			const content = await this.app.vault.read(file);
+			
+			if (!content.includes(proposal.old_str)) {
+				this.showProposalError(container, `String not found in file`);
+				return;
+			}
+			
+			const newContent = content.split(proposal.old_str).join(proposal.new_str);
+			const occurrences = (content.match(new RegExp(proposal.old_str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+			
+			await this.app.vault.modify(file, newContent);
+			
+			this.showProposalSuccess(container, 
+				`Replaced ${occurrences} occurrence${occurrences > 1 ? 's' : ''} in ${proposal.path}`);
+			
+			console.log(`[Letta Plugin] String replaced in: ${proposal.path}`);
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to replace string:", error);
+			this.showProposalError(container, `Failed to replace string: ${error.message}`);
+		}
+	}
+
+	async denyStrReplace(container: HTMLElement, proposal: ObsidianProposal) {
+		this.showProposalDenied(container, 
+			`String replacement denied: ${proposal.path}`);
+		console.log(`[Letta Plugin] String replacement denied: ${proposal.path}`);
 	}
 
 	async enhanceInsertProposal(container: HTMLElement, proposal: ObsidianProposal) {
