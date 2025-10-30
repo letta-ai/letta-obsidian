@@ -1424,25 +1424,18 @@ def obsidian(
     """
     Interact with the Obsidian vault. All operations require user approval.
     
-    Commands:
-    - view: Read a file's contents
-      Args: path (required)
-    - create: Create a new note
-      Args: path (required), content (required)
-    - str_replace: Modify file using string replacement
-      Args: path (required), old_str (required), new_str (required)
-    - insert: Insert text at a specific line
-      Args: path (required), line_number (required), text (required)
-    - delete: Remove a file from vault
-      Args: path (required)
-    - attach: Attach file to agent's context memory
-      Args: path (required), block_label (optional, defaults to 'obsidian-attached-files')
-    - detach: Remove file from agent's context memory
-      Args: path (required), block_label (optional)
-    - search: Search vault for files
-      Args: query (required)
-    - list: List files in a directory
-      Args: path (optional, defaults to root)
+    Available commands: view, create, str_replace, insert, delete, attach, detach, search, list
+    
+    Args:
+        command: The operation to perform (view, create, str_replace, insert, delete, attach, detach, search, list)
+        path: File or directory path for most operations
+        content: Content for create command
+        old_str: String to replace in str_replace command
+        new_str: Replacement string in str_replace command
+        block_label: Memory block label for attach/detach commands (defaults to 'obsidian-attached-files')
+        query: Search query for search command
+        line_number: Line number for insert command
+        text: Text to insert for insert command
     
     Returns:
         JSON proposal for user approval
