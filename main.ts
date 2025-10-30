@@ -75,6 +75,25 @@ interface LettaPluginSettings {
 	defaultNoteFolder: string; // Default folder for new notes created via custom tools
 	focusMode: boolean; // Control whether to track and share the currently viewed note
 	focusBlockCharLimit: number; // Character limit for the focus mode memory block
+	enableContextMentions: boolean; // Enable @-mentions for file context
+	contextMentionLimit: number; // Character limit for @-mentioned files
+	obsidianToolPermissions: {
+		autoApproveView: boolean;
+		autoApproveCreate: boolean;
+		autoApproveStrReplace: boolean;
+		autoApproveInsert: boolean;
+		autoApproveDelete: boolean;
+		autoApproveAttach: boolean;
+		autoApproveDetach: boolean;
+		autoApproveSearch: boolean;
+		autoApproveList: boolean;
+	};
+	searchSettings: {
+		maxResults: number;
+		excerptLength: number;
+		caseSensitive: boolean;
+		excludeFolders: string[];
+	};
 	// Deprecated properties (kept for compatibility)
 	sourceName?: string;
 	autoSync?: boolean;
@@ -98,6 +117,25 @@ const DEFAULT_SETTINGS: LettaPluginSettings = {
 	defaultNoteFolder: "lettamade", // Default folder for agent-created notes
 	focusMode: true, // Default to enabling focus mode
 	focusBlockCharLimit: 4000, // Default character limit for focus block
+	enableContextMentions: true, // Default to enabling @-mentions
+	contextMentionLimit: 10000, // Default character limit for mentioned files
+	obsidianToolPermissions: {
+		autoApproveView: false,
+		autoApproveCreate: false,
+		autoApproveStrReplace: false,
+		autoApproveInsert: false,
+		autoApproveDelete: false,
+		autoApproveAttach: false,
+		autoApproveDetach: false,
+		autoApproveSearch: false,
+		autoApproveList: false,
+	},
+	searchSettings: {
+		maxResults: 20,
+		excerptLength: 100,
+		caseSensitive: false,
+		excludeFolders: [".trash", ".obsidian"],
+	},
 };
 
 interface LettaAgent {
@@ -1319,20 +1357,13 @@ export default class LettaPlugin extends Plugin {
 	}
 
 	async registerObsidianTools(): Promise<boolean> {
-		// DISABLED: Approval-based tool registration is currently disabled due to upstream Letta API issues
-		// with streaming approval flow. Re-enable once the API properly supports approval_request_message
-		// during streaming (currently only sends stop_reason).
-		return true;
-
-		/* COMMENTED OUT - DO NOT USE UNTIL UPSTREAM ISSUES RESOLVED
 		if (!this.client) {
-			console.error("Cannot register tools: Letta client not initialized");
+			console.error("[Letta Plugin] Cannot register tools: Letta client not initialized");
 			return false;
 		}
 
-		const toolName = "write_obsidian_note";
+		const toolName = "obsidian";
 
-		// First check if the tool already exists
 		console.log(`[Letta Plugin] Checking if tool '${toolName}' already exists...`);
 		let existingTool: any = null;
 		try {
@@ -1342,10 +1373,9 @@ export default class LettaPlugin extends Plugin {
 				console.log(`[Letta Plugin] Tool '${toolName}' already exists with ID: ${existingTool.id}`);
 			}
 		} catch (error) {
-			console.error("Failed to check existing tools:", error);
+			console.error("[Letta Plugin] Failed to check existing tools:", error);
 		}
 
-		// If tool exists and we have an agent, check if it's already attached
 		if (existingTool && this.agent) {
 			console.log(`[Letta Plugin] Checking if tool is already attached to agent ${this.agent.id}...`);
 			try {
@@ -1358,69 +1388,71 @@ export default class LettaPlugin extends Plugin {
 				);
 
 				if (isToolAttached) {
-					console.log(`[Letta Plugin] Tool '${toolName}' already exists and is attached to agent. Ensuring approval requirement is set...`);
-
-					// Even if tool is attached, ensure approval requirement is set (Method 3)
-					try {
-						console.log(`[Letta Plugin] Calling modifyApproval with agentId: ${this.agent.id}, toolName: ${toolName}, requiresApproval: true`);
-						const approvalResult = await this.client.agents.tools.modifyApproval(
-							this.agent.id,
-							toolName,
-							{ requiresApproval: true }
-						);
-						console.log(`[Letta Plugin] modifyApproval response:`, approvalResult);
-
-						// Check tool rules in the agent state
-						const toolRules = (approvalResult as any).toolRules || (approvalResult as any).tool_rules;
-						console.log(`[Letta Plugin] Agent toolRules after modifyApproval:`, toolRules);
-						const approvalRule = toolRules?.find((rule: any) =>
-							rule.toolName === toolName || rule.tool_name === toolName
-						);
-						console.log(`[Letta Plugin] Approval rule for '${toolName}':`, approvalRule);
-
-						// Verify the tool's approval status after setting it
-						const agentTools = await this.client.agents.tools.list(this.agent.id);
-						const toolInfo = agentTools.find((t: any) => t.name === toolName);
-						console.log(`[Letta Plugin] Tool '${toolName}' info from tools list:`, toolInfo);
-					} catch (approvalError: any) {
-						console.error("Failed to set approval requirement:", approvalError);
-						console.error("Error details:", approvalError.message, approvalError.stack);
-					}
-
-					return true; // Success - tool is already fully configured
-				} else {
-					console.log(`[Letta Plugin] Tool exists but not attached to agent. Will attach it.`);
+					console.log(`[Letta Plugin] Tool '${toolName}' already attached to agent`);
+					return true;
 				}
 			} catch (error) {
-				console.error("Failed to check agent tools:", error);
+				console.error("[Letta Plugin] Failed to check agent tools:", error);
 			}
 		}
 
-		const writeNoteToolCode = `
-def write_obsidian_note(
-    block_label: str,
-    file_path: str
+		const obsidianToolCode = `
+import json
+from typing import Optional
+
+def obsidian(
+    command: str,
+    path: Optional[str] = None,
+    content: Optional[str] = None,
+    old_str: Optional[str] = None,
+    new_str: Optional[str] = None,
+    block_label: Optional[str] = None,
+    query: Optional[str] = None,
+    line_number: Optional[int] = None,
+    text: Optional[str] = None
 ) -> str:
     """
-    Request approval to write a memory block's content to an Obsidian note file.
-    This tool requires human approval before execution.
-
-    Args:
-        block_label: The label of the memory block containing the content to write
-        file_path: The path where the note should be created (e.g., 'journal/2024-10-01.md' or 'projects/my-project.md')
-                  If a default note folder is configured, it will be automatically prepended to this path.
-
+    Interact with the Obsidian vault. All operations require user approval.
+    
+    Commands:
+    - view: Read a file's contents
+      Args: path (required)
+    - create: Create a new note
+      Args: path (required), content (required)
+    - str_replace: Modify file using string replacement
+      Args: path (required), old_str (required), new_str (required)
+    - insert: Insert text at a specific line
+      Args: path (required), line_number (required), text (required)
+    - delete: Remove a file from vault
+      Args: path (required)
+    - attach: Attach file to agent's context memory
+      Args: path (required), block_label (optional, defaults to 'obsidian-attached-files')
+    - detach: Remove file from agent's context memory
+      Args: path (required), block_label (optional)
+    - search: Search vault for files
+      Args: query (required)
+    - list: List files in a directory
+      Args: path (optional, defaults to root)
+    
     Returns:
-        str: Success message if approved and executed
-
-    Note:
-        This tool will pause and request approval from the user.
-        The user can approve to create the note or deny with guidance.
+        JSON proposal for user approval
     """
-    return f"Requesting approval to write block '{block_label}' to {file_path}"
+    proposal = {
+        "action": f"obsidian_{command}",
+        "command": command,
+        "path": path,
+        "content": content,
+        "old_str": old_str,
+        "new_str": new_str,
+        "block_label": block_label or "obsidian-attached-files",
+        "query": query,
+        "line_number": line_number,
+        "text": text
+    }
+    
+    return json.dumps(proposal)
 `;
 
-		// Now check if user consent is required (only if we need to create or attach the tool)
 		if (this.settings.askBeforeToolRegistration) {
 			console.log("[Letta Plugin] User consent required - showing modal...");
 			const consentModal = new ToolRegistrationConsentModal(this.app, this);
@@ -1435,79 +1467,39 @@ def write_obsidian_note(
 		
 		try {
 			if (!existingTool) {
-				// Tool doesn't exist, create it with approval requirement
-				console.log(`[Letta Plugin] Creating new tool '${toolName}' with approval requirement...`);
+				console.log(`[Letta Plugin] Creating new tool '${toolName}'...`);
 				tool = await this.client.tools.upsert({
 					name: toolName,
-					sourceCode: writeNoteToolCode,
-					description: "Write a memory block's content to an Obsidian note file (requires approval)",
-					tags: ["obsidian", "note-creation", "requires-approval"],
+					sourceCode: obsidianToolCode,
+					description: "Unified tool for Obsidian vault operations (view, create, edit, search, etc.) - requires approval",
+					tags: ["obsidian", "vault", "requires-approval"],
 					default_requires_approval: true
 				} as any);
-				console.log("Successfully created Obsidian note creation tool with approval requirement:", tool);
+				console.log("[Letta Plugin] Successfully created Obsidian tool:", tool);
 			} else {
-				console.log(`[Letta Plugin] Using existing tool '${toolName}' with ID: ${existingTool.id}`);
+				console.log(`[Letta Plugin] Using existing tool '${toolName}'`);
 			}
 
-			// Attach tool to current agent if available and not already attached
 			if (this.agent && tool && tool.id) {
 				try {
-					// If we had an existing tool that was already attached, we would have returned early
-					// So if we reach here, we need to attach the tool
 					console.log(`[Letta Plugin] Attaching tool '${toolName}' to agent ${this.agent.id}...`);
 					await this.client.agents.tools.attach(this.agent.id, tool.id);
 					console.log(`[Letta Plugin] Successfully attached '${toolName}' tool to agent`);
-
-					// Set approval requirement for this agent-tool relationship (Method 3)
-					console.log(`[Letta Plugin] Setting approval requirement for '${toolName}' on agent ${this.agent.id}...`);
-					try {
-						console.log(`[Letta Plugin] Calling modifyApproval with agentId: ${this.agent.id}, toolName: ${toolName}, requiresApproval: true`);
-						const approvalResult = await this.client.agents.tools.modifyApproval(
-							this.agent.id,
-							toolName,
-							{ requiresApproval: true }
-						);
-						console.log(`[Letta Plugin] modifyApproval response:`, approvalResult);
-
-						// Check tool rules in the agent state
-						const toolRules = (approvalResult as any).toolRules || (approvalResult as any).tool_rules;
-						console.log(`[Letta Plugin] Agent toolRules after modifyApproval:`, toolRules);
-						const approvalRule = toolRules?.find((rule: any) =>
-							rule.toolName === toolName || rule.tool_name === toolName
-						);
-						console.log(`[Letta Plugin] Approval rule for '${toolName}':`, approvalRule);
-
-						// Verify the tool's approval status after setting it
-						const agentTools = await this.client.agents.tools.list(this.agent.id);
-						const toolInfo = agentTools.find((t: any) => t.name === toolName);
-						console.log(`[Letta Plugin] Tool '${toolName}' info from tools list:`, toolInfo);
-					} catch (approvalError: any) {
-						console.error("Failed to set approval requirement:", approvalError);
-						console.error("Error details:", approvalError.message, approvalError.stack);
-						// Don't fail the whole operation if this fails
-					}
 				} catch (error) {
-					console.error("Failed to attach tool to agent:", error);
-					// Log more details for debugging
-					console.error("Error details:", {
-						agentId: this.agent.id,
-						toolId: tool.id,
-						errorMessage: error.message
-					});
+					console.error("[Letta Plugin] Failed to attach tool to agent:", error);
 				}
 			}
 
 			const actionMessage = existingTool 
-				? "Obsidian note creation tool attached successfully"
-				: "Obsidian note creation tool registered successfully";
+				? "Obsidian tool attached successfully"
+				: "Obsidian tool registered successfully";
 			new Notice(actionMessage);
 			return true;
 		} catch (error) {
-			console.error("Failed to register Obsidian tools:", error);
-			new Notice("Failed to register note creation tool");
+			console.error("[Letta Plugin] Failed to register Obsidian tools:", error);
+			new Notice("Failed to register Obsidian tool");
 			return false;
 		}
-		END COMMENTED OUT SECTION */
 	}
 
 	async createNoteFromProposal(proposal: ObsidianNoteProposal): Promise<string> {
