@@ -5765,8 +5765,184 @@ class LettaChatView extends ItemView {
 	}
 
 	async enhanceListProposal(container: HTMLElement, proposal: ObsidianProposal) {
-		console.log("[Letta Plugin] TODO: Implement list proposal enhancement");
-		container.createEl("div", { text: "List command - Coming soon", cls: "letta-placeholder" });
+		console.log("[Letta Plugin] Enhancing list proposal for:", proposal.path || "root");
+		
+		if (this.plugin.settings.obsidianToolPermissions.autoApproveList) {
+			console.log("[Letta Plugin] Auto-approving list command");
+			await this.approveFileList(container, proposal);
+			return;
+		}
+		
+		try {
+			const folderPath = proposal.path || "/";
+			let folder;
+			
+			if (folderPath === "/") {
+				folder = this.app.vault.getRoot();
+			} else {
+				folder = this.app.vault.getAbstractFileByPath(folderPath);
+			}
+			
+			if (!folder || !(folder instanceof TFolder)) {
+				this.showProposalError(container, `Folder not found: ${folderPath}`);
+				return;
+			}
+			
+			const files = folder.children;
+			const folders = files.filter(f => f instanceof TFolder);
+			const markdownFiles = files.filter(f => f instanceof TFile && f.extension === 'md');
+			const otherFiles = files.filter(f => f instanceof TFile && f.extension !== 'md');
+			
+			const enhancement = container.createEl("div", { 
+				cls: "letta-obsidian-list-proposal" 
+			});
+			
+			const header = enhancement.createEl("div", { cls: "letta-proposal-header" });
+			header.createEl("h3", { 
+				text: `📂 List Directory`,
+				cls: "letta-proposal-title" 
+			});
+			
+			const infoEl = enhancement.createEl("div", { cls: "letta-file-info" });
+			infoEl.createEl("div", { text: `📁 ${folderPath}` });
+			infoEl.createEl("div", { 
+				text: `📊 ${folders.length} folders, ${markdownFiles.length} markdown files, ${otherFiles.length} other files` 
+			});
+			
+			const previewEl = enhancement.createEl("div", { cls: "letta-list-preview" });
+			previewEl.createEl("h4", { text: "Contents:" });
+			
+			const listContainer = previewEl.createEl("div", { cls: "letta-file-list" });
+			
+			if (folders.length > 0) {
+				const folderSection = listContainer.createEl("div", { cls: "letta-file-section" });
+				folderSection.createEl("strong", { text: "Folders:" });
+				const folderList = folderSection.createEl("ul");
+				folders.slice(0, 20).forEach(f => {
+					folderList.createEl("li", { text: `📁 ${f.name}/` });
+				});
+				if (folders.length > 20) {
+					folderList.createEl("li", { text: `... and ${folders.length - 20} more folders` });
+				}
+			}
+			
+			if (markdownFiles.length > 0) {
+				const fileSection = listContainer.createEl("div", { cls: "letta-file-section" });
+				fileSection.createEl("strong", { text: "Markdown Files:" });
+				const fileList = fileSection.createEl("ul");
+				markdownFiles.slice(0, 20).forEach(f => {
+					fileList.createEl("li", { text: `📄 ${f.name}` });
+				});
+				if (markdownFiles.length > 20) {
+					fileList.createEl("li", { text: `... and ${markdownFiles.length - 20} more markdown files` });
+				}
+			}
+			
+			if (otherFiles.length > 0) {
+				const otherSection = listContainer.createEl("div", { cls: "letta-file-section" });
+				otherSection.createEl("strong", { text: "Other Files:" });
+				const otherList = otherSection.createEl("ul");
+				otherFiles.slice(0, 10).forEach(f => {
+					otherList.createEl("li", { text: `📎 ${f.name}` });
+				});
+				if (otherFiles.length > 10) {
+					otherList.createEl("li", { text: `... and ${otherFiles.length - 10} more files` });
+				}
+			}
+			
+			const buttonContainer = enhancement.createEl("div", { 
+				cls: "letta-proposal-buttons" 
+			});
+			
+			const approveButton = buttonContainer.createEl("button", {
+				text: "Approve & Send to Agent",
+				cls: "letta-button letta-button-approve"
+			});
+			
+			const denyButton = buttonContainer.createEl("button", {
+				text: "Deny", 
+				cls: "letta-button letta-button-reject"
+			});
+			
+			approveButton.addEventListener("click", async () => {
+				await this.approveFileList(enhancement, proposal);
+			});
+			
+			denyButton.addEventListener("click", async () => {
+				await this.denyFileList(enhancement, proposal);
+			});
+			
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to enhance list proposal:", error);
+			this.showProposalError(container, `Failed to list directory: ${error.message}`);
+		}
+	}
+
+	async approveFileList(container: HTMLElement, proposal: ObsidianProposal) {
+		try {
+			const folderPath = proposal.path || "/";
+			let folder;
+			
+			if (folderPath === "/") {
+				folder = this.app.vault.getRoot();
+			} else {
+				folder = this.app.vault.getAbstractFileByPath(folderPath);
+			}
+			
+			if (!folder || !(folder instanceof TFolder)) {
+				this.showProposalError(container, `Folder not found: ${folderPath}`);
+				return;
+			}
+			
+			const files = folder.children;
+			const folders = files.filter(f => f instanceof TFolder).map(f => ({ type: "folder", name: f.name, path: f.path }));
+			const markdownFiles = files.filter(f => f instanceof TFile && f.extension === 'md').map(f => ({ type: "file", name: f.name, path: f.path }));
+			const otherFiles = files.filter(f => f instanceof TFile && f.extension !== 'md').map(f => ({ type: "file", name: f.name, path: f.path }));
+			
+			const listing = {
+				path: folderPath,
+				folders: folders,
+				markdownFiles: markdownFiles,
+				otherFiles: otherFiles,
+				summary: `${folders.length} folders, ${markdownFiles.length} markdown files, ${otherFiles.length} other files`
+			};
+			
+			const listingText = JSON.stringify(listing, null, 2);
+			
+			const systemMessage = `[System: Directory listing for '${folderPath}']\n\n${listingText}\n\n[End of listing]`;
+			
+			const messageEl = this.chatContainer.createEl("div", {
+				cls: "letta-message letta-system-message"
+			});
+			
+			const bubble = messageEl.createEl("div", {
+				cls: "letta-message-bubble"
+			});
+			
+			bubble.createEl("div", {
+				text: `📂 Directory listing sent to agent: ${folderPath} (${listing.summary})`,
+				cls: "letta-file-injection-header"
+			});
+			
+			this.showProposalSuccess(container, 
+				`Directory listed: ${folderPath}`);
+			
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: "smooth"
+			});
+			
+			console.log(`[Letta Plugin] Directory listed: ${folderPath}`);
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to list directory:", error);
+			this.showProposalError(container, `Failed to list directory: ${error.message}`);
+		}
+	}
+
+	async denyFileList(container: HTMLElement, proposal: ObsidianProposal) {
+		this.showProposalDenied(container, 
+			`Directory listing denied: ${proposal.path || "/"}`);
+		console.log(`[Letta Plugin] Directory listing denied: ${proposal.path || "/"}`);
 	}
 
 	showProposalSuccess(container: HTMLElement, message: string) {
