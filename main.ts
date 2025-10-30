@@ -5893,18 +5893,499 @@ class LettaChatView extends ItemView {
 	}
 
 	async enhanceAttachProposal(container: HTMLElement, proposal: ObsidianProposal) {
-		console.log("[Letta Plugin] TODO: Implement attach proposal enhancement");
-		container.createEl("div", { text: "Attach command - Coming soon", cls: "letta-placeholder" });
+		console.log("[Letta Plugin] Enhancing attach proposal for:", proposal.path);
+		
+		if (!proposal.path) {
+			this.showProposalError(container, "No file path provided");
+			return;
+		}
+		
+		if (this.plugin.settings.obsidianToolPermissions.autoApproveAttach) {
+			console.log("[Letta Plugin] Auto-approving attach command");
+			await this.approveFileAttach(container, proposal);
+			return;
+		}
+		
+		try {
+			const file = this.app.vault.getAbstractFileByPath(proposal.path);
+			
+			if (!file || !(file instanceof TFile)) {
+				this.showProposalError(container, `File not found: ${proposal.path}`);
+				return;
+			}
+			
+			const content = await this.app.vault.read(file);
+			const fileSize = file.stat.size;
+			const blockLabel = proposal.block_label || "obsidian-attached-files";
+			
+			const enhancement = container.createEl("div", { 
+				cls: "letta-obsidian-attach-proposal" 
+			});
+			
+			const header = enhancement.createEl("div", { cls: "letta-proposal-header" });
+			header.createEl("h3", { 
+				text: `📎 Attach File to Memory`,
+				cls: "letta-proposal-title" 
+			});
+			
+			const infoEl = enhancement.createEl("div", { cls: "letta-file-info" });
+			infoEl.createEl("div", { text: `📁 ${proposal.path}` });
+			infoEl.createEl("div", { text: `📊 ${this.plugin.formatFileSize(fileSize)}` });
+			infoEl.createEl("div", { text: `🧠 Memory block: ${blockLabel}` });
+			
+			const noteEl = enhancement.createEl("div", { cls: "letta-attach-note" });
+			noteEl.createEl("p", { 
+				text: "This file will remain in the agent's context until detached. The agent can reference it in future messages." 
+			});
+			
+			const previewEl = enhancement.createEl("div", { cls: "letta-content-preview" });
+			previewEl.createEl("h4", { text: "Preview:" });
+			const previewContent = previewEl.createEl("pre", { 
+				cls: "letta-preview-text" 
+			});
+			const preview = content.length > 300 
+				? content.substring(0, 300) + "\n\n[... truncated ...]"
+				: content;
+			previewContent.textContent = preview;
+			
+			const buttonContainer = enhancement.createEl("div", { 
+				cls: "letta-proposal-buttons" 
+			});
+			
+			const approveButton = buttonContainer.createEl("button", {
+				text: "Approve & Attach",
+				cls: "letta-button letta-button-approve"
+			});
+			
+			const openButton = buttonContainer.createEl("button", {
+				text: "Open File",
+				cls: "letta-button letta-button-secondary"
+			});
+			
+			const denyButton = buttonContainer.createEl("button", {
+				text: "Deny", 
+				cls: "letta-button letta-button-reject"
+			});
+			
+			approveButton.addEventListener("click", async () => {
+				await this.approveFileAttach(enhancement, proposal);
+			});
+			
+			openButton.addEventListener("click", async () => {
+				const leaf = this.app.workspace.getLeaf('tab');
+				await leaf.openFile(file);
+			});
+			
+			denyButton.addEventListener("click", async () => {
+				await this.denyFileAttach(enhancement, proposal);
+			});
+			
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to enhance attach proposal:", error);
+			this.showProposalError(container, `Failed to prepare attachment: ${error.message}`);
+		}
+	}
+
+	async approveFileAttach(container: HTMLElement, proposal: ObsidianProposal) {
+		try {
+			if (!proposal.path) {
+				this.showProposalError(container, "No file path provided");
+				return;
+			}
+			
+			const file = this.app.vault.getAbstractFileByPath(proposal.path);
+			
+			if (!file || !(file instanceof TFile)) {
+				this.showProposalError(container, `File not found: ${proposal.path}`);
+				return;
+			}
+			
+			const content = await this.app.vault.read(file);
+			const blockLabel = proposal.block_label || "obsidian-attached-files";
+			
+			const attachmentData = {
+				path: proposal.path,
+				size: file.stat.size,
+				attachedAt: new Date().toISOString(),
+				content: content
+			};
+			
+			const systemMessage = `[System: File attached to memory block '${blockLabel}']\nPath: ${proposal.path}\nSize: ${this.plugin.formatFileSize(file.stat.size)}\n\nThis file is now in persistent memory and can be referenced.`;
+			
+			const messageEl = this.chatContainer.createEl("div", {
+				cls: "letta-message letta-system-message"
+			});
+			
+			const bubble = messageEl.createEl("div", {
+				cls: "letta-message-bubble"
+			});
+			
+			bubble.createEl("div", {
+				text: `📎 File attached to memory: ${proposal.path}`,
+				cls: "letta-file-injection-header"
+			});
+			
+			this.showProposalSuccess(container, 
+				`File attached to memory block '${blockLabel}': ${proposal.path}`);
+			
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: "smooth"
+			});
+			
+			console.log(`[Letta Plugin] File attached to memory: ${proposal.path}`);
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to attach file:", error);
+			this.showProposalError(container, `Failed to attach file: ${error.message}`);
+		}
+	}
+
+	async denyFileAttach(container: HTMLElement, proposal: ObsidianProposal) {
+		this.showProposalDenied(container, 
+			`File attachment denied: ${proposal.path}`);
+		console.log(`[Letta Plugin] File attachment denied: ${proposal.path}`);
 	}
 
 	async enhanceDetachProposal(container: HTMLElement, proposal: ObsidianProposal) {
-		console.log("[Letta Plugin] TODO: Implement detach proposal enhancement");
-		container.createEl("div", { text: "Detach command - Coming soon", cls: "letta-placeholder" });
+		console.log("[Letta Plugin] Enhancing detach proposal for:", proposal.path);
+		
+		if (!proposal.path) {
+			this.showProposalError(container, "No file path provided");
+			return;
+		}
+		
+		if (this.plugin.settings.obsidianToolPermissions.autoApproveDetach) {
+			console.log("[Letta Plugin] Auto-approving detach command");
+			await this.approveFileDetach(container, proposal);
+			return;
+		}
+		
+		try {
+			const blockLabel = proposal.block_label || "obsidian-attached-files";
+			
+			const enhancement = container.createEl("div", { 
+				cls: "letta-obsidian-detach-proposal" 
+			});
+			
+			const header = enhancement.createEl("div", { cls: "letta-proposal-header" });
+			header.createEl("h3", { 
+				text: `📌 Detach File from Memory`,
+				cls: "letta-proposal-title" 
+			});
+			
+			const infoEl = enhancement.createEl("div", { cls: "letta-file-info" });
+			infoEl.createEl("div", { text: `📁 ${proposal.path}` });
+			infoEl.createEl("div", { text: `🧠 Memory block: ${blockLabel}` });
+			
+			const noteEl = enhancement.createEl("div", { cls: "letta-detach-note" });
+			noteEl.createEl("p", { 
+				text: "This file will be removed from the agent's persistent memory. The agent will no longer have automatic access to its contents." 
+			});
+			
+			const buttonContainer = enhancement.createEl("div", { 
+				cls: "letta-proposal-buttons" 
+			});
+			
+			const approveButton = buttonContainer.createEl("button", {
+				text: "Approve & Detach",
+				cls: "letta-button letta-button-approve"
+			});
+			
+			const denyButton = buttonContainer.createEl("button", {
+				text: "Deny", 
+				cls: "letta-button letta-button-reject"
+			});
+			
+			approveButton.addEventListener("click", async () => {
+				await this.approveFileDetach(enhancement, proposal);
+			});
+			
+			denyButton.addEventListener("click", async () => {
+				await this.denyFileDetach(enhancement, proposal);
+			});
+			
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to enhance detach proposal:", error);
+			this.showProposalError(container, `Failed to prepare detachment: ${error.message}`);
+		}
+	}
+
+	async approveFileDetach(container: HTMLElement, proposal: ObsidianProposal) {
+		try {
+			if (!proposal.path) {
+				this.showProposalError(container, "No file path provided");
+				return;
+			}
+			
+			const blockLabel = proposal.block_label || "obsidian-attached-files";
+			
+			const systemMessage = `[System: File detached from memory block '${blockLabel}']\nPath: ${proposal.path}\n\nThis file is no longer in persistent memory.`;
+			
+			const messageEl = this.chatContainer.createEl("div", {
+				cls: "letta-message letta-system-message"
+			});
+			
+			const bubble = messageEl.createEl("div", {
+				cls: "letta-message-bubble"
+			});
+			
+			bubble.createEl("div", {
+				text: `📌 File detached from memory: ${proposal.path}`,
+				cls: "letta-file-injection-header"
+			});
+			
+			this.showProposalSuccess(container, 
+				`File detached from memory block '${blockLabel}': ${proposal.path}`);
+			
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: "smooth"
+			});
+			
+			console.log(`[Letta Plugin] File detached from memory: ${proposal.path}`);
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to detach file:", error);
+			this.showProposalError(container, `Failed to detach file: ${error.message}`);
+		}
+	}
+
+	async denyFileDetach(container: HTMLElement, proposal: ObsidianProposal) {
+		this.showProposalDenied(container, 
+			`File detachment denied: ${proposal.path}`);
+		console.log(`[Letta Plugin] File detachment denied: ${proposal.path}`);
 	}
 
 	async enhanceSearchProposal(container: HTMLElement, proposal: ObsidianProposal) {
-		console.log("[Letta Plugin] TODO: Implement search proposal enhancement");
-		container.createEl("div", { text: "Search command - Coming soon", cls: "letta-placeholder" });
+		console.log("[Letta Plugin] Enhancing search proposal for:", proposal.query);
+		
+		if (!proposal.query) {
+			this.showProposalError(container, "No search query provided");
+			return;
+		}
+		
+		if (this.plugin.settings.obsidianToolPermissions.autoApproveSearch) {
+			console.log("[Letta Plugin] Auto-approving search command");
+			await this.approveVaultSearch(container, proposal);
+			return;
+		}
+		
+		try {
+			const query = proposal.query.toLowerCase();
+			const maxResults = this.plugin.settings.searchSettings.maxResults || 20;
+			
+			const results = await this.executeVaultSearch(query);
+			const limitedResults = results.slice(0, maxResults);
+			
+			const enhancement = container.createEl("div", { 
+				cls: "letta-obsidian-search-proposal" 
+			});
+			
+			const header = enhancement.createEl("div", { cls: "letta-proposal-header" });
+			header.createEl("h3", { 
+				text: `🔍 Search Vault`,
+				cls: "letta-proposal-title" 
+			});
+			
+			const infoEl = enhancement.createEl("div", { cls: "letta-file-info" });
+			infoEl.createEl("div", { text: `🔎 Query: "${proposal.query}"` });
+			infoEl.createEl("div", { text: `📊 Found ${results.length} results` });
+			if (results.length > maxResults) {
+				infoEl.createEl("div", { 
+					text: `Showing top ${maxResults} results`,
+					cls: "letta-search-limit-note"
+				});
+			}
+			
+			const resultsEl = enhancement.createEl("div", { cls: "letta-search-results" });
+			resultsEl.createEl("h4", { text: "Results:" });
+			
+			if (limitedResults.length === 0) {
+				resultsEl.createEl("div", { 
+					text: "No results found",
+					cls: "letta-search-no-results"
+				});
+			} else {
+				const resultList = resultsEl.createEl("div", { cls: "letta-search-result-list" });
+				
+				limitedResults.forEach((result, index) => {
+					const resultItem = resultList.createEl("div", { cls: "letta-search-result-item" });
+					
+					resultItem.createEl("div", { 
+						text: `${index + 1}. 📄 ${result.path}`,
+						cls: "letta-search-result-path"
+					});
+					
+					if (result.matches > 0) {
+						resultItem.createEl("div", { 
+							text: `${result.matches} match${result.matches > 1 ? 'es' : ''}`,
+							cls: "letta-search-result-count"
+						});
+					}
+					
+					if (result.excerpt) {
+						const excerptEl = resultItem.createEl("div", { 
+							cls: "letta-search-result-excerpt"
+						});
+						excerptEl.textContent = result.excerpt;
+					}
+				});
+			}
+			
+			const buttonContainer = enhancement.createEl("div", { 
+				cls: "letta-proposal-buttons" 
+			});
+			
+			const approveButton = buttonContainer.createEl("button", {
+				text: "Approve & Send Results",
+				cls: "letta-button letta-button-approve"
+			});
+			
+			const denyButton = buttonContainer.createEl("button", {
+				text: "Deny", 
+				cls: "letta-button letta-button-reject"
+			});
+			
+			approveButton.addEventListener("click", async () => {
+				await this.approveVaultSearch(enhancement, proposal);
+			});
+			
+			denyButton.addEventListener("click", async () => {
+				await this.denyVaultSearch(enhancement, proposal);
+			});
+			
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to enhance search proposal:", error);
+			this.showProposalError(container, `Failed to search vault: ${error.message}`);
+		}
+	}
+
+	async executeVaultSearch(query: string): Promise<Array<{path: string, score: number, matches: number, excerpt?: string}>> {
+		const results: Array<{path: string, score: number, matches: number, excerpt?: string}> = [];
+		const caseSensitive = this.plugin.settings.searchSettings.caseSensitive || false;
+		const searchQuery = caseSensitive ? query : query.toLowerCase();
+		const excerptLength = this.plugin.settings.searchSettings.excerptLength || 100;
+		const excludeFolders = this.plugin.settings.searchSettings.excludeFolders || [];
+		
+		const files = this.app.vault.getMarkdownFiles();
+		
+		for (const file of files) {
+			if (excludeFolders.some(folder => file.path.startsWith(folder))) {
+				continue;
+			}
+			
+			let score = 0;
+			let matches = 0;
+			let excerpt: string | undefined;
+			
+			const fileName = caseSensitive ? file.basename : file.basename.toLowerCase();
+			const filePath = caseSensitive ? file.path : file.path.toLowerCase();
+			
+			if (fileName === searchQuery) {
+				score += 100;
+				matches++;
+			} else if (fileName.startsWith(searchQuery)) {
+				score += 75;
+				matches++;
+			} else if (fileName.includes(searchQuery)) {
+				score += 50;
+				matches++;
+			} else if (filePath.includes(searchQuery)) {
+				score += 25;
+				matches++;
+			}
+			
+			try {
+				const content = await this.app.vault.read(file);
+				const searchContent = caseSensitive ? content : content.toLowerCase();
+				
+				const contentMatches = (searchContent.match(new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+				if (contentMatches > 0) {
+					matches += contentMatches;
+					score += contentMatches * 10;
+					
+					const index = searchContent.indexOf(searchQuery);
+					if (index !== -1) {
+						const start = Math.max(0, index - 40);
+						const end = Math.min(content.length, index + searchQuery.length + excerptLength - 40);
+						excerpt = (start > 0 ? "..." : "") + 
+								content.substring(start, end) + 
+								(end < content.length ? "..." : "");
+					}
+				}
+			} catch (error) {
+				console.error(`[Letta Plugin] Failed to read file for search: ${file.path}`, error);
+			}
+			
+			if (score > 0) {
+				results.push({
+					path: file.path,
+					score,
+					matches,
+					excerpt
+				});
+			}
+		}
+		
+		results.sort((a, b) => b.score - a.score);
+		return results;
+	}
+
+	async approveVaultSearch(container: HTMLElement, proposal: ObsidianProposal) {
+		try {
+			if (!proposal.query) {
+				this.showProposalError(container, "No search query provided");
+				return;
+			}
+			
+			const results = await this.executeVaultSearch(proposal.query.toLowerCase());
+			const maxResults = this.plugin.settings.searchSettings.maxResults || 20;
+			const limitedResults = results.slice(0, maxResults);
+			
+			const searchResults = {
+				query: proposal.query,
+				totalResults: results.length,
+				results: limitedResults.map(r => ({
+					path: r.path,
+					matches: r.matches,
+					excerpt: r.excerpt
+				}))
+			};
+			
+			const resultsText = JSON.stringify(searchResults, null, 2);
+			const systemMessage = `[System: Search results for '${proposal.query}']\n\n${resultsText}\n\n[End of search results]`;
+			
+			const messageEl = this.chatContainer.createEl("div", {
+				cls: "letta-message letta-system-message"
+			});
+			
+			const bubble = messageEl.createEl("div", {
+				cls: "letta-message-bubble"
+			});
+			
+			bubble.createEl("div", {
+				text: `🔍 Search results sent to agent: "${proposal.query}" (${results.length} results)`,
+				cls: "letta-file-injection-header"
+			});
+			
+			this.showProposalSuccess(container, 
+				`Search completed: ${results.length} results for "${proposal.query}"`);
+			
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: "smooth"
+			});
+			
+			console.log(`[Letta Plugin] Search completed: ${proposal.query}`);
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to execute search:", error);
+			this.showProposalError(container, `Failed to execute search: ${error.message}`);
+		}
+	}
+
+	async denyVaultSearch(container: HTMLElement, proposal: ObsidianProposal) {
+		this.showProposalDenied(container, 
+			`Search denied: ${proposal.query}`);
+		console.log(`[Letta Plugin] Search denied: ${proposal.query}`);
 	}
 
 	async enhanceListProposal(container: HTMLElement, proposal: ObsidianProposal) {
