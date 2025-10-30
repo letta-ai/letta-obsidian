@@ -5138,7 +5138,7 @@ class LettaChatView extends ItemView {
 			const proposal = JSON.parse(toolResult) as ObsidianProposal;
 			const preview = container.createEl("div", { cls: "letta-obsidian-preview" });
 			
-			const commandName = proposal.command || proposal.action.replace("obsidian_", "");
+			const commandName = proposal.command || (proposal.action ? proposal.action.replace("obsidian_", "") : "unknown");
 			preview.createEl("h3", {
 				text: `🔧 Obsidian: ${commandName}`,
 				cls: "letta-obsidian-preview-title"
@@ -5168,7 +5168,7 @@ class LettaChatView extends ItemView {
 		
 		try {
 			const proposal = JSON.parse(toolResult) as ObsidianProposal;
-			const command = proposal.command || proposal.action.replace("obsidian_", "");
+			const command = proposal.command || (proposal.action ? proposal.action.replace("obsidian_", "") : "unknown");
 			
 			console.log("[Letta Plugin] Obsidian command:", command);
 			console.log("[Letta Plugin] Proposal:", proposal);
