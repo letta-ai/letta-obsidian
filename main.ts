@@ -1478,7 +1478,7 @@ def obsidian(
 					sourceCode: obsidianToolCode,
 					description: "Unified tool for Obsidian vault operations (view, create, edit, search, etc.) - requires approval",
 					tags: ["obsidian", "vault", "requires-approval"],
-					default_requires_approval: true
+					defaultRequiresApproval: true
 				} as any);
 				console.log("[Letta Plugin] Successfully created Obsidian tool:", tool);
 			} else {
@@ -1490,8 +1490,16 @@ def obsidian(
 					console.log(`[Letta Plugin] Attaching tool '${toolName}' to agent ${this.agent.id}...`);
 					await this.client.agents.tools.attach(this.agent.id, tool.id);
 					console.log(`[Letta Plugin] Successfully attached '${toolName}' tool to agent`);
+					
+					console.log(`[Letta Plugin] Setting approval requirement for '${toolName}' on agent ${this.agent.id}...`);
+					await this.client.agents.tools.modifyApproval(
+						this.agent.id,
+						toolName,
+						{ requiresApproval: true }
+					);
+					console.log(`[Letta Plugin] Approval requirement set successfully`);
 				} catch (error) {
-					console.error("[Letta Plugin] Failed to attach tool to agent:", error);
+					console.error("[Letta Plugin] Failed to attach/configure tool:", error);
 				}
 			}
 
