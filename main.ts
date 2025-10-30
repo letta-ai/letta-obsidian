@@ -1410,19 +1410,16 @@ export default class LettaPlugin extends Plugin {
 		}
 
 		const obsidianToolCode = `
-import json
-from typing import Optional
-
 def obsidian(
     command: str,
-    path: Optional[str] = None,
-    content: Optional[str] = None,
-    old_str: Optional[str] = None,
-    new_str: Optional[str] = None,
-    block_label: Optional[str] = None,
-    query: Optional[str] = None,
-    line_number: Optional[int] = None,
-    text: Optional[str] = None
+    path: str = None,
+    content: str = None,
+    old_str: str = None,
+    new_str: str = None,
+    block_label: str = None,
+    query: str = None,
+    line_number: int = None,
+    text: str = None
 ) -> str:
     """
     Interact with the Obsidian vault. All operations require user approval.
@@ -1450,6 +1447,8 @@ def obsidian(
     Returns:
         JSON proposal for user approval
     """
+    import json
+    
     proposal = {
         "action": f"obsidian_{command}",
         "command": command,
@@ -5214,8 +5213,153 @@ class LettaChatView extends ItemView {
 	}
 
 	async enhanceViewProposal(container: HTMLElement, proposal: ObsidianProposal) {
-		console.log("[Letta Plugin] TODO: Implement view proposal enhancement");
-		container.createEl("div", { text: "View command - Coming soon", cls: "letta-placeholder" });
+		console.log("[Letta Plugin] Enhancing view proposal for:", proposal.path);
+		
+		if (!proposal.path) {
+			this.showProposalError(container, "No file path provided");
+			return;
+		}
+		
+		if (this.plugin.settings.obsidianToolPermissions.autoApproveView) {
+			console.log("[Letta Plugin] Auto-approving view command");
+			await this.approveFileView(container, proposal);
+			return;
+		}
+		
+		try {
+			const file = this.app.vault.getAbstractFileByPath(proposal.path);
+			
+			if (!file || !(file instanceof TFile)) {
+				this.showProposalError(container, `File not found: ${proposal.path}`);
+				return;
+			}
+			
+			const content = await this.app.vault.read(file);
+			const fileSize = file.stat.size;
+			const fileSizeMB = fileSize / (1024 * 1024);
+			
+			const enhancement = container.createEl("div", { 
+				cls: "letta-obsidian-view-proposal" 
+			});
+			
+			const header = enhancement.createEl("div", { cls: "letta-proposal-header" });
+			header.createEl("h3", { 
+				text: `📖 View File`,
+				cls: "letta-proposal-title" 
+			});
+			
+			const infoEl = enhancement.createEl("div", { cls: "letta-file-info" });
+			infoEl.createEl("div", { text: `📁 ${proposal.path}` });
+			infoEl.createEl("div", { text: `📊 ${this.plugin.formatFileSize(fileSize)}` });
+			infoEl.createEl("div", { 
+				text: `📅 Modified: ${new Date(file.stat.mtime).toLocaleString()}` 
+			});
+			
+			if (fileSizeMB > 1) {
+				const warning = infoEl.createEl("div", { 
+					cls: "letta-file-size-warning",
+					text: `⚠️ Large file (${fileSizeMB.toFixed(2)} MB) - may take time to process`
+				});
+			}
+			
+			const previewEl = enhancement.createEl("div", { cls: "letta-content-preview" });
+			previewEl.createEl("h4", { text: "Preview:" });
+			const previewContent = previewEl.createEl("pre", { 
+				cls: "letta-preview-text" 
+			});
+			const preview = content.length > 500 
+				? content.substring(0, 500) + "\n\n[... truncated for preview ...]"
+				: content;
+			previewContent.textContent = preview;
+			
+			const buttonContainer = enhancement.createEl("div", { 
+				cls: "letta-proposal-buttons" 
+			});
+			
+			const approveButton = buttonContainer.createEl("button", {
+				text: "Approve & Send to Agent",
+				cls: "letta-button letta-button-approve"
+			});
+			
+			const openButton = buttonContainer.createEl("button", {
+				text: "Open File First",
+				cls: "letta-button letta-button-secondary"
+			});
+			
+			const denyButton = buttonContainer.createEl("button", {
+				text: "Deny", 
+				cls: "letta-button letta-button-reject"
+			});
+			
+			approveButton.addEventListener("click", async () => {
+				await this.approveFileView(enhancement, proposal);
+			});
+			
+			openButton.addEventListener("click", async () => {
+				const leaf = this.app.workspace.getLeaf('tab');
+				await leaf.openFile(file);
+			});
+			
+			denyButton.addEventListener("click", async () => {
+				await this.denyFileView(enhancement, proposal);
+			});
+			
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to enhance view proposal:", error);
+			this.showProposalError(container, `Failed to read file: ${error.message}`);
+		}
+	}
+
+	async approveFileView(container: HTMLElement, proposal: ObsidianProposal) {
+		try {
+			if (!proposal.path) {
+				this.showProposalError(container, "No file path provided");
+				return;
+			}
+			
+			const file = this.app.vault.getAbstractFileByPath(proposal.path);
+			
+			if (!file || !(file instanceof TFile)) {
+				this.showProposalError(container, `File not found: ${proposal.path}`);
+				return;
+			}
+			
+			const content = await this.app.vault.read(file);
+			
+			const systemMessage = `[System: File content from '${proposal.path}']\n\n${content}\n\n[End of file]`;
+			
+			const messageEl = this.chatContainer.createEl("div", {
+				cls: "letta-message letta-system-message"
+			});
+			
+			const bubble = messageEl.createEl("div", {
+				cls: "letta-message-bubble"
+			});
+			
+			bubble.createEl("div", {
+				text: `📄 File sent to agent: ${proposal.path} (${content.length} characters)`,
+				cls: "letta-file-injection-header"
+			});
+			
+			this.showProposalSuccess(container, 
+				`File viewed: ${proposal.path} (${content.length} chars)`);
+			
+			this.chatContainer.scrollTo({
+				top: this.chatContainer.scrollHeight,
+				behavior: "smooth"
+			});
+			
+			console.log(`[Letta Plugin] File viewed and sent to agent: ${proposal.path}`);
+		} catch (error) {
+			console.error("[Letta Plugin] Failed to approve file view:", error);
+			this.showProposalError(container, `Failed to view file: ${error.message}`);
+		}
+	}
+
+	async denyFileView(container: HTMLElement, proposal: ObsidianProposal) {
+		this.showProposalDenied(container, 
+			`File view denied: ${proposal.path}`);
+		console.log(`[Letta Plugin] File view denied: ${proposal.path}`);
 	}
 
 	async enhanceCreateProposal(container: HTMLElement, proposal: ObsidianProposal) {
@@ -5256,6 +5400,27 @@ class LettaChatView extends ItemView {
 	async enhanceListProposal(container: HTMLElement, proposal: ObsidianProposal) {
 		console.log("[Letta Plugin] TODO: Implement list proposal enhancement");
 		container.createEl("div", { text: "List command - Coming soon", cls: "letta-placeholder" });
+	}
+
+	showProposalSuccess(container: HTMLElement, message: string) {
+		container.empty();
+		const successEl = container.createEl("div", { cls: "letta-proposal-success" });
+		successEl.createEl("span", { text: "✅ " });
+		successEl.createEl("span", { text: message });
+	}
+
+	showProposalError(container: HTMLElement, message: string) {
+		container.empty();
+		const errorEl = container.createEl("div", { cls: "letta-proposal-error" });
+		errorEl.createEl("span", { text: "❌ " });
+		errorEl.createEl("span", { text: message });
+	}
+
+	showProposalDenied(container: HTMLElement, message: string) {
+		container.empty();
+		const deniedEl = container.createEl("div", { cls: "letta-proposal-denied" });
+		deniedEl.createEl("span", { text: "🚫 " });
+		deniedEl.createEl("span", { text: message });
 	}
 
 	async enhanceNoteProposalDisplay(container: HTMLElement, toolResult: string) {
