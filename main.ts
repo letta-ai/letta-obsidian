@@ -10879,6 +10879,167 @@ class LettaSettingTab extends PluginSettingTab {
 					})
 			);
 
+		// Obsidian Tool Permissions
+		containerEl.createEl("h3", { text: "Obsidian Tool Permissions" });
+		containerEl.createEl("p", { 
+			text: "Configure auto-approval for specific Obsidian tool operations. When enabled, the agent can execute these operations without asking for approval each time.",
+			cls: "setting-item-description"
+		});
+
+		new Setting(containerEl)
+			.setName("Auto-approve View")
+			.setDesc("Allow agent to read file contents without approval (read-only, safe)")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.obsidianToolPermissions.autoApproveView)
+					.onChange(async (value) => {
+						this.plugin.settings.obsidianToolPermissions.autoApproveView = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Auto-approve List")
+			.setDesc("Allow agent to list directory contents without approval (read-only, safe)")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.obsidianToolPermissions.autoApproveList)
+					.onChange(async (value) => {
+						this.plugin.settings.obsidianToolPermissions.autoApproveList = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Auto-approve Search")
+			.setDesc("Allow agent to search vault without approval (read-only, safe)")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.obsidianToolPermissions.autoApproveSearch)
+					.onChange(async (value) => {
+						this.plugin.settings.obsidianToolPermissions.autoApproveSearch = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Auto-approve Attach")
+			.setDesc("Allow agent to attach files to memory without approval (adds to context)")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.obsidianToolPermissions.autoApproveAttach)
+					.onChange(async (value) => {
+						this.plugin.settings.obsidianToolPermissions.autoApproveAttach = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Auto-approve Detach")
+			.setDesc("Allow agent to detach files from memory without approval (removes from context)")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.obsidianToolPermissions.autoApproveDetach)
+					.onChange(async (value) => {
+						this.plugin.settings.obsidianToolPermissions.autoApproveDetach = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Auto-approve Create")
+			.setDesc("⚠️ Allow agent to create new files without approval (creates files)")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.obsidianToolPermissions.autoApproveCreate)
+					.onChange(async (value) => {
+						this.plugin.settings.obsidianToolPermissions.autoApproveCreate = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Auto-approve Insert")
+			.setDesc("⚠️ Allow agent to insert text into files without approval (modifies files)")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.obsidianToolPermissions.autoApproveInsert)
+					.onChange(async (value) => {
+						this.plugin.settings.obsidianToolPermissions.autoApproveInsert = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Auto-approve String Replace")
+			.setDesc("⚠️ Allow agent to replace text in files without approval (modifies files)")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.obsidianToolPermissions.autoApproveStrReplace)
+					.onChange(async (value) => {
+						this.plugin.settings.obsidianToolPermissions.autoApproveStrReplace = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Auto-approve Delete")
+			.setDesc("🚨 Allow agent to delete files without approval (DESTRUCTIVE - moves to trash)")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.obsidianToolPermissions.autoApproveDelete)
+					.onChange(async (value) => {
+						this.plugin.settings.obsidianToolPermissions.autoApproveDelete = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		// Search Settings
+		containerEl.createEl("h3", { text: "Search Settings" });
+
+		new Setting(containerEl)
+			.setName("Max Search Results")
+			.setDesc("Maximum number of search results to return")
+			.addText((text) =>
+				text
+					.setPlaceholder("20")
+					.setValue(String(this.plugin.settings.searchSettings.maxResults))
+					.onChange(async (value) => {
+						const num = parseInt(value);
+						if (!isNaN(num) && num > 0) {
+							this.plugin.settings.searchSettings.maxResults = num;
+							await this.plugin.saveSettings();
+						}
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Excerpt Length")
+			.setDesc("Length of content excerpts in search results (characters)")
+			.addText((text) =>
+				text
+					.setPlaceholder("100")
+					.setValue(String(this.plugin.settings.searchSettings.excerptLength))
+					.onChange(async (value) => {
+						const num = parseInt(value);
+						if (!isNaN(num) && num > 0) {
+							this.plugin.settings.searchSettings.excerptLength = num;
+							await this.plugin.saveSettings();
+						}
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Case Sensitive Search")
+			.setDesc("Enable case-sensitive search")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.searchSettings.caseSensitive)
+					.onChange(async (value) => {
+						this.plugin.settings.searchSettings.caseSensitive = value;
+						await this.plugin.saveSettings();
+					}),
+			);
 
 		// Actions
 		containerEl.createEl("h3", { text: "Actions" });
