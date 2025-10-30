@@ -3795,3 +3795,402 @@
     font-family: var(--font-interface);
     resize: vertical;
 }
+
+/* ===== Obsidian Omnitool Styles ===== */
+
+/* Proposal containers */
+.letta-obsidian-view-proposal,
+.letta-obsidian-create-proposal,
+.letta-obsidian-delete-proposal,
+.letta-obsidian-insert-proposal,
+.letta-obsidian-str-replace-proposal,
+.letta-obsidian-list-proposal,
+.letta-obsidian-attach-proposal,
+.letta-obsidian-detach-proposal,
+.letta-obsidian-search-proposal {
+    padding: 16px;
+    margin: 12px 0;
+    border-radius: 6px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+}
+
+/* Proposal headers */
+.letta-proposal-header {
+    margin-bottom: 12px;
+}
+
+.letta-proposal-title {
+    margin: 0 0 8px 0;
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.letta-proposal-title.letta-proposal-destructive {
+    color: var(--text-error);
+}
+
+/* File info section */
+.letta-file-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+    padding: 8px;
+    background: var(--background-primary);
+    border-radius: 4px;
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.letta-file-info > div {
+    line-height: 1.4;
+}
+
+/* Content preview */
+.letta-content-preview {
+    margin: 12px 0;
+}
+
+.letta-content-preview h4 {
+    margin: 0 0 6px 0;
+    font-size: 0.95em;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.letta-preview-text {
+    margin: 0;
+    padding: 12px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    font-family: var(--font-monospace);
+    font-size: 0.85em;
+    line-height: 1.5;
+    color: var(--text-normal);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* Warnings */
+.letta-file-size-warning,
+.letta-delete-warning,
+.letta-replace-warning {
+    padding: 8px 12px;
+    margin: 8px 0;
+    border-radius: 4px;
+    background: var(--background-modifier-error);
+    color: var(--text-error);
+    font-size: 0.9em;
+}
+
+.letta-warning-text {
+    font-weight: 500;
+}
+
+/* Insert context */
+.letta-insert-context {
+    margin: 12px 0;
+}
+
+.letta-insert-context h4 {
+    margin: 0 0 6px 0;
+    font-size: 0.95em;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.letta-context-text {
+    margin: 0;
+    padding: 12px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    font-family: var(--font-monospace);
+    font-size: 0.85em;
+    line-height: 1.5;
+    color: var(--text-normal);
+    white-space: pre;
+    overflow-x: auto;
+}
+
+.letta-insert-text {
+    margin: 12px 0;
+}
+
+.letta-insert-text h4 {
+    margin: 0 0 6px 0;
+    font-size: 0.95em;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+/* Diff viewer */
+.letta-diff-preview {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 12px 0;
+}
+
+.letta-diff-section h4 {
+    margin: 0 0 6px 0;
+    font-size: 0.95em;
+    font-weight: 500;
+}
+
+.letta-diff-old,
+.letta-diff-new {
+    margin: 0;
+    padding: 12px;
+    border-radius: 4px;
+    font-family: var(--font-monospace);
+    font-size: 0.85em;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.letta-diff-old {
+    background: rgba(255, 0, 0, 0.1);
+    border: 1px solid rgba(255, 0, 0, 0.3);
+    color: var(--text-normal);
+}
+
+.letta-diff-new {
+    background: rgba(0, 255, 0, 0.1);
+    border: 1px solid rgba(0, 255, 0, 0.3);
+    color: var(--text-normal);
+}
+
+/* List preview */
+.letta-list-preview {
+    margin: 12px 0;
+}
+
+.letta-list-preview h4 {
+    margin: 0 0 8px 0;
+    font-size: 0.95em;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.letta-file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.letta-file-section {
+    padding: 8px;
+    background: var(--background-primary);
+    border-radius: 4px;
+}
+
+.letta-file-section strong {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-normal);
+    font-size: 0.9em;
+}
+
+.letta-file-section ul {
+    margin: 0;
+    padding-left: 20px;
+    list-style: none;
+}
+
+.letta-file-section li {
+    padding: 2px 0;
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
+/* Attach/Detach notes */
+.letta-attach-note,
+.letta-detach-note {
+    padding: 8px 12px;
+    margin: 8px 0;
+    background: var(--background-primary);
+    border-left: 3px solid var(--interactive-accent);
+    border-radius: 4px;
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.letta-attach-note p,
+.letta-detach-note p {
+    margin: 0;
+}
+
+/* Search results */
+.letta-search-results {
+    margin: 12px 0;
+}
+
+.letta-search-results h4 {
+    margin: 0 0 8px 0;
+    font-size: 0.95em;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.letta-search-result-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.letta-search-result-item {
+    padding: 10px 12px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+}
+
+.letta-search-result-path {
+    font-weight: 500;
+    font-size: 0.9em;
+    color: var(--text-normal);
+    margin-bottom: 4px;
+}
+
+.letta-search-result-count {
+    font-size: 0.8em;
+    color: var(--text-accent);
+    margin-bottom: 6px;
+}
+
+.letta-search-result-excerpt {
+    font-size: 0.85em;
+    color: var(--text-muted);
+    font-style: italic;
+    line-height: 1.4;
+    padding: 6px;
+    background: var(--background-secondary);
+    border-radius: 3px;
+    margin-top: 4px;
+}
+
+.letta-search-no-results {
+    padding: 16px;
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.letta-search-limit-note {
+    font-style: italic;
+    color: var(--text-faint);
+}
+
+/* Proposal buttons */
+.letta-proposal-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+}
+
+.letta-button {
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    transition: all 0.2s ease;
+}
+
+.letta-button:hover {
+    opacity: 0.8;
+}
+
+.letta-button-approve {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border-color: var(--interactive-accent);
+}
+
+.letta-button-approve:hover {
+    background: var(--interactive-accent-hover);
+}
+
+.letta-button-secondary {
+    background: var(--background-secondary);
+    color: var(--text-normal);
+}
+
+.letta-button-secondary:hover {
+    background: var(--background-modifier-hover);
+}
+
+.letta-button-reject {
+    background: var(--background-secondary);
+    color: var(--text-error);
+    border-color: var(--text-error);
+}
+
+.letta-button-reject:hover {
+    background: rgba(255, 0, 0, 0.1);
+}
+
+/* Status messages */
+.letta-proposal-success {
+    padding: 12px;
+    margin: 12px 0;
+    background: rgba(0, 255, 0, 0.1);
+    border: 1px solid rgba(0, 255, 0, 0.3);
+    border-radius: 4px;
+    color: var(--text-success);
+    font-size: 0.9em;
+}
+
+.letta-proposal-error {
+    padding: 12px;
+    margin: 12px 0;
+    background: var(--background-modifier-error);
+    border: 1px solid var(--text-error);
+    border-radius: 4px;
+    color: var(--text-error);
+    font-size: 0.9em;
+}
+
+.letta-proposal-denied {
+    padding: 12px;
+    margin: 12px 0;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+
+/* System messages for file injections */
+.letta-system-message .letta-file-injection-header {
+    font-weight: 500;
+    color: var(--text-accent);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .letta-diff-preview {
+        grid-template-columns: 1fr;
+    }
+    
+    .letta-proposal-buttons {
+        flex-direction: column;
+    }
+    
+    .letta-button {
+        width: 100%;
+    }
+}
