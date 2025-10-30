@@ -7870,13 +7870,25 @@ class LettaChatView extends ItemView {
 			cls: "letta-approval-args",
 		});
 
-		if (toolName === "write_obsidian_note") {
+		if (toolName === "obsidian") {
 			argsEl.createEl("div", {
-				text: `Block Label: ${toolArgs.block_label || 'N/A'}`,
+				text: `Command: ${toolArgs.command || 'N/A'}`,
 			});
-			argsEl.createEl("div", {
-				text: `File Path: ${toolArgs.file_path || 'N/A'}`,
-			});
+			if (toolArgs.path) {
+				argsEl.createEl("div", {
+					text: `Path: ${toolArgs.path}`,
+				});
+			}
+			if (toolArgs.query) {
+				argsEl.createEl("div", {
+					text: `Query: ${toolArgs.query}`,
+				});
+			}
+			if (toolArgs.content) {
+				argsEl.createEl("div", {
+					text: `Content: ${toolArgs.content.substring(0, 100)}${toolArgs.content.length > 100 ? '...' : ''}`,
+				});
+			}
 		} else {
 			argsEl.createEl("pre", {
 				text: JSON.stringify(toolArgs, null, 2),
@@ -7959,32 +7971,15 @@ class LettaChatView extends ItemView {
 	async sendApprovalResponse(approvalRequestId: string, approve: boolean, toolArgs: any, reason?: string) {
 		console.log("[Letta Plugin] sendApprovalResponse:", { approvalRequestId, approve, reason });
 
-		let finalApprove = approve;
-		let finalReason = reason;
-
 		try {
-			// If approved and it's a write_obsidian_note call, execute the write
-			if (approve && toolArgs.block_label && toolArgs.file_path) {
-				console.log("[Letta Plugin] Executing note write...");
-				try {
-					await this.executeNoteWrite(toolArgs.block_label, toolArgs.file_path);
-				} catch (writeError: any) {
-					// If the write fails, convert approval to denial with error message
-					console.error("[Letta Plugin] Note write failed, converting to denial:", writeError);
-					finalApprove = false;
-					finalReason = `Failed to write note: ${writeError.message}`;
-					new Notice(`Failed to write note: ${writeError.message}`);
-				}
-			}
-
 			// Send approval/denial message to agent
 			const approvalMessage = {
 				id: `approval-response-${Date.now()}`,
 				date: new Date().toISOString(),
 				messageType: "approval_response_message",
-				approve: finalApprove,
+				approve: approve,
 				approvalRequestId: approvalRequestId,
-				...(finalReason && !finalApprove ? { reason: finalReason } : {})
+				...(reason && !approve ? { reason: reason } : {})
 			};
 
 			console.log("[Letta Plugin] Sending approval response:", approvalMessage);
@@ -9861,11 +9856,19 @@ class ToolRegistrationConsentModal extends Modal {
 			cls: "modal-description",
 		});
 		description.innerHTML = `
-			<p>Letta wants to register the following custom Obsidian tool:</p>
+			<p>Letta wants to register the Obsidian omnitool with the following capabilities:</p>
 			<ul>
-				<li><code>write_obsidian_note</code> - Write a memory block's content to a specified file path in your vault</li>
+				<li><code>obsidian("view", path)</code> - Read file contents</li>
+				<li><code>obsidian("create", path, content)</code> - Create new notes</li>
+				<li><code>obsidian("str_replace", path, old_str, new_str)</code> - Modify files</li>
+				<li><code>obsidian("insert", path, line_number, text)</code> - Insert text</li>
+				<li><code>obsidian("delete", path)</code> - Delete files</li>
+				<li><code>obsidian("list", path)</code> - List directory contents</li>
+				<li><code>obsidian("search", query)</code> - Search vault</li>
+				<li><code>obsidian("attach", path)</code> - Attach files to memory</li>
+				<li><code>obsidian("detach", path)</code> - Detach files from memory</li>
 			</ul>
-			<p><strong>Note:</strong> Tools will be installed for your entire Letta organization but will only be attached to your current agent. Each tool use requires your explicit approval before execution.</p>
+			<p><strong>Note:</strong> The tool will be installed for your entire Letta organization but will only be attached to your current agent. You can configure auto-approval for each operation in plugin settings. By default, all operations require your approval.</p>
 			<p><em>You can change this preference in the plugin settings at any time.</em></p>
 		`;
 		
