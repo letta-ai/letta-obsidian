@@ -15,7 +15,8 @@ import {
 	MarkdownRenderer,
 	Component,
 } from "obsidian";
-import { LettaClient, LettaError } from "@letta-ai/letta-client";
+import Letta from "@letta-ai/letta-client";
+import { LettaError, APIError, RateLimitError } from "@letta-ai/letta-client";
 
 export const LETTA_CHAT_VIEW_TYPE = "letta-chat-view";
 export const LETTA_MEMORY_VIEW_TYPE = "letta-memory-view";
@@ -42,7 +43,7 @@ ${RATE_LIMIT_MESSAGE.CUSTOM_KEYS_URL}`,
 };
 
 // Error handling interfaces
-interface RateLimitError extends Error {
+interface LocalRateLimitError extends Error {
 	isRateLimit: boolean;
 	retryAfter: number | null;
 }
@@ -178,7 +179,7 @@ export default class LettaPlugin extends Plugin {
 	settings: LettaPluginSettings;
 	agent: LettaAgent | null = null;
 	statusBarItem: HTMLElement | null = null;
-	client: LettaClient | null = null;
+	client: Letta | null = null;
 	lastAuthError: string | null = null;
 	focusBlockId: string | null = null;
 	focusUpdateTimer: NodeJS.Timeout | null = null;
@@ -346,7 +347,7 @@ export default class LettaPlugin extends Plugin {
 				config.token = this.settings.lettaApiKey;
 			}
 
-			this.client = new LettaClient(config);
+			this.client = new Letta(config);
 		} catch (error) {
 			console.error("[Letta Plugin] Failed to initialize client:", error);
 			this.client = null;
@@ -560,7 +561,7 @@ export default class LettaPlugin extends Plugin {
 					// Create a special error type for rate limiting
 					const rateLimitError = new Error(
 						errorMessage,
-					) as RateLimitError;
+					) as LocalRateLimitError;
 					rateLimitError.isRateLimit = true;
 					rateLimitError.retryAfter = retryAfter
 						? parseInt(retryAfter)
@@ -613,7 +614,7 @@ export default class LettaPlugin extends Plugin {
 			if (!this.client) return 0;
 			// Get all agents across all projects (not filtered by current project)
 			const agents = await this.client.agents.list();
-			return agents ? agents.length : 0;
+			return agents?.items ? agents.items.length : 0;
 		} catch (error) {
 			console.error("[Letta Plugin] Failed to get agent count:", error);
 			return 0;
@@ -883,9 +884,10 @@ export default class LettaPlugin extends Plugin {
 
 		try {
 			// Check if block exists
-			const blocks = await this.client.blocks.list({ label: focusBlockLabel });
+			const blocksPage = await this.client.blocks.list({ label: focusBlockLabel });
+			const blocks = blocksPage?.items || [];
 
-			if (blocks && blocks.length > 0) {
+			if (blocks.length > 0) {
 				// Block exists, store its ID
 				this.focusBlockId = blocks[0].id || null;
 
@@ -925,7 +927,7 @@ export default class LettaPlugin extends Plugin {
 		if (!this.agent || !this.client || !this.focusBlockId) return;
 
 		try {
-			await this.client.agents.blocks.attach(this.agent.id, this.focusBlockId);
+			await this.client.agents.blocks.attach(this.focusBlockId, { agent_id: this.agent.id });
 			console.log("[Letta Plugin] Focus block attached successfully");
 		} catch (error) {
 			// Block might already be attached, that's okay
@@ -937,7 +939,7 @@ export default class LettaPlugin extends Plugin {
 		if (!this.agent || !this.client || !this.focusBlockId) return;
 
 		try {
-			await this.client.agents.blocks.detach(this.agent.id, this.focusBlockId);
+			await this.client.agents.blocks.detach(this.focusBlockId, { agent_id: this.agent.id });
 			console.log("[Letta Plugin] Focus block detached successfully");
 		} catch (error) {
 			console.error("[Letta Plugin] Failed to detach focus block:", error);
@@ -1022,7 +1024,8 @@ export default class LettaPlugin extends Plugin {
 			}
 
 			const focusBlockLabel = `obsidian-${this.agent.id}-focused-note`;
-			await this.client.agents.blocks.modify(this.agent.id, focusBlockLabel, {
+			await this.client.agents.blocks.update(focusBlockLabel, {
+				agent_id: this.agent.id,
 				value: value,
 				limit: this.settings.focusBlockCharLimit,
 			});
@@ -1237,7 +1240,7 @@ export default class LettaPlugin extends Plugin {
 				"[Letta Stream] Starting stream for agent:",
 				this.agent.id,
 			);
-			const stream = await this.client.agents.messages.createStream(
+			const stream = await this.client.agents.messages.create(
 				this.agent.id,
 				{
 					messages: [
@@ -1246,7 +1249,8 @@ export default class LettaPlugin extends Plugin {
 							content: `[Message from Obsidian chat interface]\n\n${message}`,
 						},
 					],
-					streamTokens: true,
+					streaming: true,
+					stream_tokens: true,
 				},
 			);
 			console.log("[Letta Stream] Stream created successfully:", stream);
@@ -1294,15 +1298,14 @@ export default class LettaPlugin extends Plugin {
 					"CORS_ERROR: Network request failed, likely due to CORS restrictions. Falling back to non-streaming API.",
 				);
 				onError(corsError);
-			} else if (error instanceof LettaError) {
-				// Handle Letta SDK errors - check for rate limiting and CORS issues
-				if (error.statusCode === 429) {
-					// This is a genuine rate limit error
-					onError(new Error(`HTTP 429: ${error.message}`));
-				} else if (
-					error.statusCode === 0 ||
-					(error.statusCode === 429 &&
-						!error.message.includes("rate"))
+			} else if (error instanceof RateLimitError) {
+				// This is a genuine rate limit error (429)
+				onError(new Error(`HTTP 429: ${error.message}`));
+			} else if (error instanceof APIError) {
+				// Handle Letta SDK errors - check for CORS issues
+				if (
+					error.status === undefined ||
+					error.status === 0
 				) {
 					// Likely a CORS error masquerading as another error
 					const corsError = new Error(
@@ -1312,6 +1315,8 @@ export default class LettaPlugin extends Plugin {
 				} else {
 					onError(error);
 				}
+			} else if (error instanceof LettaError) {
+				onError(error);
 			} else {
 				onError(error);
 			}
@@ -6500,11 +6505,12 @@ class LettaChatView extends ItemView {
 				throw new Error("Agent or client not initialized");
 			}
 
-			const stream = await this.plugin.client.agents.messages.createStream(
+			const stream = await this.plugin.client.agents.messages.create(
 				this.plugin.agent.id,
 				{
 					messages: [approvalMessage as any],
-					streamTokens: true,
+					streaming: true,
+					stream_tokens: true,
 				},
 			);
 
@@ -6548,7 +6554,8 @@ class LettaChatView extends ItemView {
 			}
 
 			// Fetch the block content
-			const blocks = await this.plugin.client.blocks.list({ label: blockLabel });
+			const blocksPage = await this.plugin.client.blocks.list({ label: blockLabel });
+			const blocks = blocksPage?.items || [];
 			if (!blocks || blocks.length === 0) {
 				throw new Error(`Memory block with label '${blockLabel}' not found`);
 			}
@@ -9308,10 +9315,10 @@ class LettaSettingTab extends PluginSettingTab {
 							if (this.plugin.agent && this.plugin.focusBlockId) {
 								const focusBlockLabel = `obsidian-${this.plugin.agent.id}-focused-note`;
 								try {
-									await this.plugin.client?.agents.blocks.modify(
-										this.plugin.agent.id,
+									await this.plugin.client?.agents.blocks.update(
 										focusBlockLabel,
 										{
+											agent_id: this.plugin.agent.id,
 											limit: numValue,
 										}
 									);
@@ -9454,7 +9461,8 @@ class LettaSettingTab extends PluginSettingTab {
 			if (!this.plugin.client) throw new Error("Client not initialized");
 
 			// Fetch agents from server
-			const agents = await this.plugin.client.agents.list();
+			const agentsPage = await this.plugin.client.agents.list();
+			const agents = agentsPage?.items || [];
 
 			if (!agents || agents.length === 0) {
 				new Notice("No agents found. Please create an agent first.");
