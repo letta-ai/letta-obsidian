@@ -612,9 +612,12 @@ export default class LettaPlugin extends Plugin {
 	async getAgentCount(): Promise<number> {
 		try {
 			if (!this.client) return 0;
-			// Get all agents across all projects (not filtered by current project)
-			const agents = await this.client.agents.list();
-			return agents?.items ? agents.items.length : 0;
+			// Get all agents across all projects (auto-paginate to get full count)
+			let count = 0;
+			for await (const _agent of this.client.agents.list()) {
+				count++;
+			}
+			return count;
 		} catch (error) {
 			console.error("[Letta Plugin] Failed to get agent count:", error);
 			return 0;
@@ -9460,11 +9463,13 @@ class LettaSettingTab extends PluginSettingTab {
 		try {
 			if (!this.plugin.client) throw new Error("Client not initialized");
 
-			// Fetch agents from server
-			const agentsPage = await this.plugin.client.agents.list();
-			const agents = agentsPage?.items || [];
+			// Fetch all agents from server (auto-paginate)
+			const agents: any[] = [];
+			for await (const agent of this.plugin.client.agents.list()) {
+				agents.push(agent);
+			}
 
-			if (!agents || agents.length === 0) {
+			if (agents.length === 0) {
 				new Notice("No agents found. Please create an agent first.");
 				return;
 			}
