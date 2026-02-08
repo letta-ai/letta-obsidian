@@ -339,7 +339,7 @@ export default class LettaPlugin extends Plugin {
 
 			// Initialize with token and base URL from settings
 			const config: any = {
-				baseUrl: this.settings.lettaBaseUrl,
+				baseURL: this.settings.lettaBaseUrl,
 			};
 
 			// Only add token if API key is provided (for self-hosted without auth)
@@ -883,7 +883,7 @@ export default class LettaPlugin extends Plugin {
 	async ensureFocusBlock(): Promise<void> {
 		if (!this.agent || !this.client) return;
 
-		const focusBlockLabel = `obsidian-${this.agent.id}-focused-note`;
+		const focusBlockLabel = `obs-focus-${this.agent.id.slice(-12)}`;
 
 		try {
 			// Check if block exists
@@ -1026,7 +1026,7 @@ export default class LettaPlugin extends Plugin {
 				}
 			}
 
-			const focusBlockLabel = `obsidian-${this.agent.id}-focused-note`;
+			const focusBlockLabel = `obs-focus-${this.agent.id.slice(-12)}`;
 			await this.client.agents.blocks.update(focusBlockLabel, {
 				agent_id: this.agent.id,
 				value: value,
@@ -9316,7 +9316,7 @@ class LettaSettingTab extends PluginSettingTab {
 
 							// Update the block limit if it exists
 							if (this.plugin.agent && this.plugin.focusBlockId) {
-								const focusBlockLabel = `obsidian-${this.plugin.agent.id}-focused-note`;
+								const focusBlockLabel = `obs-focus-${this.plugin.agent.id.slice(-12)}`;
 								try {
 									await this.plugin.client?.agents.blocks.update(
 										focusBlockLabel,
